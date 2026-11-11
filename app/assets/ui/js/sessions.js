@@ -63,7 +63,12 @@ function renderProjects() {
 }
 function updateMenuBadge() { $("#menu-badge").hidden = !state.pending.some(p => p.sessionId !== state.current?.sessionId); }
 $("#session-search").addEventListener("input", e => { state.filter = e.target.value; renderSessions(); });
-$("#btn-menu").onclick = () => { document.body.classList.add("drawer-open"); nativeCall("setBackHandler", true); refreshSessions(); };
+$("#btn-menu").onclick = () => {
+  document.body.classList.add("drawer-open"); nativeCall("setBackHandler", true); refreshSessions();
+  // Staggered reveal of the list, only when the drawer opens (not on every live refresh).
+  const list = $("#session-list"); list.classList.remove("stagger"); void list.offsetWidth; list.classList.add("stagger");
+  setTimeout(() => list.classList.remove("stagger"), 900);
+};
 $("#scrim").onclick = closeDrawer;
 function closeDrawer() { document.body.classList.remove("drawer-open"); }
 $("#btn-new").onclick = () => { closeDrawer(); newChat(state.current?.cwd); };

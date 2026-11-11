@@ -3,7 +3,12 @@ const PORT = process.env.PA_PORT || 8765;
 import WebSocket from "ws";
 import fs from "node:fs"; import os from "node:os"; import crypto from "node:crypto";
 const token = fs.readFileSync(os.homedir() + "/.pocket-agent/token", "utf8").trim();
-const cwd = process.env.PREFIX + "/tmp/pa-e2e"; fs.rmSync(cwd, { recursive: true, force: true }); fs.mkdirSync(cwd, { recursive: true });
+// cwd = the folder as the server sees it; local = the same folder as this test sees it
+// (they differ when the server runs inside a container, e.g. PA_E2E_CWD=/root/pa-e2e PA_E2E_LOCAL=<rootfs>/root/pa-e2e).
+const cwd = process.env.PA_E2E_CWD || process.env.PREFIX + "/tmp/pa-e2e";
+const local = process.env.PA_E2E_LOCAL || cwd;
+const toLocal = p => local + p.slice(cwd.length);
+fs.rmSync(local, { recursive: true, force: true }); fs.mkdirSync(local, { recursive: true });
 const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws?token=${token}`);
 let n = 0; const waiting = new Map(); const seen = {};
 const call = (t, m = {}) => new Promise((res, rej) => { const id = ++n; waiting.set(id, r => r.error ? rej(new Error(r.error)) : res(r)); ws.send(JSON.stringify({ t, id, ...m })); });
@@ -30,7 +35,7 @@ await call("send", { sessionId: sid, cwd, text: "Create a file named hello.txt c
 const p = await perm; ok(`permission.request for ${p.toolName}`, ["Write", "Bash"].includes(p.toolName));
 await call("permission.reply", { sessionId: sid, requestId: p.requestId, behavior: "allow" });
 await idle1;
-ok("file written after approval", fs.existsSync(cwd + "/hello.txt") && fs.readFileSync(cwd + "/hello.txt", "utf8").includes("hi there"));
+ok("file written after approval", fs.existsSync(local + "/hello.txt") && fs.readFileSync(local + "/hello.txt", "utf8").includes("hi there"));
 const hist = await call("session.history", { sessionId: sid }); ok(`history (${hist.messages.length} msgs)`, hist.messages.length >= 3);
 await call("session.rename", { sessionId: sid, title: "E2E test session" });
 const l2 = await call("sessions.list", { limit: 50 }); ok("rename visible in list", l2.sessions.some(s => s.sessionId === sid && s.title === "E2E test session"));
@@ -38,7 +43,7 @@ const firstUser = hist.messages.find(m => m.type === "user");
 const fork = await call("session.fork", { sessionId: sid, upToMessageId: firstUser.uuid, title: "E2E fork" }); ok("fork", !!fork.sessionId);
 const fs1 = await call("fs.search", { cwd, q: "hello" }); ok("fs.search", fs1.results.some(r => r.path === "hello.txt"));
 const rd = await call("fs.read", { path: cwd + "/hello.txt" }); ok("fs.read", rd.text.includes("hi there"));
-const up = await call("upload", { cwd, name: "note.txt", data: Buffer.from("x").toString("base64") }); ok("upload", fs.existsSync(up.path));
+const up = await call("upload", { cwd, name: "note.txt", data: Buffer.from("x").toString("base64") }); ok("upload", fs.existsSync(toLocal(up.path)));
 ok(`meta received (${(await call("hello")).commands.length} commands)`, true);
 await call("session.close", { sessionId: sid });
 await call("session.delete", { sessionId: sid }); await call("session.delete", { sessionId: fork.sessionId });

@@ -114,6 +114,11 @@ function scrollIfPinned() { if (pinned) chatEl.scrollTop = chatEl.scrollHeight; 
 function scrollToBottom(force) { if (force) pinned = true; requestAnimationFrame(() => { chatEl.scrollTop = chatEl.scrollHeight; }); }
 $("#jump").onclick = () => scrollToBottom(true);
 new ResizeObserver(() => scrollIfPinned()).observe($("#composer"));
+// Live messages fade in (css .enter); history loads without animation.
+new MutationObserver(muts => {
+  if (chat.loadingHistory) return;
+  for (const mu of muts) for (const n of mu.addedNodes) if (n.nodeType === 1) n.classList.add("enter");
+}).observe($("#messages"), { childList: true });
 
 // ───────────── intents from Android (share sheet, notifications, shortcuts) ─────────────
 callbacks.intent = i => { if (!conn.ok) { window.__pendingIntent = i; return; } handleIntent(i); };

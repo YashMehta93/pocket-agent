@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "skills": {
+    "minimalist-ui": {
+      "source": "Leonxlnx/taste-skill-classics",
+      "sourceType": "github",
+      "skillPath": "skills/minimalist-skill/SKILL.md",
+      "computedHash": "4dabefab2ba3c0d776098b072f14aa7870b53a215609cb630f60cd88d220b113"
+    }
+  }
+}

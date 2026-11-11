@@ -26,6 +26,10 @@ function setMd(el, text) { el.innerHTML = mdToHtml(text); enhanceMd(el); }
 const TOOL_ICON = { Bash: "terminal", BashOutput: "terminal", KillShell: "terminal", Read: "eye", Write: "file", Edit: "pencil", MultiEdit: "pencil",
   NotebookEdit: "pencil", Glob: "search", Grep: "search", WebFetch: "globe", WebSearch: "globe", TodoWrite: "list", Task: "bot", Agent: "bot",
   ExitPlanMode: "plan", AskUserQuestion: "question", Skill: "bolt", LSP: "search" };
+/** Semantic colour of a tool: read (blue), edit (green), run (yellow). */
+const TOOL_KIND = { Read: "read", Glob: "read", Grep: "read", WebFetch: "read", WebSearch: "read", LSP: "read",
+  Write: "edit", Edit: "edit", MultiEdit: "edit", NotebookEdit: "edit",
+  Bash: "run", BashOutput: "run", KillShell: "run", Task: "run", Agent: "run", Skill: "run" };
 const EXT_LANG = { js: "javascript", mjs: "javascript", cjs: "javascript", ts: "typescript", tsx: "typescript", jsx: "javascript", py: "python", java: "java",
   kt: "kotlin", sh: "bash", bash: "bash", json: "json", md: "markdown", html: "xml", xml: "xml", css: "css", go: "go", rs: "rust", rb: "ruby", c: "c", h: "c",
   cpp: "cpp", yml: "yaml", yaml: "yaml", toml: "ini", sql: "sql", php: "php", swift: "swift", gradle: "groovy" };
@@ -121,6 +125,7 @@ class ChatView {
 
   // ───── history (SessionMessage[]) ─────
   loadHistory(messages) {
+    this.loadingHistory = true;   // history appears at once; only live messages animate in
     for (const m of messages) {
       if (m.uuid) this.order.push(m.uuid);
       if (m.type === "assistant") this.assistant(m.message, m.parent_tool_use_id, m.uuid, true);
@@ -129,6 +134,7 @@ class ChatView {
     }
     this.finishGhosts();
     for (const card of this.tools.values()) if (card.status === "run") this.setStatus(card, "unknown");
+    this.loadingHistory = false;
   }
   systemHistory(m) {
     const msg = m.message || {};
@@ -290,6 +296,7 @@ class ChatView {
     const el = h(`<details class="tool"><summary><span class="ti">${icon(TOOL_ICON[name] || (name.startsWith("mcp__") ? "bolt" : "terminal"))}</span>
       <span class="tn"></span><span class="ts"></span><span class="st ${live ? "spin" : ""}"></span></summary><div class="tb"></div></details>`);
     el.querySelector(".tn").textContent = prettyToolName(name);
+    el.dataset.kind = TOOL_KIND[name] || (name.startsWith("mcp__") ? "run" : "other");  // colours the tag (css: .tool[data-kind])
     const card = { id, name, input, el, body: el.querySelector(".tb"), summaryEl: el.querySelector(".ts"), stEl: el.querySelector(".st"), status: live ? "run" : "done" };
     if (settings.autoExpandTools || name === "TodoWrite" || name === "Task" || name === "Agent" || name === "ExitPlanMode") el.open = name !== "Task" && name !== "Agent" ? true : false;
     this.tools.set(id, card);

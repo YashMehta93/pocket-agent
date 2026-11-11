@@ -26,7 +26,7 @@ const ICONS = {
 };
 function icon(name) {
   const d = ICONS[name] || ICONS.info;
-  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"/></svg>`;
 }
 function hydrateIcons(root = document) { root.querySelectorAll("[data-icon]").forEach(el => { if (!el.querySelector("svg")) el.insertAdjacentHTML("beforeend", icon(el.dataset.icon)); }); }
 
