@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pocket Agent mark: a rounded chat bubble with a terminal prompt "> _" -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M34,32h40a8,8 0,0 1,8 8v24a8,8 0,0 1,-8 8H50l-10,9v-9h-6a8,8 0,0 1,-8 -8V40a8,8 0,0 1,8 -8z" />
+    <path android:strokeColor="#FF5B8DEF" android:strokeWidth="4.5"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M40,44l8,8l-8,8" />
+    <path android:strokeColor="#FF5B8DEF" android:strokeWidth="4.5"
+        android:strokeLineCap="round" android:pathData="M55,60h14" />
+</vector>
