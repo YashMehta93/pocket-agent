@@ -1,0 +1,16 @@
+{
+  "name": "pocket-agent",
+  "private": true,
+  "description": "Android chat app for Claude Code. See README.md.",
+  "scripts": {
+    "test": "npm run test:server && npm run test:ui",
+    "test:server": "node server/test/e2e.mjs",
+    "test:ui": "node tests/ui/ui.test.mjs && node tests/ui/pair.test.mjs",
+    "test:ui:live": "node tests/ui/ui.test.mjs --live",
+    "build:apk": "./build.sh",
+    "dev:server": "PA_PORT=8766 node server/src/index.js --port 8766"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}

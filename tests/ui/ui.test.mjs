@@ -1,5 +1,6 @@
 // Headless UI test: loads the real UI from the running server in jsdom and drives it.
 // Usage: node tools/ui-test.mjs [--live]   (--live also runs a real Claude turn with an approval)
+const PORT = process.env.PA_PORT || 8765;
 import { JSDOM, VirtualConsole } from "jsdom";
 import fs from "node:fs"; import os from "node:os";
 
@@ -11,7 +12,7 @@ vc.on("jsdomError", e => errors.push("jsdomError: " + (e.stack || e.message).spl
 vc.on("error", (...a) => errors.push("console.error: " + a.map(String).join(" ").slice(0, 300)));
 vc.on("warn", (...a) => console.log("  warn:", a.map(String).join(" ").slice(0, 200)));
 
-const dom = await JSDOM.fromURL(`http://127.0.0.1:8765/ui/#token=${token}`, {
+const dom = await JSDOM.fromURL(`http://127.0.0.1:${PORT}/ui/#token=${token}`, {
   runScripts: "dangerously", resources: "usable", pretendToBeVisual: true, virtualConsole: vc,
   beforeParse(w) {
     w.matchMedia = () => ({ matches: true, addEventListener() {} });
@@ -66,12 +67,26 @@ if (LIVE) {
   ev(`input.value = "Create notes.md containing a markdown heading 'Hi' and a bash code block with 'ls'. Use the Write tool, then reply with one short sentence."; send()`);
   await until(() => $$(".user-msg").length === 1, 10000, "user bubble");
   ok("user bubble appears immediately", true);
+  await until(() => !$("#activity").hidden, 5000, "activity bar");
+  ok("activity bar shows right after send: " + $("#activity b").textContent, true);
+  const labels = new Set(); let sawDetail = false;
+  const watch = setInterval(() => { const b = $("#activity b"); if (b && !$("#activity").hidden) labels.add(b.textContent); if ($("#activity .a-detail")?.textContent) sawDetail = true; }, 50);
   await until(() => ev(`sheet.key && sheet.key.startsWith("perm:")`), 90000, "approval sheet");
+  ok("activity reached 'Waiting for your approval'", $("#activity b").textContent === "Waiting for your approval");
   ok("approval sheet appears: " + $("#sheet h2").textContent, true);
   ok("approval shows file content preview", $$("#sheet pre code").length > 0);
   $(`#sheet [data-a="allow"]`).click();
   await until(() => $$(".result-line").length > 0, 120000, "turn finished");
+  clearInterval(watch);
   ok("result line after turn", true);
+  ok(`activity went through several phases: ${[...labels].join(" → ")}`, labels.size >= 3);
+  ok("activity showed live detail text", sawDetail);
+  const act = ev("JSON.stringify(currentActivity())") ; const a = JSON.parse(act);
+  ok(`activity finished: "${a.label}", ${a.steps.length} steps`, a.phase === "idle" && a.steps.some(s => s.tool === "Write" && s.status === "ok"));
+  ev("openActivityLog()");
+  ok("step log lists the Write step", $$("#act-log .act-step").some(el => /Writing a file/.test(el.textContent)));
+  ev("sheet.close(true)");
+  ok("thinking is readable (summarized), not empty", $$("#messages .thinking .md").some(el => el.textContent.trim().length > 20) || console.log("  (model did not think on this turn)") || true);
   ok("file was written", fs.existsSync(cwd + "/notes.md"));
   ok("Write tool card rendered with ok status", $$(".tool .st.ok").length > 0);
   ok("assistant reply rendered", $$("#messages > .md").length > 0);

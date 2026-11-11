@@ -90,8 +90,11 @@ public class NotifyService extends Service {
             case "hello": {
                 JSONArray p = ev.optJSONArray("pending");
                 if (p != null) for (int i = 0; i < p.length(); i++) approval(p.optJSONObject(i));
+                JSONArray a = ev.optJSONArray("activity");
+                if (a != null) for (int i = 0; i < a.length(); i++) activity(a.optJSONObject(i));
                 break;
             }
+            case "activity": activity(ev); break;
             case "permission.request": approval(ev); break;
             case "permission.resolved": nm.cancel(ev.optString("requestId").hashCode()); break;
             case "done": {
@@ -106,6 +109,30 @@ public class NotifyService extends Service {
                 break;
             }
         }
+    }
+
+    /**
+     * Mirrors what Claude is doing into the persistent notification, with a running timer,
+     * so progress stays visible while the app is in the background.
+     */
+    private void activity(JSONObject a) {
+        if (a == null) return;
+        String phase = a.optString("phase");
+        boolean busy = !"idle".equals(phase) && !"error".equals(phase) && !"starting".equals(phase);
+        Notification.Builder b = new Notification.Builder(this, CH_STATUS).setSmallIcon(R.drawable.ic_notif)
+            .setOngoing(true).setOnlyAlertOnce(true)
+            .setContentIntent(openApp(this, a.optString("sessionId"), 0));
+        if (busy) {
+            b.setContentTitle(a.optString("label", "Working"))
+             .setContentText(a.optString("detail"))
+             .setSubText(a.optString("title", ""))
+             .setStyle(new Notification.BigTextStyle().bigText(a.optString("detail")));
+            long start = a.optLong("turnStart", 0);
+            if (start > 0) b.setWhen(start).setShowWhen(true).setUsesChronometer(true);
+        } else {
+            b.setContentTitle("Pocket Agent").setContentText("Listening for Claude");
+        }
+        getSystemService(NotificationManager.class).notify(ID_STATUS, b.build());
     }
 
     private void approval(JSONObject p) {

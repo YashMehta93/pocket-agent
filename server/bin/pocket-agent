@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # pocket-agent — control the Pocket Agent bridge server.
 #   pocket-agent start [--token T]   start in the background (no-op if running)
-#   pocket-agent stop | restart | status | logs | token
+#   pocket-agent stop | restart [--when-idle] | status | logs | token
 DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 DATA="$HOME/.pocket-agent"
 PID="$DATA/server.pid"
@@ -20,7 +20,7 @@ case "${1:-status}" in
     fi
     command -v termux-wake-lock >/dev/null && termux-wake-lock
     [ -f "$LOG" ] && [ "$(stat -c %s "$LOG")" -gt 2000000 ] && mv "$LOG" "$LOG.old"
-    (cd "$DIR" && exec nohup node src/server.js --port "$PORT" "$@" >>"$LOG" 2>&1 </dev/null) &
+    (cd "$DIR" && exec nohup node src/index.js --port "$PORT" "$@" >>"$LOG" 2>&1 </dev/null) &
     echo $! > "$PID"
     for _ in $(seq 1 30); do curl -fs "http://127.0.0.1:$PORT/health" >/dev/null && { echo "started (pid $(cat "$PID"))"; exit 0; }; sleep 0.2; done
     echo "failed to start, see $LOG"; tail -5 "$LOG"; exit 1 ;;
@@ -28,7 +28,11 @@ case "${1:-status}" in
     if running; then kill "$(cat "$PID")"; sleep 0.5; echo stopped; else echo "not running"; fi
     rm -f "$PID"
     command -v termux-wake-unlock >/dev/null && termux-wake-unlock ;;
-  restart) shift; "$0" stop; "$0" start "$@" ;;
+  restart)
+    shift
+    # --when-idle: let the server finish any reply in progress, then restart itself.
+    if [ "${1:-}" = "--when-idle" ] && running; then kill -USR2 "$(cat "$PID")"; echo "will restart when idle"; exit 0; fi
+    "$0" stop; "$0" start "$@" ;;
   status) if running; then echo "running (pid $(cat "$PID"))"; curl -fs "http://127.0.0.1:$PORT/health"; echo; else echo "not running"; fi ;;
   logs) tail -n "${2:-50}" -f "$LOG" ;;
   token) cat "$DATA/token"; echo ;;

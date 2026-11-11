@@ -101,6 +101,7 @@ class ChatView {
     this.root.innerHTML = "";
     this.tools = new Map();      // tool_use_id -> card
     this.ghosts = new Map();     // `${msgId}:${index}` -> {el, kind, text}
+    this.streamTools = new Map(); // `${msgId}:${index}` -> {id, json} for tool calls being streamed
     this.order = [];             // message uuids in order (for fork/edit)
     this.userTexts = new Map();  // uuid -> text
     this.rendered = new Set();   // uuids already rendered
@@ -173,15 +174,27 @@ class ChatView {
         scrollIfPinned();
       } else if (b.type === "tool_use") {
         if (!this.tools.has(b.id)) this.toolCard(b.id, b.name, {}, this.curParent, true);
+        (this.streamTools ||= new Map()).set(key, { id: b.id, json: "" });
       }
     } else if (e.type === "content_block_delta") {
-      const g = this.ghosts.get(key); if (!g) return;
       const d = e.delta;
+      if (d.type === "input_json_delta") { this.streamToolInput(key, d.partial_json || ""); return; }
+      const g = this.ghosts.get(key); if (!g) return;
       if (d.type === "text_delta") g.text += d.text; else if (d.type === "thinking_delta") g.text += d.thinking; else return;
       this.scheduleGhost(g);
     } else if (e.type === "content_block_stop") {
       const g = this.ghosts.get(key); if (g) { g.el.classList.remove("caret"); this.paintGhost(g); }
     }
+  }
+  /** Show the command / file path in a tool card while Claude is still writing the tool call. */
+  streamToolInput(key, chunk) {
+    const st = this.streamTools?.get(key); if (!st) return;
+    st.json += chunk;
+    const card = this.tools.get(st.id); if (!card || Object.keys(card.input || {}).length) return;
+    const field = f => { const m = st.json.match(new RegExp(`"${f}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`)); if (!m) return ""; try { return JSON.parse(`"${m[1].replace(/\\$/, "")}"`); } catch { return m[1]; } };
+    let hint = card.name === "Bash" ? field("command") : shortPath(field("file_path")) || field("pattern") || field("description") || field("url") || field("query");
+    if (card.name === "Write") hint = `${shortPath(field("file_path"))} · ${(st.json.match(/\\n/g) || []).length + 1} lines so far`;
+    if (hint) card.summaryEl.textContent = hint;
   }
   scheduleGhost(g) { if (g.t) return; g.t = setTimeout(() => { g.t = null; this.paintGhost(g); scrollIfPinned(); }, 70); }
   paintGhost(g) {

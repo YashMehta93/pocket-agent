@@ -1,44 +1,32 @@
 # Pocket Agent
 
-An Android chat app for Claude Code. The app runs on the phone; Claude Code itself runs locally in Termux (later also on a PC over SSH).
+A phone app for **Claude Code**: chat with Claude, watch what it's doing live, approve its actions from a notification, and keep every session in one place. Claude Code runs locally (today in Termux; soon inside the app itself).
 
-```
-Pocket Agent APK (WebView UI + native bits)
-      │  WebSocket + SSE, localhost, shared token
-      ▼
-server/  Node bridge in Termux ── Claude Agent SDK ──► claude (Termux launcher)
-```
+- **Using it**: install `pocket-agent.apk`, open it, allow notifications and "Run commands in Termux". If it asks to pair, run `pocket-agent token` in Termux and paste the result.
+- **Working on it**: start with `docs/ARCHITECTURE.md`, then `CONTRIBUTING.md`.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `app/` | Android app. Plain Java, no Gradle or AndroidX. |
-| `app/assets/ui/` | Chat UI (HTML/CSS/JS). The server serves it, so UI changes need no reinstall; the APK bundles a fallback copy. |
-| `server/` | Bridge server: sessions, streaming, approvals, files (`server/src/server.js`). |
-| `build.sh` | Builds the APK with aapt2 → javac → d8 → apksigner; copies it to `Downloads/claude apps/`. |
-| `tools/` | Headless UI tests (jsdom). |
-| `server/test/e2e.mjs` | Protocol end-to-end test. |
+| `app/` | Android app: Java (no Gradle/AndroidX) + `assets/ui/` chat UI |
+| `server/` | Node bridge between the app and Claude Code (Agent SDK) |
+| `docs/` | architecture and app↔server protocol |
+| `tests/ui/` | headless UI tests (jsdom) |
+| `server/test/` | protocol end-to-end test |
+| `build.sh` | builds the APK on the phone → `Downloads/claude apps/` |
 
 ## Commands
 
 ```bash
-pocket-agent start|stop|restart|status|logs|token   # bridge server
-./build.sh                                           # build APK → Downloads/claude apps/
-node server/test/e2e.mjs                             # protocol test (uses a real Claude turn)
-node tools/ui-test.mjs [--live]                      # UI test in jsdom (--live runs a real turn)
+pocket-agent start | stop | restart [--when-idle] | status | logs | token
+./build.sh                     # build the APK
+npm run test:ui                # UI tests        (see CONTRIBUTING.md for all)
 ```
 
-## First run on the phone
+## Roadmap
 
-1. Install `Downloads/claude apps/pocket-agent.apk` from the Files app.
-2. Open it and allow notifications and "Run commands in Termux".
-3. If the app says it isn't paired: run `pocket-agent token` in Termux and paste the token into the app.
-
-Optional: so the app can start the server by itself, set `allow-external-apps = true` in `~/.termux/termux.properties`, then run `termux-reload-settings`.
-
-## Notes
-
-- The SDK spawns `$PREFIX/bin/claude` (the proot launcher), so sessions behave like the CLI: same login, settings, CLAUDE.md, skills and MCP servers.
-- `android.jar` (API 34) lives in `sdk/` and is not committed. Get it from Google's `platform-34-ext7_r03.zip`.
-- Server state lives in `~/.pocket-agent/` (token, prefs, log).
+1. ~~Chat, sessions, approvals, notifications, live activity~~
+2. **Standalone APK**: bundle a Linux environment (proot + Debian) so no Termux is needed; per-user Claude sign-in; in-app updates for friends.
+3. Phone control tools (accessibility service, intents) exposed to Claude.
+4. Connect to a PC over SSH for more compute.

@@ -1,9 +1,10 @@
 // End-to-end protocol test: node test/e2e.mjs  (server must be running)
+const PORT = process.env.PA_PORT || 8765;
 import WebSocket from "ws";
 import fs from "node:fs"; import os from "node:os"; import crypto from "node:crypto";
 const token = fs.readFileSync(os.homedir() + "/.pocket-agent/token", "utf8").trim();
 const cwd = process.env.PREFIX + "/tmp/pa-e2e"; fs.rmSync(cwd, { recursive: true, force: true }); fs.mkdirSync(cwd, { recursive: true });
-const ws = new WebSocket(`ws://127.0.0.1:8765/ws?token=${token}`);
+const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws?token=${token}`);
 let n = 0; const waiting = new Map(); const seen = {};
 const call = (t, m = {}) => new Promise((res, rej) => { const id = ++n; waiting.set(id, r => r.error ? rej(new Error(r.error)) : res(r)); ws.send(JSON.stringify({ t, id, ...m })); });
 let onPerm, onIdle;
@@ -13,6 +14,9 @@ ws.on("message", raw => {
   seen[m.t] = (seen[m.t] || 0) + 1;
   if (m.t === "permission.request") onPerm?.(m);
   if (m.t === "state" && m.state === "idle") onIdle?.(m);
+  if (m.t === "ev" && m.ev.type === "stream_event" && m.ev.event?.content_block?.type === "thinking") seen.thinkingBlocks = (seen.thinkingBlocks || 0) + 1;
+  if (m.t === "ev" && m.ev.type === "stream_event" && m.ev.event?.delta?.type === "thinking_delta") seen.thinkingChars = (seen.thinkingChars || 0) + m.ev.event.delta.thinking.length;
+  if (m.t === "activity") seen.phases = [...new Set([...(seen.phases || []), m.activity.phase])];
   if (m.t === "ev" && m.ev.type === "result") console.log("  result:", m.ev.subtype, JSON.stringify(m.ev.result || "").slice(0, 80));
 });
 await new Promise(r => ws.on("open", r));
@@ -39,4 +43,6 @@ ok(`meta received (${(await call("hello")).commands.length} commands)`, true);
 await call("session.close", { sessionId: sid });
 await call("session.delete", { sessionId: sid }); await call("session.delete", { sessionId: fork.sessionId });
 const l3 = await call("sessions.list", { limit: 50 }); ok("delete", !l3.sessions.some(s => s.sessionId === sid || s.sessionId === fork.sessionId));
+ok(`thinking readable when present (${seen.thinkingBlocks || 0} blocks, ${seen.thinkingChars || 0} chars)`, !seen.thinkingBlocks || seen.thinkingChars > 0);
+ok(`activity phases: ${(seen.phases || []).join(", ")}`, (seen.phases || []).includes("approval") && (seen.phases || []).includes("idle"));
 console.log("events seen:", seen); ws.close(); process.exit();
