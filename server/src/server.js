@@ -245,6 +245,40 @@ function summarizeInput(tool, input) {
   return JSON.stringify(input).slice(0, 200);
 }
 
+// Sessions open somewhere else (a Termux terminal or a Claude background session).
+// Claude Code refuses to resume those, so we detect them up front and let the user choose.
+const CLAUDE_DIR = path.join(HOME, ".claude");
+function busyElsewhere() {
+  const out = new Map();
+  let files = [];
+  try { files = fs.readdirSync(path.join(CLAUDE_DIR, "sessions")).filter(f => f.endsWith(".json")); } catch {}
+  for (const f of files) {
+    try {
+      const s = JSON.parse(fs.readFileSync(path.join(CLAUDE_DIR, "sessions", f), "utf8"));
+      if (!s.sessionId || live.has(s.sessionId) || !s.pid || ourPids.has(s.pid)) continue;
+      if (!fs.existsSync(`/proc/${s.pid}`)) continue;
+      if (s.entrypoint && /^sdk/.test(s.entrypoint)) continue;
+      out.set(s.sessionId, { kind: s.kind === "bg" ? "background" : "terminal", pid: s.pid, short: s.sessionId.slice(0, 8) });
+    } catch {}
+  }
+  return out;
+}
+const ourPids = new Set();
+function busyError(sessionId, info) {
+  const e = new Error(info.kind === "background"
+    ? "This chat is running as a Claude background session in Termux."
+    : "This chat is open in a Claude terminal in Termux.");
+  e.code = "BUSY_ELSEWHERE"; e.kind = info.kind; e.short = info.short; e.sessionId = sessionId;
+  return e;
+}
+function runClaude(args, timeoutMs = 30000) {
+  return new Promise(resolve => {
+    import("node:child_process").then(({ execFile }) => {
+      execFile(CLAUDE, args, { timeout: timeoutMs, env: process.env }, (err, stdout, stderr) => resolve({ ok: !err, out: (stdout || "") + (stderr || "") }));
+    });
+  });
+}
+
 function getLive(sessionId) {
   const s = live.get(sessionId);
   if (!s) throw new Error("Session is not running. Open it first.");
@@ -257,6 +291,8 @@ async function openSession({ sessionId, cwd, model, effort, permissionMode, titl
   if (sessionId) {
     const info = await getSessionInfo(sessionId).catch(() => undefined);
     if (info) { resume = true; cwd = cwd || info.cwd; title = title || info.customTitle || info.summary; }
+    const busy = resume && busyElsewhere().get(sessionId);
+    if (busy) throw busyError(sessionId, busy);
   }
   sessionId = sessionId || crypto.randomUUID();
   cwd = cwd || prefs.defaults.cwd || HOME;
@@ -316,7 +352,9 @@ async function searchFiles(cwd, q, limit = 40) {
 // ───────────────────────────── sessions list ─────────────────────────────
 async function sessionsList({ limit = 300, dir } = {}) {
   const list = await listSessions({ limit, ...(dir ? { dir } : {}) });
+  const busy = busyElsewhere();
   return list.map(s => ({
+    elsewhere: busy.get(s.sessionId)?.kind || null,
     sessionId: s.sessionId, title: s.customTitle || s.summary, firstPrompt: s.firstPrompt, cwd: s.cwd,
     lastModified: s.lastModified, createdAt: s.createdAt, gitBranch: s.gitBranch, tag: s.tag,
     custom: !!s.customTitle, pinned: prefs.pinned.includes(s.sessionId),
@@ -391,6 +429,25 @@ const handlers = {
     broadcastAll({ t: "sessions.changed" });
     return { sessionId: r.sessionId };
   },
+  // Resolve a BUSY_ELSEWHERE conflict: continue in a copy, or stop the other copy first.
+  async "session.continueHere"({ sessionId, mode }) {
+    const busy = busyElsewhere().get(sessionId);
+    if (mode === "fork") {
+      const r = await forkSession(sessionId);
+      broadcastAll({ t: "sessions.changed" });
+      return { sessionId: r.sessionId };
+    }
+    if (mode === "stop") {
+      if (busy?.kind === "terminal") throw new Error("That chat is open in a Termux terminal. Close it there (type /exit), then try again.");
+      if (busy) {
+        const r = await runClaude(["stop", busy.short]);
+        for (let i = 0; i < 20 && busyElsewhere().has(sessionId); i++) await new Promise(res => setTimeout(res, 300));
+        if (busyElsewhere().has(sessionId)) throw new Error("Couldn't stop it: " + r.out.trim().slice(0, 200));
+      }
+      return { sessionId };
+    }
+    throw new Error("unknown mode");
+  },
   async "session.rewindFiles"({ sessionId, userMessageId, dryRun }) {
     return { result: await getLive(sessionId).q.rewindFiles(userMessageId, { dryRun: !!dryRun }) };
   },
@@ -430,7 +487,7 @@ function handleWs(ws) {
     const reply = r => ws.readyState === 1 && ws.send(JSON.stringify({ ...r, t: "reply", id: m.id }));
     if (!h) return reply({ error: `unknown message ${m.t}` });
     try { reply(await h(m, ws) || {}); }
-    catch (e) { log("handler error", m.t, e?.message); reply({ error: String(e?.message || e) }); }
+    catch (e) { log("handler error", m.t, e?.message); reply({ error: String(e?.message || e), code: e?.code, kind: e?.kind, short: e?.short }); }
   });
   ws.on("error", () => {});
 }

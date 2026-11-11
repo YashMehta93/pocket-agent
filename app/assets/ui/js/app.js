@@ -126,7 +126,7 @@ function renderSessions() {
         <div class="t"><div></div><div class="meta"></div></div>
         ${state.pinned.includes(s.sessionId) ? `<span class="pin">${icon("pin")}</span>` : ""}</button>`);
       row.querySelector(".t div").textContent = s.title || s.firstPrompt || "Untitled";
-      row.querySelector(".meta").textContent = `${baseName(s.cwd)} · ${relTime(s.lastModified)}${st === "waiting" ? " · needs approval" : st === "running" ? " · working" : ""}`;
+      row.querySelector(".meta").textContent = `${baseName(s.cwd)} · ${relTime(s.lastModified)}${st === "waiting" ? " · needs approval" : st === "running" ? " · working" : s.elsewhere ? " · open in Termux" : ""}`;
       row.onclick = () => { closeDrawer(); openSession(s.sessionId); };
       longPress(row, () => sessionMenu(s));
       list.append(row);
@@ -237,7 +237,8 @@ function updateHeader() {
   const cur = state.current; if (!cur) return;
   $("#chat-title").textContent = cur.isNew ? "New chat" : (cur.title || "Chat");
   const st = sessionState(cur.sessionId);
-  $("#chat-sub").textContent = `${shortPath(cur.cwd)}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : ""}`;
+  const elsewhere = !cur.isNew && state.sessions.find(s => s.sessionId === cur.sessionId)?.elsewhere;
+  $("#chat-sub").textContent = `${shortPath(cur.cwd)}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
 }
 
 // ───────────── composer ─────────────
@@ -318,8 +319,46 @@ async function send(textOverride) {
     await conn.call("send", msg);
     scrollToBottom(true);
     debouncedRefresh();
-  } catch (e) { toast(e.message); chat.note("Couldn't send: " + e.message, true); }
+  } catch (e) {
+    if (e.code === "BUSY_ELSEWHERE") return busySheet(e, text, images);
+    toast(e.message); chat.note("Couldn't send: " + e.message, true);
+  }
 }
+
+// The chat is open in Termux (terminal or background session): ask how to continue.
+function busySheet(e, text, images) {
+  const cur = state.current;
+  const bg = e.kind === "background";
+  const b = sheet.open(`<h2>This chat is open in Termux</h2>
+    <div class="sub">${esc(e.message)} Claude Code can only run a chat in one place at a time. Your message is kept.</div>
+    <div class="btns">
+      <button class="btn primary" data-a="fork">Continue in a copy</button>
+      ${bg ? `<button class="btn" data-a="stop">Stop it there and continue here</button>` : ""}
+      ${native ? `<button class="btn ghost" data-a="termux">${bg ? "Open it in Termux" : "Go to Termux"}</button>` : ""}
+      <button class="btn ghost" data-a="cancel">Cancel</button>
+    </div>`, { onClose: () => restoreDraft(text) });
+  const go = async mode => {
+    sheet.close(true);
+    try {
+      const r = await conn.call("session.continueHere", { sessionId: cur.sessionId, mode });
+      if (mode === "fork") { await refreshSessions(); await openSession(r.sessionId); toast("Continuing in a copy"); }
+      else toast("Stopped in Termux");
+      await send(text);
+    } catch (err) { toast(err.message); restoreDraft(text); }
+  };
+  b.querySelector('[data-a="fork"]').onclick = () => go("fork");
+  b.querySelector('[data-a="stop"]')?.addEventListener("click", async () => {
+    if (await confirmSheet({ title: "Stop the Termux copy?", text: "Whatever Claude is doing in that background session stops. Its history is kept.", ok: "Stop it", danger: true })) go("stop");
+    else restoreDraft(text);
+  });
+  b.querySelector('[data-a="termux"]')?.addEventListener("click", () => {
+    sheet.close(true); restoreDraft(text);
+    if (bg) nativeCall("openInTermux", cur.cwd, ""); else nativeCall("openTermux");
+    if (bg) toast(`In Termux run: claude attach ${e.short}`, 4000);
+  });
+  b.querySelector('[data-a="cancel"]').onclick = () => { sheet.close(true); restoreDraft(text); };
+}
+function restoreDraft(text) { if (text && !input.value) { input.value = text; autosize(); } }
 
 // attachments
 $("#btn-attach").onclick = () => menuSheet("Attach", [

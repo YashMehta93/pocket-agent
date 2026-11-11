@@ -1,0 +1,24 @@
+import { JSDOM, VirtualConsole } from "jsdom"; import fs from "node:fs"; import os from "node:os";
+const token = fs.readFileSync(os.homedir() + "/.pocket-agent/token", "utf8").trim();
+const SID = process.argv[2];
+const errs = []; const vc = new VirtualConsole(); vc.on("jsdomError", e => errs.push(e.message));
+const dom = await JSDOM.fromURL(`http://127.0.0.1:8765/ui/#token=${token}`, { runScripts: "dangerously", resources: "usable", pretendToBeVisual: true, virtualConsole: vc,
+  beforeParse(w) { w.matchMedia = () => ({ matches: true, addEventListener() {} }); w.ResizeObserver = class { observe() {} }; w.fetch = fetch; } });
+const w = dom.window, $ = s => w.document.querySelector(s), sleep = ms => new Promise(r => setTimeout(r, ms));
+const ok = (n, c) => console.log(c ? "PASS" : "FAIL", n);
+await new Promise(r => w.addEventListener("load", r));
+for (let i = 0; i < 80 && !w.eval("conn.ok && state.sessions.length"); i++) await sleep(250);
+ok("busy session flagged in list: " + w.eval(`state.sessions.find(s=>s.sessionId==="${SID}")?.elsewhere`), w.eval(`state.sessions.find(s=>s.sessionId==="${SID}")?.elsewhere`) === "background");
+await w.eval(`openSession("${SID}")`);
+ok("header says open in Termux: " + $("#chat-sub").textContent, /open in Termux/.test($("#chat-sub").textContent));
+w.eval(`input.value = "hello from the app"; send()`);
+for (let i = 0; i < 40 && !w.eval("sheet.isOpen"); i++) await sleep(150);
+ok("choice sheet shown: " + $("#sheet h2")?.textContent, w.eval("sheet.isOpen") && /open in Termux/.test($("#sheet h2").textContent));
+ok("has fork + stop options", !!$('#sheet [data-a="fork"]') && !!$('#sheet [data-a="stop"]'));
+ok("no error bubble or note", !w.document.querySelector(".note.err"));
+$('#sheet [data-a="cancel"]').click(); await sleep(100);
+ok("draft restored after cancel", w.eval("input.value") === "hello from the app");
+const r = await w.eval(`conn.call("session.continueHere", { sessionId: "${SID}", mode: "fork" })`);
+ok("fork works: " + r.sessionId.slice(0, 8), r.sessionId && r.sessionId !== SID);
+await w.eval(`conn.call("session.delete", { sessionId: "${r.sessionId}" })`);
+console.log(errs.length ? "ERRORS " + errs.join(" | ") : "no page errors"); process.exit();

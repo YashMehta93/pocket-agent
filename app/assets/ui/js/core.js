@@ -128,7 +128,7 @@ const conn = {
     return new Promise((res, rej) => {
       if (!this.ok) return rej(new Error("Not connected to the server"));
       const id = ++this.n;
-      this.waiting.set(id, r => r.error ? rej(new Error(r.error)) : res(r));
+      this.waiting.set(id, r => r.error ? rej(Object.assign(new Error(r.error), { code: r.code, kind: r.kind, short: r.short })) : res(r));
       this.ws.send(JSON.stringify({ t, id, ...m }));
     });
   },
