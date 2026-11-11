@@ -1,19 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The manifest declares every permission and component the roadmap needs, up front, so new
+  features can ship as server/UI changes without reinstalling. Declaring a permission grants
+  nothing: runtime permissions are requested only when a feature first uses them, and the
+  accessibility / notification-access services stay off until enabled in Android settings.
+  Deliberately NOT declared: SMS and phone-call permissions (with accessibility + installs,
+  that combination makes Play Protect treat sideloaded apps as banking malware).
+-->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.pocketagent">
 
+    <!-- core -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <!-- Lets the app start the bridge server and open Claude in Termux -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- in-app updates -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- phone-control features (requested at runtime when used) -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- Termux integration (current setup) -->
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
 
     <queries>
         <package android:name="com.termux" />
         <intent><action android:name="android.speech.action.RECOGNIZE_SPEECH" /></intent>
         <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
+        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
     </queries>
 
     <application
@@ -47,15 +73,36 @@
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
 
+        <!-- background connection: notifications + server-initiated native calls -->
         <service
             android:name=".NotifyService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Keeps a local connection to the user's Claude Code server to deliver approval requests" />
+                android:value="Keeps a local connection to the user's Claude Code server to deliver approval requests and progress" />
+        </service>
+
+        <!-- phone control: read the screen, tap, type (off until enabled in Settings → Accessibility) -->
+        <service
+            android:name=".A11yService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility" />
+        </service>
+
+        <!-- read the phone's notifications (off until notification access is granted) -->
+        <service
+            android:name=".NotifListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>
         </service>
 
         <receiver android:name=".ActionReceiver" android:exported="false" />
+        <receiver android:name=".Updater$Status" android:exported="false" />
     </application>
 </manifest>

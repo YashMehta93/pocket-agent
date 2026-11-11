@@ -140,6 +140,7 @@ function openSettings() {
       <h3>Connection</h3>
       <div class="set-row"><div class="l">Server<small>${esc(settings.server || "This phone (Termux)")}</small></div><button class="chip" id="s-server">Change</button></div>
       ${native ? `<div class="set-row"><div class="l">Restart the Termux server</div><button class="chip" id="s-restart">Restart</button></div>` : ""}
+      ${native ? `<h3>Phone control</h3><div id="phone-ctl"><div class="set-row"><div class="l">Checking…</div></div></div>` : ""}
       <h3>Account</h3>
       <div class="set-row"><div class="l">${esc(state.account?.email || state.account?.organization || "Claude account")}<small>${esc(state.account?.subscriptionType || state.account?.apiKeySource || "Signed in through Claude Code in Termux")}</small></div></div>
       <h3>About</h3>
@@ -167,7 +168,25 @@ function openSettings() {
       saveSettings(); conn.ws?.close(); toast("Reconnecting…"); openSettingsRefresh();
     };
     body.querySelector("#s-restart")?.addEventListener("click", () => { nativeCall("restartServer"); toast("Restarting server…"); });
+    if (native) renderPhoneControl(body.querySelector("#phone-ctl"));
   });
+}
+
+/** What Claude may do on this phone; each row opens the matching Android setting. */
+async function renderPhoneControl(box) {
+  if (!box) return;
+  let p;
+  try { p = await nativeRpc("permissions.check", { names: [] }); }
+  catch { box.innerHTML = `<div class="set-row"><div class="l">Needs the latest app<small>Install pocket-agent.apk from Downloads/claude apps</small></div></div>`; return; }
+  const rows = [
+    ["accessibility", "Screen control", "Lets Claude read the screen, tap and type when you ask (Accessibility)", p.accessibility],
+    ["notification_access", "Read notifications", "Lets Claude read your notifications when you ask", p.notificationAccess],
+    ["notifications", "Pocket Agent notifications", "Approvals and progress", p.notifications],
+    ["unknown_sources", "One-tap app updates", "Allow Pocket Agent to install its own updates", p.installPackages],
+  ];
+  box.innerHTML = rows.map(([screen, title, sub, on]) =>
+    `<div class="set-row"><div class="l">${esc(title)}<small>${esc(sub)}</small></div><button class="chip ${on ? "" : "warn"}" data-screen="${screen}">${on ? "On" : "Turn on"}</button></div>`).join("");
+  box.querySelectorAll("[data-screen]").forEach(b => b.onclick = () => nativeRpc("settings.open", { screen: b.dataset.screen }).catch(e => toast(e.message)));
 }
 function openSettingsRefresh() { page.close(); openSettings(); }
 function seg(root, sel, fn) { root.querySelectorAll(sel + " button").forEach(b => b.onclick = () => { root.querySelectorAll(sel + " button").forEach(x => x.classList.remove("on")); b.classList.add("on"); fn(b.dataset.v); }); }

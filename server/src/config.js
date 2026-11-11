@@ -16,6 +16,9 @@ export const HOST = args.host || process.env.PA_HOST || "127.0.0.1";
 export const CLAUDE = args.claude || process.env.PA_CLAUDE || "/data/data/com.termux/files/usr/bin/claude";
 /** Directory with the chat UI; served at /ui/ so UI changes reach the app without a reinstall. */
 export const UI_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../app/assets/ui");
+/** Latest APK and its version info (written by build.sh), offered to the app as an in-app update. */
+export const APK_PATH = process.env.PA_APK || path.resolve(UI_DIR, "../../../build/pocket-agent.apk");
+export const APK_INFO = APK_PATH.replace(/\.apk$/, ".json");
 
 export const IDLE_CLOSE_MS = 20 * 60 * 1000;  // close an idle, unwatched session process after 20 min
 export const BUFFER_MAX = 4000;               // events kept per live session so reconnecting clients catch up

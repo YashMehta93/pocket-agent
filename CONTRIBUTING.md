@@ -22,7 +22,9 @@ ln -sf "$PWD/server/bin/pocket-agent" "$PREFIX/bin/pocket-agent"
 |---|---|---|
 | Look, layout, chat behaviour | `app/assets/ui/` | reopen the app (it reloads UI from the server) |
 | Server behaviour, new request | `server/src/` (+ `docs/PROTOCOL.md`) | `pocket-agent restart --when-idle` |
-| Android features (notifications, intents, permissions) | `app/src/`, `app/AndroidManifest.xml` | `./build.sh`, then install `Downloads/claude apps/pocket-agent.apk` |
+| Notification wording, buttons, when to notify | `server/src/notify.js` | `pocket-agent restart --when-idle` |
+| Phone features built from native capabilities | server/UI code calling `callNative()` / `nativeRpc()` | as above, no reinstall |
+| A genuinely new native capability | `app/src/.../Rpc.java` (+ manifest for a new permission/service) | `./build.sh`, then the app shows "Update available": one tap |
 
 UI files, by feature: `core.js` (helpers, connection, sheets), `render.js` (chat rendering), `activity.js` (activity bar/log), `sessions.js` (drawer), `composer.js` (input, pickers, edit/retry), `approvals.js`, `pages.js` (menus, files, settings), `main.js` (start-up, events). They're plain scripts sharing globals, loaded in the order in `index.html`. `base.js` first, `main.js` last.
 
@@ -43,6 +45,7 @@ The phone keeps using 8765. Deploy with `pocket-agent restart --when-idle`; it w
 npm run test:ui          # headless UI (jsdom) against a running server, no Claude turns
 npm run test:ui:live     # + a real Claude turn with an approval (uses your Claude plan)
 npm run test:server      # protocol end-to-end, includes a real Claude turn
+npm run test:native      # server ↔ phone channel with a fake phone (fast, no Claude)
 ```
 
 Add a check for anything you fix. UI tests drive the real UI code. `ev("someFunction()")` calls into the page.

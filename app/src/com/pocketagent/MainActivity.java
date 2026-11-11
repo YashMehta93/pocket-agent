@@ -44,6 +44,16 @@ import java.util.List;
 
 public class MainActivity extends Activity {
     static volatile boolean foreground = false;
+    private static java.lang.ref.WeakReference<MainActivity> currentRef = new java.lang.ref.WeakReference<>(null);
+    /** The running activity, for capabilities that need one (permission dialogs). */
+    static MainActivity current() { return currentRef.get(); }
+    private final java.util.Map<Integer, Rpc.Done> permCallbacks = new java.util.HashMap<>();
+    private int nextPermCode = 100;
+
+    /** Shows Android's permission dialog for the given permissions; reports which were granted. */
+    void requestPerms(String[] names, Rpc.Done d) {
+        runOnUiThread(() -> { int code = nextPermCode++; permCallbacks.put(code, d); requestPermissions(names, code); });
+    }
     static final String EXTRA_SESSION = "com.pocketagent.SESSION";
     static final String EXTRA_ACTION = "com.pocketagent.ACTION";
 
@@ -133,12 +143,21 @@ public class MainActivity extends Activity {
 
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        Rpc.Done cb = permCallbacks.remove(code);
+        if (cb != null) {
+            try {
+                JSONObject r = new JSONObject();
+                for (int k = 0; k < perms.length; k++) r.put(perms[k], k < results.length && results[k] == PackageManager.PERMISSION_GRANTED);
+                cb.ok(r);
+            } catch (Exception e) { cb.err(e.getMessage()); }
+            return;
+        }
         if (code == REQ_PERMS && Termux.hasPermission(this)) {
             new Thread(() -> { if (!healthy(Prefs.LOCAL_SERVER)) { Termux.startServer(this, Prefs.token(this)); sleep(3000); ui.post(() -> { if (loadedFrom.startsWith("file:")) boot(); }); } }).start();
         }
     }
 
-    @Override protected void onResume() { super.onResume(); foreground = true; }
+    @Override protected void onResume() { super.onResume(); foreground = true; currentRef = new java.lang.ref.WeakReference<>(this); }
     @Override protected void onPause() { super.onPause(); foreground = false; }
     @Override protected void onNewIntent(Intent i) { super.onNewIntent(i); handleIntent(i); }
 
@@ -255,6 +274,22 @@ public class MainActivity extends Activity {
     private class Bridge {
         @JavascriptInterface public String token() { return Prefs.serverToken(MainActivity.this); }
         @JavascriptInterface public String serverUrl() { return Prefs.server(MainActivity.this); }
+        /** Generic capability call; result arrives as paNative.emit("rpc", {id, result | error}). See Rpc.java. */
+        @JavascriptInterface public void rpc(String id, String method, String paramsJson) {
+            JSONObject params;
+            try { params = paramsJson == null || paramsJson.isEmpty() ? new JSONObject() : new JSONObject(paramsJson); } catch (Exception e) { params = new JSONObject(); }
+            Rpc.call(MainActivity.this, method, params, new Rpc.Done() {
+                @Override public void ok(Object result) { reply(id, "result", result == null ? JSONObject.NULL : result); }
+                @Override public void err(String message) { reply(id, "error", message); }
+            });
+        }
+        private void reply(String id, String key, Object value) {
+            try { final String json = new JSONObject().put("id", id).put(key, value).toString(); ui.post(() -> emit("rpc", json)); } catch (Exception ignored) {}
+        }
+        @JavascriptInterface public int appVersionCode() {
+            try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode; } catch (Exception e) { return 0; }
+        }
+        @JavascriptInterface public int rpcApi() { return Rpc.API_VERSION; }
         @JavascriptInterface public String appVersion() {
             try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception e) { return "?"; }
         }
@@ -293,6 +328,15 @@ public class MainActivity extends Activity {
             ui.post(() -> { try { startActivityForResult(i, REQ_VOICE); } catch (Exception e) { toast("No speech recognizer on this device"); } });
         }
         @JavascriptInterface public void takePhoto() {
+            // The manifest declares CAMERA (for future features), so Android requires it to be granted
+            // before the camera app can be used for capture.
+            if (checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                requestPerms(new String[]{android.Manifest.permission.CAMERA}, new Rpc.Done() {
+                    @Override public void ok(Object r) { if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) takePhoto(); else toast("Camera permission is needed to take photos"); }
+                    @Override public void err(String m) { toast(m); }
+                });
+                return;
+            }
             ui.post(() -> {
                 try {
                     ContentValues v = new ContentValues();

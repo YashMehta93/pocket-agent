@@ -43,6 +43,8 @@ The protocol between app and server stays the same in all cases; that's the cont
 
 ## Key decisions (and why)
 
+- **The APK is a generic shell; behaviour lives on the server and in the UI.** Android can't update an app's code without a reinstall, so the native side only exposes capabilities (`Rpc.java`): render a notification spec, start an intent, read the screen, and so on. What to notify about, the wording and buttons, and future phone-control tools are server/UI code, so they ship live. The manifest pre-declares the permissions and services the roadmap needs (nothing is granted until a feature asks). Native changes are only for genuinely new capabilities, and those ship as a one-tap in-app update (`app.update` → `update.install`).
+
 - **Agent SDK, not our own agent loop**: we get Claude Code's tools, permissions, skills, CLAUDE.md, MCP, compaction and session files for free, and chats are shared with the terminal CLI.
 - **UI served by the server**: UI fixes reach every installed app without a reinstall. The APK bundles a fallback copy. The UI reloads itself when `hello.uiVersion` changes.
 - **No Gradle / AndroidX**: the APK builds on the phone itself in seconds with `aapt2 → javac → d8 → apksigner` (`build.sh`). Keep Java dependency-free.

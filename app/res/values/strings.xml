@@ -3,4 +3,5 @@
     <string name="app_name">Pocket Agent</string>
     <string name="sc_new">New chat</string>
     <string name="sc_voice">Voice chat</string>
+    <string name="a11y_desc">Lets Claude see and operate your phone\'s screen when you ask it to: read what\'s shown, tap, type, scroll, and take screenshots. Every action goes through Pocket Agent\'s approval flow. Turn it off here anytime.</string>
 </resources>

@@ -4,12 +4,17 @@
 //   WS   /ws?token=…           main app protocol (docs/PROTOCOL.md)
 //   GET  /events?token=…       Server-Sent Events for the Android notification service
 //   POST /permission?token=…   answer a permission request from a notification button
+//   POST /native/result?token= result of a server → phone RPC call (hub.callNative)
+//   GET  /apk/download?token=  latest built APK, for in-app updates
 import http from "node:http";
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { WebSocketServer } from "ws";
-import { VERSION, TOKEN, UI_DIR, safeEq, log } from "./config.js";
-import { clients, sseClients } from "./hub.js";
+import { VERSION, TOKEN, UI_DIR, APK_PATH, safeEq, log } from "./config.js";
+import { clients, sseClients, nativeResult } from "./hub.js";
+import { toNative } from "./notify.js";
+import { toolDetail } from "./activity.js";
 import { live, getLive } from "./live-session.js";
 import { handlers } from "./handlers.js";
 
@@ -23,7 +28,18 @@ export function createServer() {
     if (url.pathname === "/health") { res.setHeader("access-control-allow-origin", "*"); return json(res, 200, { ok: true, version: VERSION, live: live.size }); }
     if (url.pathname === "/" || url.pathname.startsWith("/ui/")) return serveUi(url.pathname, res);
     if (!safeEq(url.searchParams.get("token") || req.headers["x-token"], TOKEN)) return json(res, 401, { error: "bad token" });
-    if (url.pathname === "/events") return sse(req, res);
+    if (url.pathname === "/events") return sse(req, res, +(url.searchParams.get("v") || 1), +(url.searchParams.get("api") || 0));
+    if (url.pathname === "/native/result" && req.method === "POST") {
+      let body = ""; for await (const c of req) body += c;
+      try { return json(res, 200, { ok: nativeResult(JSON.parse(body || "{}")) }); } catch (e) { return json(res, 400, { error: String(e.message) }); }
+    }
+    if (url.pathname === "/apk/download") {
+      try {
+        const st = await fsp.stat(APK_PATH);
+        res.writeHead(200, { "content-type": "application/vnd.android.package-archive", "content-length": st.size });
+        return fs.createReadStream(APK_PATH).pipe(res);
+      } catch { return json(res, 404, { error: "no APK built" }); }
+    }
     if (url.pathname === "/permission" && req.method === "POST") {
       let body = ""; for await (const c of req) body += c;
       try { const m = JSON.parse(body || "{}"); return json(res, 200, { ok: getLive(m.sessionId).answer(m) }); }
@@ -56,15 +72,26 @@ function onSocket(ws) {
   });
 }
 
-function sse(req, res) {
+/** SSE for the app's background service. v=1: legacy app (raw events); v=2: generic shell (notification specs + rpc). */
+function sse(req, res, v, api) {
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
   const pending = [...live.values()].flatMap(s => s.info().pending);
-  const activity = [...live.values()].filter(s => s.state === "running" || s.state === "waiting")
-    .map(s => ({ sessionId: s.sessionId, title: s.title, ...s.activity.snapshot(), steps: undefined }));
-  res.write(`data: ${JSON.stringify({ type: "hello", pending, activity })}\n\n`);
-  sseClients.add(res);
+  const running = [...live.values()].filter(s => s.state === "running" || s.state === "waiting");
+  if (v >= 2) {
+    // Catch the phone up: open approvals and current progress, as ready-to-show notifications.
+    const events = [
+      ...pending.flatMap(p => toNative({ type: "permission.request", ...p, input: toolDetail(p.toolName, p.input) })),
+      ...running.flatMap(s => { const a = s.activity.snapshot(); return toNative({ type: "activity", sessionId: s.sessionId, title: s.title, phase: a.phase, label: a.label, detail: a.detail, turnStart: a.turnStart }); }),
+    ];
+    res.write(`data: ${JSON.stringify({ type: "batch", events })}\n\n`);
+  } else {
+    const activity = running.map(s => ({ sessionId: s.sessionId, title: s.title, ...s.activity.snapshot(), steps: undefined }));
+    res.write(`data: ${JSON.stringify({ type: "hello", pending, activity })}\n\n`);
+  }
+  const client = { res, v, api };
+  sseClients.add(client);
   const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
-  req.on("close", () => { clearInterval(ping); sseClients.delete(res); });
+  req.on("close", () => { clearInterval(ping); sseClients.delete(client); });
 }
 
 async function serveUi(p, res) {

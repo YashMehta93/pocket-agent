@@ -1,11 +1,7 @@
 package com.pocketagent;
 
 import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.app.Service;
-import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.IBinder;
@@ -15,45 +11,34 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 
 /**
- * Keeps a Server-Sent Events connection to the bridge server so Claude can reach you
- * while the app is in the background: approval requests (with Allow / Deny buttons)
- * and "finished" notifications.
+ * Keeps a Server-Sent Events connection to the server while the app is in the background.
+ * Generic on purpose: the server sends
+ *   { type: "notify", spec }        show/update a notification (see Notifier)
+ *   { type: "cancel", id }          remove one
+ *   { type: "rpc", id, method, params }  run a native capability (see Rpc); result goes to POST /native/result
+ * so notification content and phone features evolve on the server without app updates.
  */
 public class NotifyService extends Service {
-    static final String CH_STATUS = "status", CH_APPROVAL = "approval", CH_DONE = "done";
-    private static final int ID_STATUS = 1;
     private volatile boolean running = false;
     private Thread worker;
 
     @Override public IBinder onBind(Intent i) { return null; }
 
     @Override
-    public void onCreate() {
-        super.onCreate();
-        NotificationManager nm = getSystemService(NotificationManager.class);
-        NotificationChannel s = new NotificationChannel(CH_STATUS, "Connection", NotificationManager.IMPORTANCE_MIN);
-        s.setDescription("Shown while Pocket Agent listens for Claude in the background");
-        NotificationChannel a = new NotificationChannel(CH_APPROVAL, "Approvals", NotificationManager.IMPORTANCE_HIGH);
-        a.setDescription("Claude needs your OK to run a command or edit a file");
-        NotificationChannel d = new NotificationChannel(CH_DONE, "Finished tasks", NotificationManager.IMPORTANCE_DEFAULT);
-        d.setDescription("Claude finished working");
-        nm.createNotificationChannel(s); nm.createNotificationChannel(a); nm.createNotificationChannel(d);
-    }
-
-    @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Notification n = new Notification.Builder(this, CH_STATUS)
-            .setSmallIcon(R.drawable.ic_notif).setContentTitle("Pocket Agent").setContentText("Listening for Claude")
-            .setContentIntent(openApp(this, null, 0)).setOngoing(true).build();
+        Notification n;
+        try { n = Notifier.build(this, new JSONObject().put("id", "status").put("channel", "status").put("title", "Pocket Agent").put("text", "Listening for Claude").put("ongoing", true)); }
+        catch (Exception e) { return START_STICKY; }
         try {
-            if (android.os.Build.VERSION.SDK_INT >= 34) startForeground(ID_STATUS, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-            else startForeground(ID_STATUS, n);
-        } catch (Exception e) { /* notification permission missing: keep running without foreground */ }
+            if (android.os.Build.VERSION.SDK_INT >= 34) startForeground(Notifier.ID_STATUS, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            else startForeground(Notifier.ID_STATUS, n);
+        } catch (Exception e) { /* no notification permission yet: keep running in the background */ }
         if (!running) { running = true; worker = new Thread(this::loop, "pa-sse"); worker.start(); }
         return START_STICKY;
     }
@@ -65,7 +50,7 @@ public class NotifyService extends Service {
         while (running) {
             HttpURLConnection c = null;
             try {
-                String url = Prefs.server(this) + "/events?token=" + URLEncoder.encode(Prefs.serverToken(this), "UTF-8");
+                String url = Prefs.server(this) + "/events?v=2&api=" + Rpc.API_VERSION + "&token=" + URLEncoder.encode(Prefs.serverToken(this), "UTF-8");
                 c = (HttpURLConnection) new URL(url).openConnection();
                 c.setConnectTimeout(3000); c.setReadTimeout(70_000);
                 if (c.getResponseCode() != 200) throw new Exception("HTTP " + c.getResponseCode());
@@ -73,103 +58,46 @@ public class NotifyService extends Service {
                 BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream(), "UTF-8"));
                 String line;
                 while (running && (line = r.readLine()) != null) {
-                    if (line.startsWith("data: ")) handle(new JSONObject(line.substring(6)));
+                    if (line.startsWith("data: ")) {
+                        try { handle(new JSONObject(line.substring(6))); } catch (Exception ignored) {}
+                    }
                 }
             } catch (Exception e) {
-                // server not running yet, or connection dropped: retry with backoff
+                // server not running yet or connection dropped; retry with backoff
             } finally { if (c != null) c.disconnect(); }
             try { Thread.sleep(backoff); } catch (InterruptedException ie) { return; }
-            backoff = Math.min(backoff * 2, 60_000);
+            backoff = Math.min(backoff * 2, 30_000);
         }
     }
 
     private void handle(JSONObject ev) {
-        String type = ev.optString("type");
-        NotificationManager nm = getSystemService(NotificationManager.class);
-        switch (type) {
-            case "hello": {
-                JSONArray p = ev.optJSONArray("pending");
-                if (p != null) for (int i = 0; i < p.length(); i++) approval(p.optJSONObject(i));
-                JSONArray a = ev.optJSONArray("activity");
-                if (a != null) for (int i = 0; i < a.length(); i++) activity(a.optJSONObject(i));
-                break;
-            }
-            case "activity": activity(ev); break;
-            case "permission.request": approval(ev); break;
-            case "permission.resolved": nm.cancel(ev.optString("requestId").hashCode()); break;
-            case "done": {
-                if (!Prefs.notifyDone(this) || MainActivity.foreground) break;
-                String sid = ev.optString("sessionId");
-                Notification n = new Notification.Builder(this, CH_DONE).setSmallIcon(R.drawable.ic_notif)
-                    .setContentTitle("Done: " + ev.optString("title", "Claude"))
-                    .setContentText(ev.optString("text"))
-                    .setStyle(new Notification.BigTextStyle().bigText(ev.optString("text")))
-                    .setAutoCancel(true).setContentIntent(openApp(this, sid, sid.hashCode())).build();
-                nm.notify(("done" + sid).hashCode(), n);
+        switch (ev.optString("type")) {
+            case "notify": { JSONObject spec = ev.optJSONObject("spec"); if (spec != null) Notifier.show(this, spec); break; }
+            case "cancel": Notifier.cancel(this, ev.optString("id")); break;
+            case "batch": { JSONArray a = ev.optJSONArray("events"); if (a != null) for (int i = 0; i < a.length(); i++) handle(a.optJSONObject(i)); break; }
+            case "rpc": {
+                final String id = ev.optString("id");
+                Rpc.call(this, ev.optString("method"), ev.optJSONObject("params"), new Rpc.Done() {
+                    @Override public void ok(Object result) { postResult(id, result, null); }
+                    @Override public void err(String message) { postResult(id, null, message); }
+                });
                 break;
             }
         }
     }
 
-    /**
-     * Mirrors what Claude is doing into the persistent notification, with a running timer,
-     * so progress stays visible while the app is in the background.
-     */
-    private void activity(JSONObject a) {
-        if (a == null) return;
-        String phase = a.optString("phase");
-        boolean busy = !"idle".equals(phase) && !"error".equals(phase) && !"starting".equals(phase);
-        Notification.Builder b = new Notification.Builder(this, CH_STATUS).setSmallIcon(R.drawable.ic_notif)
-            .setOngoing(true).setOnlyAlertOnce(true)
-            .setContentIntent(openApp(this, a.optString("sessionId"), 0));
-        if (busy) {
-            b.setContentTitle(a.optString("label", "Working"))
-             .setContentText(a.optString("detail"))
-             .setSubText(a.optString("title", ""))
-             .setStyle(new Notification.BigTextStyle().bigText(a.optString("detail")));
-            long start = a.optLong("turnStart", 0);
-            if (start > 0) b.setWhen(start).setShowWhen(true).setUsesChronometer(true);
-        } else {
-            b.setContentTitle("Pocket Agent").setContentText("Listening for Claude");
-        }
-        getSystemService(NotificationManager.class).notify(ID_STATUS, b.build());
-    }
-
-    private void approval(JSONObject p) {
-        if (p == null || !Prefs.notifyApproval(this) || MainActivity.foreground) return;
-        String rid = p.optString("requestId"), sid = p.optString("sessionId"), tool = p.optString("toolName");
-        Object inp = p.opt("input");
-        String detail = inp instanceof JSONObject ? summarize(tool, (JSONObject) inp) : String.valueOf(inp == null ? "" : inp);
-        String title = "AskUserQuestion".equals(tool) ? "Claude has a question" : "ExitPlanMode".equals(tool) ? "Claude's plan is ready" : "Allow " + tool + "?";
-        Notification.Builder b = new Notification.Builder(this, CH_APPROVAL).setSmallIcon(R.drawable.ic_notif)
-            .setContentTitle(title).setContentText(detail).setSubText(p.optString("title", ""))
-            .setStyle(new Notification.BigTextStyle().bigText(detail))
-            .setCategory(Notification.CATEGORY_MESSAGE).setAutoCancel(true)
-            .setContentIntent(openApp(this, sid, rid.hashCode()));
-        // Questions and plans need the full UI; simple approvals can be answered right here.
-        if (!"AskUserQuestion".equals(tool) && !"ExitPlanMode".equals(tool)) {
-            b.addAction(new Notification.Action.Builder(null, "Allow", action(sid, rid, "allow")).build());
-            b.addAction(new Notification.Action.Builder(null, "Deny", action(sid, rid, "deny")).build());
-        }
-        getSystemService(NotificationManager.class).notify(rid.hashCode(), b.build());
-    }
-
-    private static String summarize(String tool, JSONObject in) {
-        if (in.has("command")) return in.optString("command");
-        if (in.has("file_path")) return in.optString("file_path");
-        if (in.has("url")) return in.optString("url");
-        String s = in.toString();
-        return s.length() > 300 ? s.substring(0, 300) : s;
-    }
-
-    private PendingIntent action(String sid, String rid, String behavior) {
-        Intent i = new Intent(this, ActionReceiver.class).putExtra("sessionId", sid).putExtra("requestId", rid).putExtra("behavior", behavior);
-        return PendingIntent.getBroadcast(this, (rid + behavior).hashCode(), i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-    }
-
-    static PendingIntent openApp(Context c, String sessionId, int code) {
-        Intent i = new Intent(c, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        if (sessionId != null) i.putExtra(MainActivity.EXTRA_SESSION, sessionId);
-        return PendingIntent.getActivity(c, code, i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    private void postResult(String id, Object result, String error) {
+        new Thread(() -> {
+            try {
+                JSONObject body = new JSONObject().put("id", id);
+                if (error != null) body.put("error", error); else body.put("result", result == null ? JSONObject.NULL : result);
+                URL url = new URL(Prefs.server(this) + "/native/result?token=" + URLEncoder.encode(Prefs.serverToken(this), "UTF-8"));
+                HttpURLConnection c = (HttpURLConnection) url.openConnection();
+                c.setRequestMethod("POST"); c.setDoOutput(true); c.setConnectTimeout(3000); c.setReadTimeout(10000);
+                c.setRequestProperty("content-type", "application/json");
+                try (OutputStream o = c.getOutputStream()) { o.write(body.toString().getBytes("UTF-8")); }
+                c.getResponseCode(); c.disconnect();
+            } catch (Exception ignored) {}
+        }).start();
     }
 }

@@ -4,8 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, deleteSession, forkSession } from "@anthropic-ai/claude-agent-sdk";
-import { VERSION, HOME, UI_DIR, prefs, savePrefs, cache } from "./config.js";
-import { broadcastAll } from "./hub.js";
+import { VERSION, HOME, UI_DIR, APK_INFO, prefs, savePrefs, cache } from "./config.js";
+import { broadcastAll, callNative } from "./hub.js";
 import { live, getLive, openSession, busyElsewhere, runClaude } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
 
@@ -92,6 +92,15 @@ export const handlers = {
     return { sessionId };
   },
   async "defaults.set"({ defaults }) { prefs.defaults = { ...prefs.defaults, ...defaults }; savePrefs(); return { defaults: prefs.defaults }; },
+
+  // ───── the app itself ─────
+  /** Version of the newest built APK, so the app can offer a one-tap update. */
+  async "app.update"() {
+    try { const info = JSON.parse(fs.readFileSync(APK_INFO, "utf8")); return { ...info, url: "/apk/download" }; }
+    catch { return { versionCode: 0 }; }
+  },
+  /** Calls a native capability on the phone through the background service (for tools and tests). */
+  async "native.call"({ method, params, timeoutMs }) { return { result: await callNative(method, params || {}, timeoutMs || 20000) }; },
 
   // ───── files ─────
   async "fs.list"({ path: p }) { return await listDir(p); },

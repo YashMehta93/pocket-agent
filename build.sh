@@ -45,6 +45,10 @@ fi
 apksigner sign --ks "$KS" --ks-pass pass:pocketagent --key-pass pass:pocketagent \
   --out "$OUT/pocket-agent.apk" "$OUT/aligned.apk"
 
+# Version info for in-app updates (served by the server as app.update).
+printf "{\"versionCode\": %s, \"versionName\": \"%s\", \"builtAt\": %s}\n" "$VERSION_CODE" "$VERSION_NAME" "$(date +%s)000" > "$OUT/pocket-agent.json"
+rm -f "$OUT/unsigned.apk" "$OUT/aligned.apk"
+
 echo "[6/6] done: $OUT/pocket-agent.apk ($(du -h "$OUT/pocket-agent.apk" | cut -f1), v$VERSION_NAME)"
 
 DEST="$HOME/storage/downloads/claude apps"

@@ -32,6 +32,8 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 | `defaults.set` | `defaults: { cwd?, model?, effort?, permissionMode?, thinkingDisplay? }` | `defaults` |
 | `fs.list` / `fs.search` / `fs.read` / `fs.mkdir` | `path` / `cwd, q` / `path` / `path` | entries / results / `text, binary, truncated` / |
 | `upload` | `cwd, name, data` (base64) | `path` (saved under `<cwd>/.pocket-agent-uploads/`) |
+| `app.update` | | `versionCode, versionName, url` of the newest built APK |
+| `native.call` | `method, params, timeoutMs?` | `result` from the phone (server → phone RPC, see below) |
 
 ## Events
 
@@ -45,8 +47,33 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 | `meta` | `commands, models, account` | slash commands, models, account info |
 | `sessions.changed` | | refresh the chat list |
 
-## SSE `/events?token=` (Android notification service)
+## SSE `/events?v=2&api=<n>&token=` (Android background service)
 
-`data: {json}` lines with `type`: `hello` (pending approvals, running activity), `activity`, `permission.request`, `permission.resolved`, `done`.
+The app is a generic shell: the server decides what to show and do.
 
-`POST /permission?token=` with `{ sessionId, requestId, behavior }` answers from a notification button.
+| `type` | Payload | App does |
+|---|---|---|
+| `notify` | `spec` (fields documented at the top of `Notifier.java`) | shows/updates a notification |
+| `cancel` | `id` | removes it |
+| `rpc` | `id, method, params` | runs a native capability, POSTs `{ id, result \| error }` to `/native/result` |
+| `batch` | `events[]` | all of the above, sent on connect to catch up |
+
+Notification content is built in `server/src/notify.js`. Buttons POST their `body` to the `path` they name (e.g. `/permission`).
+Apps older than v0.1.6 connect with `v=1` and get raw events (`hello`, `permission.request`, `permission.resolved`, `done`, `activity`).
+
+## Native capabilities (`app/src/.../Rpc.java`)
+
+Called from the UI with `nativeRpc(method, params)` or from the server with `callNative(method, params)`.
+
+| Group | Methods |
+|---|---|
+| Info | `capabilities`, `device.info`, `permissions.check`, `permissions.request {names}` |
+| Notifications | `notify {spec}`, `notify.cancel {id}`, `notifications.list`, `notifications.dismiss {key}` (needs notification access) |
+| Basics | `toast`, `vibrate {ms}`, `clipboard.get/set`, `share.text`, `url.open`, `tts.speak`, `location.get` |
+| Apps & intents | `app.list`, `app.launch {package}`, `intent.start {action, data, type, package, className, categories, extras, flags}`, `settings.open {screen}` |
+| Screen control (accessibility) | `a11y.status`, `a11y.tree {max}`, `a11y.click/long_click {target}`, `a11y.set_text {target, text}`, `a11y.scroll {target, direction}`, `a11y.global {action}`, `a11y.gesture {points, duration}`, `a11y.screenshot {maxSide}` |
+| App | `update.install {url}`, `termux.run {path, args, workdir, background}` |
+
+`target` is `{ index }` from `a11y.tree`, or `{ text }`, `{ desc }`, `{ id }`, or `{ x, y }`.
+
+`POST /permission?token=` with `{ sessionId, requestId, behavior }` answers an approval.

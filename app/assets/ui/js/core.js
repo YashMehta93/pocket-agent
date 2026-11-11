@@ -56,6 +56,19 @@ window.paNative = { // called from Java
   emit(name, json) { const cb = callbacks[name]; if (cb) cb(typeof json === "string" ? JSON.parse(json || "null") : json); },
 };
 function nativeCall(fn, ...args) { try { return native && typeof native[fn] === "function" ? native[fn](...args) : undefined; } catch (e) { console.warn(fn, e); } }
+
+/** Calls a native capability (app/src/.../Rpc.java), e.g. nativeRpc("device.info"). Needs app v0.1.6+. */
+const rpcWaiting = new Map();
+let rpcN = 0;
+function nativeRpc(method, params = {}) {
+  if (!native || typeof native.rpc !== "function") return Promise.reject(new Error("Update the Pocket Agent app to use this"));
+  const id = "r" + (++rpcN);
+  return new Promise((resolve, reject) => {
+    rpcWaiting.set(id, { resolve, reject });
+    native.rpc(id, method, JSON.stringify(params));
+  });
+}
+callbacks.rpc = r => { const w = rpcWaiting.get(r.id); if (!w) return; rpcWaiting.delete(r.id); r.error ? w.reject(new Error(r.error)) : w.resolve(r.result); };
 function haptic(kind = "tick") { if (settings.haptics) nativeCall("haptic", kind); }
 function copyText(t) {
   if (native) { nativeCall("copy", t); toast("Copied"); return; }
@@ -120,7 +133,9 @@ const conn = {
   },
   scheduleRetry() {
     this.retry++;
-    if (this.retry === 2 || this.retry % 10 === 0) nativeCall("ensureServer");  // ask Android to (re)start the Termux server
+    // Ask Android to start the Termux server only if it has really been down for a while, and only once
+    // per app start: without Termux's allow-external-apps setting each attempt posts an error notification.
+    if (this.retry === 8 && !this.askedStart) this.probe().then(s => { if (s === "down") { this.askedStart = true; nativeCall("ensureServer"); } });
     this.fire("retrying", this.retry);
     this.timer = setTimeout(() => this.connect(), Math.min(800 * this.retry, 5000));
   },
