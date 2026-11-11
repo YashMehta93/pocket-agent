@@ -1,4 +1,84 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>body{background:#1f1e1c;color:#eee;font-family:sans-serif;display:grid;place-items:center;height:100vh;margin:0}</style>
-</head><body><div><h2>Pocket Agent</h2><p>Build pipeline works.</p></div></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark light">
+<title>Pocket Agent</title>
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="lib/hl-dark.css" id="hl-theme">
+</head>
+<body>
+<div id="app">
+  <!-- Drawer: sessions -->
+  <aside id="drawer" aria-label="Sessions">
+    <div class="drawer-head">
+      <div class="brand"><span class="logo"></span><b>Pocket Agent</b></div>
+      <button class="icon-btn" id="btn-settings" aria-label="Settings" data-icon="gear"></button>
+    </div>
+    <button class="new-chat" id="btn-new"><span data-icon="plus"></span>New chat</button>
+    <div class="search"><span data-icon="search"></span><input id="session-search" type="search" placeholder="Search chats" autocomplete="off"></div>
+    <div class="filters" id="project-filters"></div>
+    <div id="session-list" class="session-list"></div>
+    <div class="drawer-foot" id="conn-foot"></div>
+  </aside>
+  <div id="scrim"></div>
+
+  <!-- Main -->
+  <main id="main">
+    <header id="topbar">
+      <button class="icon-btn" id="btn-menu" aria-label="Chats" data-icon="menu"><i class="badge" id="menu-badge" hidden></i></button>
+      <div class="title-wrap" id="title-wrap">
+        <div id="chat-title">New chat</div>
+        <div id="chat-sub"></div>
+      </div>
+      <button class="icon-btn" id="btn-files" aria-label="Files" data-icon="folder"></button>
+      <button class="icon-btn" id="btn-more" aria-label="More" data-icon="dots"></button>
+    </header>
+    <div id="banner" hidden></div>
+    <div id="todo-bar" hidden></div>
+    <section id="chat" aria-live="polite">
+      <div id="messages"></div>
+      <div id="empty" class="empty">
+        <div class="logo big"></div>
+        <h1 id="empty-greet">What should we build?</h1>
+        <div class="empty-cwd" id="empty-cwd"></div>
+        <div class="suggestions" id="suggestions"></div>
+      </div>
+    </section>
+    <button id="jump" hidden aria-label="Jump to latest" data-icon="down"></button>
+
+    <footer id="composer">
+      <div id="status-line" hidden></div>
+      <div id="popup" hidden></div>
+      <div id="attachments" hidden></div>
+      <div class="box">
+        <textarea id="input" rows="1" placeholder="Message Claude…" enterkeyhint="send" autocapitalize="sentences"></textarea>
+        <div class="row">
+          <button class="icon-btn sm" id="btn-attach" aria-label="Attach" data-icon="clip"></button>
+          <button class="chip" id="chip-mode"></button>
+          <button class="chip" id="chip-model"></button>
+          <span class="grow"></span>
+          <button class="icon-btn sm" id="btn-mic" aria-label="Voice input" data-icon="mic"></button>
+          <button class="send" id="btn-send" aria-label="Send" data-icon="up"></button>
+        </div>
+      </div>
+      <input type="file" id="file-input" multiple hidden>
+    </footer>
+  </main>
+
+  <!-- Bottom sheet (approvals, pickers, menus) -->
+  <div id="sheet-scrim"></div>
+  <section id="sheet" role="dialog" aria-modal="true"><div class="grip"></div><div id="sheet-body"></div></section>
+  <!-- Full-screen pages (settings, files, viewer) -->
+  <section id="page" hidden><header><button class="icon-btn" id="page-back" data-icon="back" aria-label="Back"></button><div id="page-title"></div><div id="page-actions"></div></header><div id="page-body"></div></section>
+  <div id="toast"></div>
+</div>
+<script src="lib/marked.min.js"></script>
+<script src="lib/purify.min.js"></script>
+<script src="lib/highlight.min.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

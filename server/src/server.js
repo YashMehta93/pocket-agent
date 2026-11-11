@@ -133,7 +133,7 @@ class LiveSession {
     if (prev === "running" && state === "idle") notifyNative({ type: "done", sessionId: this.sessionId, title: this.title || "Session", text: this.lastText.slice(0, 300) });
   }
   info() {
-    return { sessionId: this.sessionId, cwd: this.cwd, state: this.state, model: this.model, effort: this.effort,
+    return { sessionId: this.sessionId, cwd: this.cwd, state: this.state, seq: this.seq, model: this.model, effort: this.effort,
       permissionMode: this.permissionMode, title: this.title, pending: [...this.pending.values()].map(p => p.info) };
   }
 
@@ -439,6 +439,7 @@ function handleWs(ws) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
   if (url.pathname === "/health") return json(res, 200, { ok: true, version: VERSION, live: live.size });
+  if (url.pathname === "/" || url.pathname.startsWith("/ui/")) return serveUi(url.pathname, res);
   if (!safeEq(url.searchParams.get("token") || req.headers["x-token"], TOKEN)) return json(res, 401, { error: "bad token" });
   if (url.pathname === "/events") {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
@@ -457,6 +458,23 @@ const server = http.createServer(async (req, res) => {
   }
   json(res, 404, { error: "not found" });
 });
+// The chat UI is served from the app's asset folder, so UI changes reach the
+// installed app without reinstalling the APK (the APK bundles a fallback copy).
+const UI_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../app/assets/ui");
+const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".woff2": "font/woff2" };
+async function serveUi(p, res) {
+  if (p === "/") { res.writeHead(302, { location: "/ui/" }); return res.end(); }
+  let rel = decodeURIComponent(p.slice(4)) || "index.html";
+  if (rel.endsWith("/")) rel += "index.html";
+  const file = path.resolve(UI_DIR, rel);
+  if (!file.startsWith(UI_DIR + path.sep)) return json(res, 403, { error: "forbidden" });
+  try {
+    const body = await fsp.readFile(file);
+    res.writeHead(200, { "content-type": MIME[path.extname(file)] || "application/octet-stream", "cache-control": "no-cache" });
+    res.end(body);
+  } catch { json(res, 404, { error: "not found" }); }
+}
 function json(res, code, v) { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(v)); }
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
