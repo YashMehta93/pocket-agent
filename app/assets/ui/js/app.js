@@ -21,7 +21,18 @@ hydrateIcons();
 applySettings();
 conn.on("open", onConnected);
 conn.on("close", () => showBanner("Connection lost. Reconnecting…"));
-conn.on("retrying", n => { if (n > 2) showBanner(native ? "Starting the Claude server in Termux…" : "Can't reach the server.", native ? "Open Termux" : null, () => nativeCall("openTermux")); });
+conn.on("retrying", async n => {
+  if (n < 3) return;
+  if (await conn.probe() === "up") showBanner("The server is running but this app isn't paired with it yet.", "Pair", pairServer);
+  else showBanner(native ? "Starting the Claude server in Termux… If this takes long, open Termux and run: pocket-agent start" : "Can't reach the server.", native ? "Open Termux" : null, () => nativeCall("openTermux"));
+});
+async function pairServer() {
+  const tok = await promptSheet({ title: "Pair with the server", placeholder: "Paste the token here", ok: "Pair",
+    value: "" });
+  if (!tok) return;
+  settings.token = tok.trim(); saveSettings();
+  conn.ws?.close(); conn.connect(); toast("Pairing…");
+}
 conn.connect();
 newChat();
 

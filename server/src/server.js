@@ -438,7 +438,7 @@ function handleWs(ws) {
 // ───────────────────────────── HTTP ─────────────────────────────
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
-  if (url.pathname === "/health") return json(res, 200, { ok: true, version: VERSION, live: live.size });
+  if (url.pathname === "/health") { res.setHeader("access-control-allow-origin", "*"); return json(res, 200, { ok: true, version: VERSION, live: live.size }); }
   if (url.pathname === "/" || url.pathname.startsWith("/ui/")) return serveUi(url.pathname, res);
   if (!safeEq(url.searchParams.get("token") || req.headers["x-token"], TOKEN)) return json(res, 401, { error: "bad token" });
   if (url.pathname === "/events") {

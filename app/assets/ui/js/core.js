@@ -91,10 +91,12 @@ const state = {
 // ───────────── connection ─────────────
 const conn = {
   ws: null, ok: false, n: 0, waiting: new Map(), listeners: {}, retry: 0,
-  url() {
-    let base = settings.server || nativeCall("serverUrl") || (location.protocol.startsWith("http") ? location.origin : "http://127.0.0.1:8765");
-    const token = settings.token || nativeCall("token") || new URLSearchParams(location.hash.slice(1)).get("token") || "";
-    return base.replace(/^http/, "ws").replace(/\/$/, "") + "/ws?token=" + encodeURIComponent(token);
+  base() { return (settings.server || nativeCall("serverUrl") || (location.protocol.startsWith("http") ? location.origin : "http://127.0.0.1:8765")).replace(/\/$/, ""); },
+  token() { return settings.token || nativeCall("token") || new URLSearchParams(location.hash.slice(1)).get("token") || ""; },
+  url() { return this.base().replace(/^http/, "ws") + "/ws?token=" + encodeURIComponent(this.token()); },
+  /** "up" = server reachable (so a failing socket means the token is wrong), "down" = unreachable. */
+  async probe() {
+    try { const r = await fetch(this.base() + "/health", { cache: "no-store" }); return r.ok ? "up" : "down"; } catch { return "down"; }
   },
   connect() {
     clearTimeout(this.timer);

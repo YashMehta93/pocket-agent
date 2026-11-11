@@ -25,8 +25,8 @@ aapt2 link -I "$SDK" --manifest "$APP/AndroidManifest.xml" -A "$APP/assets" \
 
 echo "[2/6] compile"
 find "$APP/src" "$OUT/gen" -name '*.java' > "$OUT/sources.txt"
-javac -source 8 -target 8 -Xlint:-options -encoding UTF-8 \
-  -bootclasspath "$SDK" -d "$OUT/classes" @"$OUT/sources.txt"
+javac --release 11 -Xlint:-options -encoding UTF-8 \
+  -cp "$SDK" -d "$OUT/classes" @"$OUT/sources.txt"
 
 echo "[3/6] dex"
 d8 --release --min-api 26 --lib "$SDK" --output "$OUT/dex" \
