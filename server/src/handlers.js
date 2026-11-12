@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, deleteSession, forkSession } from "@anthropic-ai/claude-agent-sdk";
-import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache } from "./config.js";
+import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache, githubRepo } from "./config.js";
 import { broadcastAll, callNative } from "./hub.js";
 import { live, getLive, openSession, busyElsewhere, runClaude } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
@@ -107,7 +107,7 @@ export const handlers = {
   /** Where this server gets code/UI updates from ({url, token}, or null to stop). */
   /** { url, token } of a server, { path } of a local Pocket Agent folder, or nothing to clear. */
   async "update.channel"({ url, token, path: p, github }) {
-    prefs.updateChannel = github ? { github: github.replace(/^https:\/\/github\.com\//, "").replace(/\.git$|\/$/g, ""), token: token || "" }
+    prefs.updateChannel = github ? { github: githubRepo(github), token: token || "" }
       : p ? { path: p } : url ? { url: url.replace(/\/$/, ""), token } : null;
     savePrefs();
     return { channel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null };
