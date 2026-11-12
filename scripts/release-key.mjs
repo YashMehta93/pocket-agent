@@ -26,6 +26,8 @@ if (cmd === "new") {
   const doc = fs.existsSync(KEYS) ? JSON.parse(fs.readFileSync(KEYS, "utf8")) : { keys: [] };
   doc.keys.push({ id, owner: a, publicKey: pub, added: new Date().toISOString().slice(0, 10) });
   fs.writeFileSync(KEYS, JSON.stringify(doc, null, 2) + "\n");
+  const def = path.join(ROOT, "server/src/trusted-keys.default.js"), src = fs.readFileSync(def, "utf8");
+  fs.writeFileSync(def, src.replace(/export const DEFAULT_TRUSTED_KEYS = [\s\S]*;\n$/, `export const DEFAULT_TRUSTED_KEYS = ${JSON.stringify(doc, null, 2)};\n`));
   console.log(`New key ${id} in ${KEY}. Its public key is now in server/trusted-keys.json: commit that through a PR.`);
 } else if (cmd === "sign") {
   if (!a || !b) { console.error("usage: release-key.mjs sign <bundle.tgz> <tag>"); process.exit(2); }

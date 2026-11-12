@@ -83,6 +83,14 @@ try {
   await personalBranch(clone, { login: "alice", id: 8 });
   ok("returning person gets their existing branch", sh("git branch --show-current", clone).trim() === "me/alice" && sh("git rev-parse HEAD", clone) === sh("git rev-parse origin/me/alice", clone));
   ok("Claude is told about the termux command", /`termux <command>`/.test(phoneContext()));
+  // trusted keys: the built-in copy matches the file, and a missing file comes back exactly as released
+  const { ensureTrustedKeys, trustedKeys } = await import("../src/signing.js");
+  const { DEFAULT_TRUSTED_KEYS } = await import("../src/trusted-keys.default.js");
+  const keyFile = fs.readFileSync(path.join(REPO, "server/trusted-keys.json"), "utf8");
+  ok("built-in trusted keys match server/trusted-keys.json", JSON.stringify(DEFAULT_TRUSTED_KEYS, null, 2) + "\n" === keyFile);
+  const bare = path.join(T, "bare"); fs.mkdirSync(path.join(bare, "server"), { recursive: true });
+  ok("without the file, the built-in keys are trusted", trustedKeys(bare).length === DEFAULT_TRUSTED_KEYS.keys.length && trustedKeys(bare).length > 0);
+  ok("a missing keys file is restored byte for byte", ensureTrustedKeys(bare) === true && fs.readFileSync(path.join(bare, "server/trusted-keys.json"), "utf8") === keyFile && ensureTrustedKeys(bare) === false);
   const { githubRepo } = await import("../src/config.js");
   ok("any way of writing a GitHub repo becomes owner/repo", ["me/pa", "github.com/me/pa", "https://github.com/me/pa.git", "https://www.github.com/me/pa/", "git@github.com:me/pa.git", " me/pa.git "].every(x => githubRepo(x) === "me/pa"));
 

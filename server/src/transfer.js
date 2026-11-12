@@ -232,7 +232,10 @@ export async function applyUpdate(ch, restart) {
     if (!fs.existsSync(path.join(x, "server/src/index.js"))) throw new Error("The update was incomplete");
     const depsOf = dir => ["server/package.json", "server/package-lock.json"].map(f => { try { return fs.readFileSync(path.join(dir, f), "utf8"); } catch { return ""; } }).join("");
     const depsChanged = depsOf(x) !== depsOf(ROOT);
-    for (const p of BUNDLE_PATHS) {
+    // Everything the new code brings, including server files this version doesn't know about yet
+    // (1.0.0 copied only its own list, and dropped 1.1.0's trusted-keys.json).
+    const extra = fs.existsSync(path.join(x, "server")) ? fs.readdirSync(path.join(x, "server")).map(n => "server/" + n).filter(p => !BUNDLE_PATHS.includes(p) && !p.endsWith("node_modules")) : [];
+    for (const p of [...BUNDLE_PATHS, ...extra]) {
       if (!fs.existsSync(path.join(x, p))) continue;
       await fsp.rm(path.join(ROOT, p), { recursive: true, force: true });
       await fsp.mkdir(path.dirname(path.join(ROOT, p)), { recursive: true });

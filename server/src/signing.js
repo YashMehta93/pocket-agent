@@ -8,6 +8,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { DEFAULT_TRUSTED_KEYS } from "./trusted-keys.default.js";
 
 export const SIG_NAME = "bundle.sig";
 const message = (tag, sha) => `pocket-agent release\n${tag}\n${sha}\n`;
@@ -18,7 +19,14 @@ export const keyFingerprint = b64 => sha256(Buffer.from(b64, "base64")).slice(0,
 /** Public keys whose releases this app accepts: [{ id, owner, publicKey (base64 SPKI) }]. */
 export function trustedKeys(root) {
   try { return JSON.parse(fs.readFileSync(path.join(root, "server/trusted-keys.json"), "utf8")).keys || []; }
-  catch { return []; }
+  catch { return DEFAULT_TRUSTED_KEYS.keys; }   // the file went missing (see trusted-keys.default.js)
+}
+/** Puts server/trusted-keys.json back if it's missing, exactly as released (so the code's hash matches again). */
+export function ensureTrustedKeys(root) {
+  const f = path.join(root, "server/trusted-keys.json");
+  if (fs.existsSync(f)) return false;
+  fs.writeFileSync(f, JSON.stringify(DEFAULT_TRUSTED_KEYS, null, 2) + "\n");
+  return true;
 }
 
 export function signBundle(tgz, tag, privateKey, keyId) {
