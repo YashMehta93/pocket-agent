@@ -51,7 +51,7 @@ In the app, Settings → **Improve Pocket Agent** starts a chat in your copy, an
 
 ## Cutting a release (from `v1.x`)
 
-1. Open a PR into `v1.x` that sets `VERSION` (e.g. `1.1.0`) and adds a `CHANGELOG.md` entry. The owner merges it.
+1. Open a PR into `v1.x` that sets `VERSION` (e.g. `1.1.0`) and adds a `CHANGELOG.md` entry (`## 1.1.0`). That entry becomes the release notes people read on GitHub and in the app's Versions page, so write it for them; `release.sh` refuses without it. The owner merges it.
 2. On the updated `v1.x`: `bash scripts/release.sh`. It:
    - refuses unless `v1.x` matches GitHub exactly and `VERSION` belongs to `v1.x`;
    - builds the APK and code bundle, tags `v1.1.0` (pushing only the tag), and publishes the GitHub release friends' apps update from;

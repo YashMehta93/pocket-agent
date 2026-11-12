@@ -42,6 +42,7 @@ if ! $DRY && [ "${PA_RELEASE_BRANCH_OK:-}" != 1 ]; then
 fi
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && [ "$(git rev-list -n1 "$TAG")" != "$(git rev-parse HEAD)" ]; then
   echo "$TAG already exists on another commit. Bump VERSION first (docs/RELEASES.md)."; exit 1; fi
+grep -q "^## $VERSION$" CHANGELOG.md || { echo "CHANGELOG.md has no '## $VERSION' section: add one in the release PR first."; $DRY || exit 1; }
 echo "== build $TAG"
 PA_RELEASE=1 bash build.sh >/dev/null
 OUT=build/release; rm -rf "$OUT"; mkdir -p "$OUT"
@@ -60,12 +61,18 @@ api() { curl -fsS -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.
 AUTH="Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
 
 echo "== push $TAG"
-PREV=$(git describe --tags --abbrev=0 2>/dev/null || true)
 git tag -a "$TAG" -m "Pocket Agent $VERSION" 2>/dev/null || echo "   (tag exists)"
 git -c http.extraHeader="$AUTH" push -q origin "refs/tags/$TAG"   # only the tag: branches change through PRs
 
 echo "== release"
-NOTES=$(git log --pretty='- %s' ${PREV:+$PREV..}HEAD | head -40)
+# Release notes: this version's CHANGELOG.md section (what friends read on the release page and in the
+# app's Versions page), plus how to install.
+NOTES=$(node -e '
+const fs = require("fs"), v = process.argv[1], s = fs.readFileSync("CHANGELOG.md", "utf8"), i = s.indexOf("\n## " + v + "\n");
+if (i < 0) process.exit(1);
+const rest = s.slice(i + 5 + v.length), j = rest.indexOf("\n## ");
+console.log((j < 0 ? rest : rest.slice(0, j)).trim() + "\n\n**Install:** download `pocket-agent.apk` below. Already have Pocket Agent? It offers this update by itself.\n\nFull history: [CHANGELOG.md](https://github.com/" + process.argv[2] + "/blob/master/CHANGELOG.md)");' "$VERSION" "$REPO") \
+  || { echo "CHANGELOG.md has no '## $VERSION' section: add one in the release PR first."; exit 1; }
 # A version with a dash (1.1.0-beta.1) is a pre-release: only apps on the Beta track get it.
 # Created as a draft, filled, then published (below).
 BODY=$(node -e 'const v = process.argv[2]; console.log(JSON.stringify({ tag_name: process.argv[1], name: "Pocket Agent " + v, body: process.argv[3], prerelease: v.includes("-"), draft: true }))' "$TAG" "$VERSION" "$NOTES")
