@@ -13,7 +13,7 @@ $("#btn-more").onclick = () => {
     { label: "Commands & skills", icon: "bolt", run: showCommands },
     !cur.isNew && { label: "Fork this chat", icon: "fork", run: () => forkSession(cur.sessionId) },
     !cur.isNew && { label: "Export / share chat", icon: "share", run: () => shareText(`# ${cur.title}\n\n${chat.toMarkdown()}`, cur.title) },
-    !cur.isNew && native && { label: "Continue in Termux", icon: "terminal", run: () => nativeCall("openInTermux", cur.cwd, cur.sessionId) },
+    !cur.isNew && native && !nativeCall("isStandalone") && { label: "Continue in Termux", icon: "terminal", run: () => nativeCall("openInTermux", cur.cwd, cur.sessionId) },
     live && { label: "Stop background process", icon: "stop", run: () => conn.call("session.close", { sessionId: cur.sessionId }) },
     !cur.isNew && { label: "Delete chat", icon: "trash", danger: true, run: () => deleteSession(cur.sessionId, cur.title) },
   ]);
@@ -120,6 +120,7 @@ function browseFolder(dir, resolve) {
 function openSettings() {
   page.open("Settings", body => {
     const d = state.defaults;
+    const standalone = native && nativeCall("isStandalone") === true;
     body.innerHTML = `<div class="settings">
       <h3>Appearance</h3>
       <div class="set-row"><div class="l">Theme</div></div><div class="seg" id="s-theme">${["system", "light", "dark"].map(t => `<button data-v="${t}" class="${settings.theme === t ? "on" : ""}">${t}</button>`).join("")}</div>
@@ -138,13 +139,15 @@ function openSettings() {
       <div class="set-row"><div class="l">Effort</div></div><div class="seg" id="d-effort">${["", ...EFFORTS].map(e => `<button data-v="${e}" class="${(d.effort || "") === e ? "on" : ""}">${e || "auto"}</button>`).join("")}</div>
       <div class="set-row"><div class="l">Permission mode</div></div><div class="seg" id="d-mode">${MODES.slice(0, 4).map(m => `<button data-v="${m.id}" class="${(d.permissionMode || "default") === m.id ? "on" : ""}">${m.short}</button>`).join("")}</div>
       <h3>Connection</h3>
-      <div class="set-row"><div class="l">Server<small>${esc(settings.server || "This phone (Termux)")}</small></div><button class="chip" id="s-server">Change</button></div>
-      ${native ? `<div class="set-row"><div class="l">Restart the Termux server</div><button class="chip" id="s-restart">Restart</button></div>` : ""}
+      <div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server || (native ? "This phone (built-in)" : location.host))}</small></div><button class="chip" id="s-server">Change</button></div>
+      ${native ? `<div class="set-row"><div class="l">Restart Claude's server<small>Stops any reply in progress</small></div><button class="chip" id="s-restart">Restart</button></div>` : ""}
+      ${standalone ? `<div class="set-row"><div class="l">Claude sign-in<small id="s-auth">Checking…</small></div><button class="chip" id="s-login">Sign in again</button></div>
+      <div class="set-row"><div class="l">Server log<small>For troubleshooting</small></div><button class="chip" id="s-log">View</button></div>` : ""}
       ${native ? `<h3>Phone control</h3><div id="phone-ctl"><div class="set-row"><div class="l">Checking…</div></div></div>` : ""}
       <h3>Account</h3>
-      <div class="set-row"><div class="l">${esc(state.account?.email || state.account?.organization || "Claude account")}<small>${esc(state.account?.subscriptionType || state.account?.apiKeySource || "Signed in through Claude Code in Termux")}</small></div></div>
+      <div class="set-row"><div class="l">${esc(state.account?.email || state.account?.organization || "Claude account")}<small>${esc(state.account?.subscriptionType || state.account?.apiKeySource || "Signed in through Claude Code")}</small></div></div>
       <h3>About</h3>
-      <div class="set-row"><div class="l">Pocket Agent ${esc(nativeCall("appVersion") || "web")}<small>Runs Claude Code locally in Termux</small></div></div>
+      <div class="set-row"><div class="l">Pocket Agent ${esc(nativeCall("appVersion") || "web")}<small>${standalone ? "Runs Claude Code on this phone" : "Connected to " + esc(settings.server || location.host)}</small></div></div>
     </div>`;
     body.querySelectorAll(".switch[data-k]").forEach(sw => sw.onclick = () => { settings[sw.dataset.k] = !settings[sw.dataset.k]; sw.classList.toggle("on"); saveSettings(); });
     seg(body, "#s-theme", v => { settings.theme = v; saveSettings(); });
@@ -160,13 +163,12 @@ function openSettings() {
         b.querySelector("#dm").append(o);
       }
     };
-    body.querySelector("#s-server").onclick = async () => {
-      const url = await promptSheet({ title: "Server address", value: settings.server, placeholder: "Leave empty for this phone, or http://host:8765" });
-      if (url === null) return;
-      settings.server = url.replace(/\/$/, "");
-      if (url) { const tok = await promptSheet({ title: "Server token", value: settings.token, placeholder: "Run `pocket-agent token` on the server" }); if (tok !== null) settings.token = tok; } else settings.token = "";
-      saveSettings(); conn.ws?.close(); toast("Reconnecting…"); openSettingsRefresh();
-    };
+    body.querySelector("#s-server").onclick = () => chooseServer();
+    body.querySelector("#s-login")?.addEventListener("click", () => nativeCall("openSetup", "#login"));
+    body.querySelector("#s-log")?.addEventListener("click", () => page.open("Server log", async b => {
+      b.className = "viewer"; b.append(codeBlock(await nativeRpc("runtime.logs", { which: "server", bytes: 40000 }).catch(e => e.message) || "(empty)"));
+    }));
+    if (standalone) nativeRpc("runtime.auth").then(a => { const el = body.querySelector("#s-auth"); if (el) el.textContent = a.loggedIn ? [a.email, a.subscriptionType].filter(Boolean).join(" · ") : "Not signed in"; }).catch(() => {});
     body.querySelector("#s-restart")?.addEventListener("click", () => { nativeCall("restartServer"); toast("Restarting server…"); });
     if (native) renderPhoneControl(body.querySelector("#phone-ctl"));
   });
@@ -187,6 +189,33 @@ async function renderPhoneControl(box) {
   box.innerHTML = rows.map(([screen, title, sub, on]) =>
     `<div class="set-row"><div class="l">${esc(title)}<small>${esc(sub)}</small></div><button class="chip ${on ? "" : "warn"}" data-screen="${screen}">${on ? "On" : "Turn on"}</button></div>`).join("");
   box.querySelectorAll("[data-screen]").forEach(b => b.onclick = () => nativeRpc("settings.open", { screen: b.dataset.screen }).catch(e => toast(e.message)));
+}
+/** Where Claude runs: the app's built-in Linux, or another Pocket Agent server (Termux, a PC). */
+function chooseServer() {
+  const b = sheet.open(`<h2>Where Claude runs</h2><div class="sub">Chats live with the server they were made on.</div><div id="srv-opts"></div>`);
+  const opts = [
+    native && { id: "", title: "This phone (built-in)", sub: "Pocket Agent's own Linux; works offline from Termux" },
+    { id: "custom", title: "Another server…", sub: "Pocket Agent server in Termux or on a computer" },
+  ].filter(Boolean);
+  for (const o of opts) {
+    const on = (o.id === "" && !settings.server) || (o.id === "custom" && settings.server);
+    const el = h(`<button class="opt ${on ? "on" : ""}">${icon(on ? "ccheck" : "circle")}<div class="ot"><div>${esc(o.title)}</div><div class="od">${esc(o.sub)}</div></div></button>`);
+    el.onclick = async () => {
+      sheet.close(true);
+      let server = "", token = "";
+      if (o.id === "custom") {
+        server = await promptSheet({ title: "Server address", value: settings.server || "http://127.0.0.1:8765", placeholder: "http://host:8765" });
+        if (!server) return;
+        token = await promptSheet({ title: "Server token", value: settings.token, placeholder: "Run \`pocket-agent token\` on the server" });
+        if (token === null) return;
+      }
+      settings.server = server.replace(/\/$/, ""); settings.token = token.trim(); saveSettings();
+      toast("Switching…");
+      if (native) nativeRpc("mode.set", { server: settings.server, token: settings.token }).catch(e => toast(e.message));
+      else { conn.ws?.close(); openSettingsRefresh(); }
+    };
+    b.querySelector("#srv-opts").append(el);
+  }
 }
 function openSettingsRefresh() { page.close(); openSettings(); }
 function seg(root, sel, fn) { root.querySelectorAll(sel + " button").forEach(b => b.onclick = () => { root.querySelectorAll(sel + " button").forEach(x => x.classList.remove("on")); b.classList.add("on"); fn(b.dataset.v); }); }

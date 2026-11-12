@@ -103,25 +103,33 @@ public class MainActivity extends Activity {
             }
         });
         setContentView(web);
+        Linux.addListener(runtimeListener);   // setup progress → the setup page
         requestRuntimePermissions();
         startService(new Intent(this, NotifyService.class));
         handleIntent(getIntent());
         boot();
     }
 
-    /** Load the UI from the Termux server (so UI updates need no reinstall); fall back to the bundled copy. */
-    private void boot() {
+    /**
+     * Standalone: first run shows the setup screen (bundled), otherwise starts the built-in server and
+     * loads the UI from it. Server mode: loads the UI from the configured server (so UI updates need no
+     * reinstall), falling back to the bundled copy while it's unreachable.
+     */
+    void boot() {
         new Thread(() -> {
             String server = Prefs.server(this);
             boolean up = healthy(server);
-            if (!up && server.equals(Prefs.LOCAL_SERVER)) {
-                Termux.startServer(this, Prefs.token(this));
-                for (int i = 0; i < 40 && !up; i++) { sleep(250); up = healthy(server); }
+            if (Prefs.standalone(this)) {
+                if (!Linux.installed(this)) { load("file:///android_asset/ui/setup.html"); return; }
+                Linux.startServer(this);
+                for (int i = 0; i < 120 && !up; i++) { sleep(250); up = healthy(server); }
+                load(up ? server + "/ui/" : "file:///android_asset/ui/setup.html#trouble");
+                return;
             }
-            final String url = up ? server + "/ui/" : "file:///android_asset/ui/index.html";
-            ui.post(() -> { loadedFrom = url; web.loadUrl(url); });
+            load(up ? server + "/ui/" : "file:///android_asset/ui/index.html");
         }).start();
     }
+    private void load(String url) { ui.post(() -> { loadedFrom = url; pageReady = false; web.loadUrl(url); }); }
 
     static boolean healthy(String server) {
         try {
@@ -137,7 +145,8 @@ public class MainActivity extends Activity {
     private void requestRuntimePermissions() {
         List<String> want = new ArrayList<>();
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) want.add("android.permission.POST_NOTIFICATIONS");
-        if (Termux.installed(this) && !Termux.hasPermission(this)) want.add(Termux.PERMISSION);
+        // Phone storage, so Claude can work on files in /sdcard (legacy storage: the app targets SDK 28).
+        if (checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) want.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE);
         if (!want.isEmpty()) requestPermissions(want.toArray(new String[0]), REQ_PERMS);
     }
 
@@ -152,10 +161,12 @@ public class MainActivity extends Activity {
             } catch (Exception e) { cb.err(e.getMessage()); }
             return;
         }
-        if (code == REQ_PERMS && Termux.hasPermission(this)) {
-            new Thread(() -> { if (!healthy(Prefs.LOCAL_SERVER)) { Termux.startServer(this, Prefs.token(this)); sleep(3000); ui.post(() -> { if (loadedFrom.startsWith("file:")) boot(); }); } }).start();
-        }
+        // Storage access changes what proot binds (/sdcard), so restart the built-in server to pick it up.
+        if (code == REQ_PERMS && Prefs.standalone(this) && Linux.installed(this)) Linux.restartServer();
     }
+
+    private final Linux.Listener runtimeListener = s -> { final String json = s.toString(); ui.post(() -> emit("runtime", json)); };
+    @Override protected void onDestroy() { Linux.removeListener(runtimeListener); super.onDestroy(); }
 
     @Override protected void onResume() { super.onResume(); foreground = true; currentRef = new java.lang.ref.WeakReference<>(this); }
     @Override protected void onPause() { super.onPause(); foreground = false; }
@@ -296,14 +307,19 @@ public class MainActivity extends Activity {
         @JavascriptInterface public void ready() {
             ui.post(() -> { pageReady = true; if (pendingIntentJson != null) { emit("intent", pendingIntentJson); pendingIntentJson = null; } });
         }
+        /** The UI lost its server: in standalone mode make sure the built-in one is running. */
         @JavascriptInterface public void ensureServer() {
-            if (!Prefs.server(MainActivity.this).equals(Prefs.LOCAL_SERVER)) return;
-            if (!Termux.installed(MainActivity.this)) { toast("Termux is not installed"); return; }
-            if (!Termux.hasPermission(MainActivity.this)) { ui.post(MainActivity.this::requestRuntimePermissions); return; }
-            if (!Termux.startServer(MainActivity.this, Prefs.token(MainActivity.this)))
-                toast("Couldn't start the server. In Termux run: pocket-agent start");
+            if (Prefs.standalone(MainActivity.this)) { if (Linux.installed(MainActivity.this)) Linux.startServer(MainActivity.this); else boot(); }
         }
-        @JavascriptInterface public void restartServer() { Termux.restartServer(MainActivity.this, Prefs.token(MainActivity.this)); }
+        @JavascriptInterface public void restartServer() {
+            if (Prefs.standalone(MainActivity.this)) Linux.restartServer();
+            else Termux.restartServer(MainActivity.this, Prefs.token(MainActivity.this));
+        }
+        @JavascriptInterface public boolean isStandalone() { return Prefs.standalone(MainActivity.this); }
+        /** Switches between the built-in server and an external one, then reloads. */
+        @JavascriptInterface public void reboot() { ui.post(MainActivity.this::boot); }
+        /** Opens the bundled setup screen (e.g. "#login" to sign in again); http pages can't link to file:// themselves. */
+        @JavascriptInterface public void openSetup(String hash) { load("file:///android_asset/ui/setup.html" + (hash == null ? "" : hash)); }
         @JavascriptInterface public void openTermux() { ui.post(() -> Termux.openApp(MainActivity.this)); }
         @JavascriptInterface public void openInTermux(String cwd, String sessionId) {
             if (!Termux.openClaude(MainActivity.this, cwd, sessionId)) { toast("Allow Pocket Agent to run Termux commands first"); ui.post(() -> Termux.openApp(MainActivity.this)); }
@@ -364,6 +380,8 @@ public class MainActivity extends Activity {
             });
         }
         @JavascriptInterface public void settingsChanged(String json) { Prefs.setUi(MainActivity.this, json); }
+        /** UI settings live natively too: each server is a different web origin with its own localStorage. */
+        @JavascriptInterface public String uiSettings() { return Prefs.ui(MainActivity.this).toString(); }
         @JavascriptInterface public void setBackHandler(boolean on) { /* back is always routed through paBack() */ }
     }
 }

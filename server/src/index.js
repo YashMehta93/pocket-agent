@@ -22,8 +22,11 @@ process.on("SIGUSR2", () => {
   const tick = () => {
     if (anyBusy()) return setTimeout(tick, 2000);
     log("idle; restarting");
-    const bin = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../bin/pocket-agent");
-    spawn("sh", ["-c", `sleep 1; exec "${bin}" start`], { detached: true, stdio: "ignore" }).unref();
+    // Inside the app (PA_SUPERVISED) the app restarts us; in Termux we start our successor ourselves.
+    if (!process.env.PA_SUPERVISED) {
+      const bin = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../bin/pocket-agent");
+      spawn("sh", ["-c", `sleep 1; exec "${bin}" start`], { detached: true, stdio: "ignore" }).unref();
+    }
     server.close();
     shutdown();
   };

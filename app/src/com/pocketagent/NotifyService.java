@@ -40,6 +40,8 @@ public class NotifyService extends Service {
             else startForeground(Notifier.ID_STATUS, n);
         } catch (Exception e) { /* no notification permission yet: keep running in the background */ }
         if (!running) { running = true; worker = new Thread(this::loop, "pa-sse"); worker.start(); }
+        // This foreground service also keeps the built-in server alive while the app is in the background.
+        if (Prefs.standalone(this) && Linux.installed(this)) Linux.startServer(this);
         return START_STICKY;
     }
 

@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
+  Targets SDK 28 (set in build.sh) like Termux: newer targets forbid executing programs from app
+  storage, which the built-in Linux (proot + Alpine, see Linux.java) needs. Fine for sideloading.
+
   The manifest declares every permission and component the roadmap needs, up front, so new
   features can ship as server/UI changes without reinstalling. Declaring a permission grants
   nothing: runtime permissions are requested only when a feature first uses them, and the
@@ -32,7 +35,10 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <!-- Termux integration (current setup) -->
+    <!-- phone storage (/sdcard) for Claude to work on your files; legacy storage since we target SDK 28 -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- Termux integration (optional "Connect to a server" mode) -->
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
 
     <queries>
@@ -47,7 +53,9 @@
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true"
-        android:allowBackup="false">
+        android:allowBackup="false"
+        android:extractNativeLibs="true"
+        android:requestLegacyExternalStorage="true">
 
         <activity
             android:name=".MainActivity"

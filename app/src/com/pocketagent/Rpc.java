@@ -40,7 +40,7 @@ import java.util.Locale;
  */
 final class Rpc {
     /** Bump when methods are added; the server/UI can check it via "capabilities". */
-    static final int API_VERSION = 1;
+    static final int API_VERSION = 2;   // 2: runtime.* (built-in Linux) and mode.set
 
     interface Done { void ok(Object result); void err(String message); }
 
@@ -53,6 +53,8 @@ final class Rpc {
         "settings.open", "location.get", "tts.speak", "update.install", "termux.run",
         "a11y.status", "a11y.tree", "a11y.click", "a11y.long_click", "a11y.set_text", "a11y.scroll", "a11y.global", "a11y.gesture", "a11y.screenshot",
         "notifications.list", "notifications.dismiss",
+        "runtime.status", "runtime.install", "runtime.auth", "runtime.login.start", "runtime.login.code", "runtime.logs",
+        "runtime.restart", "runtime.start", "runtime.reset", "runtime.exec", "mode.set",
     };
 
     private Rpc() {}
@@ -141,6 +143,7 @@ final class Rpc {
             case "notifications.dismiss": { NotifListener l = NotifListener.instance; if (l == null) { d.err("Notification access is off"); return; } l.dismiss(p.optString("key")); d.ok(true); return; }
         }
         if (m.startsWith("a11y.")) { a11y(m.substring(5), p, d); return; }
+        if (m.startsWith("runtime.") || m.equals("mode.set")) { runtime(c, m, p, d); return; }
         d.err("Unknown method " + m + " (this app version supports: capabilities)");
     }
 
@@ -165,6 +168,41 @@ final class Rpc {
             case "screenshot": s.screenshot(p.optInt("maxSide", 1280), d); return;
         }
         d.err("Unknown method a11y." + m);
+    }
+
+    /** The built-in Linux environment (Linux.java). Slow calls run on their own thread. */
+    private static void runtime(Context c, String m, JSONObject p, Done d) throws Exception {
+        switch (m) {
+            case "runtime.status": {
+                JSONObject s = new JSONObject().put("standalone", Prefs.standalone(c)).put("installed", Linux.installed(c))
+                    .put("state", Linux.state(c)).put("progress", Linux.status()).put("serverAlive", Linux.serverAlive())
+                    .put("freeMB", c.getFilesDir().getUsableSpace() / 1048576).put("serverUrl", Linux.SERVER_URL);
+                d.ok(s); return;
+            }
+            case "runtime.install": Linux.installAsync(c); d.ok(true); return;
+            case "runtime.restart": Linux.restartServer(); d.ok(true); return;
+            case "runtime.start": Linux.startServer(c); d.ok(true); return;
+            case "runtime.reset": Linux.reset(c); d.ok(true); return;
+            case "runtime.logs": d.ok(Linux.tail("server".equals(p.optString("which")) ? Linux.serverLog(c) : Linux.setupLog(c), p.optInt("bytes", 20000))); return;
+            case "mode.set": {
+                JSONObject ui = Prefs.ui(c);
+                ui.put("server", p.optString("server", "")).put("token", p.optString("token", ""));
+                Prefs.setUi(c, ui.toString());
+                MainActivity a = MainActivity.current(); if (a != null) a.boot();
+                d.ok(true); return;
+            }
+        }
+        new Thread(() -> {
+            try {
+                switch (m) {
+                    case "runtime.auth": d.ok(Linux.authStatus(c)); return;
+                    case "runtime.login.start": d.ok(new JSONObject().put("url", Linux.loginStart(c))); return;
+                    case "runtime.login.code": d.ok(Linux.loginCode(c, p.optString("code"))); return;
+                    case "runtime.exec": d.ok(Linux.capture(c, p.optString("cmd"), p.optLong("timeoutMs", 60_000))); return;
+                    default: d.err("Unknown method " + m);
+                }
+            } catch (Exception e) { d.err(String.valueOf(e.getMessage())); }
+        }, "pa-rpc-" + m).start();
     }
 
     // ───── helpers ─────

@@ -89,7 +89,7 @@ function sessionMenu(s) {
     { label: "Rename", icon: "edit", run: () => renameSession(s.sessionId, s.title) },
     { label: pinned ? "Unpin" : "Pin", icon: "pin", run: async () => { const r = await conn.call("session.pin", { sessionId: s.sessionId, pinned: !pinned }); state.pinned = r.pinned; renderSessions(); } },
     { label: "Duplicate (fork)", icon: "fork", run: () => forkSession(s.sessionId) },
-    native && { label: "Continue in Termux", icon: "terminal", run: () => nativeCall("openInTermux", s.cwd || state.home, s.sessionId) },
+    native && !nativeCall("isStandalone") && { label: "Continue in Termux", icon: "terminal", run: () => nativeCall("openInTermux", s.cwd || state.home, s.sessionId) },
     { label: "Copy session ID", icon: "copy", run: () => copyText(s.sessionId) },
     live && { label: "Stop background process", icon: "stop", run: () => conn.call("session.close", { sessionId: s.sessionId }) },
     { label: "Delete", icon: "trash", danger: true, run: () => deleteSession(s.sessionId, s.title) },

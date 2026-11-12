@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Set up Pocket Agent</title>
+<link rel="stylesheet" href="css/app.css">
+<style>
+  /* First-run setup (bundled in the APK; runs before the built-in server exists). Driven by Linux.java via window.PA. */
+  body { overflow-y: auto; }
+  .setup { max-width: 560px; margin: 0 auto; padding: calc(9vh + var(--safe-t)) 22px calc(28px + var(--safe-b)); min-height: 100%; display: flex; flex-direction: column; }
+  .setup h1 { font: 400 32px/1.1 var(--serif); letter-spacing: -0.03em; margin: 22px 0 12px; }
+  .setup p { color: var(--muted); margin: 0 0 14px; line-height: 1.6; }
+  .setup .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 22px 0 26px; }
+  .setup .fact { border: 1px solid var(--line); border-radius: 10px; padding: 14px; background: var(--surface); }
+  .setup .fact b { display: block; font: 500 20px/1.2 var(--serif); color: var(--text); margin-bottom: 2px; }
+  .setup .fact span { font-size: 12.5px; color: var(--muted); }
+  .steps { margin: 18px 0; border-top: 1px solid var(--line); }
+  .stp { display: flex; gap: 12px; align-items: center; padding: 13px 2px; border-bottom: 1px solid var(--line); }
+  .stp .ic { width: 18px; height: 18px; flex: none; display: grid; place-items: center; color: var(--faint); }
+  .stp .ic svg { width: 16px; height: 16px; }
+  .stp.done .ic { color: var(--green); } .stp.err .ic { color: var(--red); }
+  .stp .nm { flex: 1; } .stp.wait .nm { color: var(--faint); }
+  .stp .sz { font: 11.5px var(--mono); color: var(--faint); }
+  .bar { height: 3px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 6px 0 10px; }
+  .bar i { display: block; height: 100%; background: var(--text); width: 0; transition: width .4s var(--ease); }
+  .detail { font: 12px/1.5 var(--mono); color: var(--muted); min-height: 1.5em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .log { font: 11px/1.5 var(--mono); color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 38vh; overflow: auto; white-space: pre-wrap; word-break: break-word; margin-top: 12px; }
+  .spacer { flex: 1; min-height: 24px; }
+  .actions { display: flex; flex-direction: column; gap: 10px; }
+  .linkbtn { color: var(--muted); text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px; font-size: 14px; padding: 6px; }
+  .err-box { background: var(--red-bg); color: var(--red); border-radius: 8px; padding: 12px 14px; font-size: 14px; margin: 10px 0; }
+  .ok-box { background: var(--green-bg); color: var(--green); border-radius: 8px; padding: 12px 14px; font-size: 14px; margin: 10px 0; }
+  .num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line2); font: 500 12px var(--mono); margin-right: 8px; color: var(--muted); }
+  .how { margin: 6px 0 16px; padding: 0; list-style: none; }
+  .how li { display: flex; align-items: flex-start; padding: 8px 0; color: var(--text2); font-size: 14.5px; }
+  section[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="setup">
+  <div class="logo big" style="margin:0"></div>
+
+  <!-- 1. intro -->
+  <section id="s-intro" hidden>
+    <h1>Claude Code, on this phone.</h1>
+    <p>Pocket Agent runs Claude Code in its own small Linux system inside the app. No Termux, no computer needed.</p>
+    <div class="facts">
+      <div class="fact"><b>~300 MB</b><span>to download, once</span></div>
+      <div class="fact"><b>~600 MB</b><span>of storage used</span></div>
+      <div class="fact"><b>3–8 min</b><span>on Wi-Fi</span></div>
+      <div class="fact"><b id="free">…</b><span>free on this phone</span></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="actions">
+      <button class="btn primary" id="start">Set up Pocket Agent</button>
+      <button class="linkbtn" id="use-server">Connect to a server instead (Termux or a computer)</button>
+    </div>
+  </section>
+
+  <!-- 2. progress -->
+  <section id="s-progress" hidden>
+    <h1 id="p-title">Setting things up</h1>
+    <p>You can leave the app while this runs. Keep the phone on Wi-Fi if you can.</p>
+    <div class="steps" id="steps"></div>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="detail" id="detail"></div>
+    <div id="p-error"></div>
+    <div class="spacer"></div>
+    <div class="actions">
+      <button class="btn primary" id="retry" hidden>Try again</button>
+      <button class="linkbtn" id="toggle-log">Show details</button>
+    </div>
+    <pre class="log" id="log" hidden></pre>
+  </section>
+
+  <!-- 3. sign in -->
+  <section id="s-login" hidden>
+    <h1>Sign in to Claude</h1>
+    <p>Use your own Claude account (Pro or Max). Pocket Agent never sees your password.</p>
+    <ol class="how">
+      <li><span class="num">1</span><span>Open the sign-in page and approve access.</span></li>
+      <li><span class="num">2</span><span>Copy the code it shows you.</span></li>
+      <li><span class="num">3</span><span>Come back here and paste it below.</span></li>
+    </ol>
+    <button class="btn" id="open-login">Open sign-in page</button>
+    <input class="field" id="code" placeholder="Paste the code here" autocomplete="off" autocapitalize="off" spellcheck="false" style="margin-top:14px">
+    <div id="l-msg"></div>
+    <div class="spacer"></div>
+    <div class="actions"><button class="btn primary" id="finish-login" disabled>Finish sign-in</button></div>
+  </section>
+
+  <!-- 4. starting / trouble -->
+  <section id="s-start" hidden>
+    <h1 id="st-title">Starting Pocket Agent</h1>
+    <p id="st-text">Starting Claude Code…</p>
+    <div class="bar"><i id="st-bar" style="width:30%"></i></div>
+    <div id="st-error"></div>
+    <div class="spacer"></div>
+    <div class="actions">
+      <button class="btn" id="st-restart" hidden>Restart</button>
+      <button class="linkbtn" id="st-log">Show server log</button>
+    </div>
+    <pre class="log" id="st-logbox" hidden></pre>
+  </section>
+
+  <!-- server instead -->
+  <section id="s-server" hidden>
+    <h1>Connect to a server</h1>
+    <p>Use a Pocket Agent server running in Termux or on a computer. In Termux, run <code>pocket-agent start</code>, then <code>pocket-agent token</code>.</p>
+    <input class="field" id="srv-url" value="http://127.0.0.1:8765" autocapitalize="off" spellcheck="false">
+    <input class="field" id="srv-token" placeholder="Token" autocapitalize="off" spellcheck="false">
+    <div class="spacer"></div>
+    <div class="actions">
+      <button class="btn primary" id="srv-connect">Connect</button>
+      <button class="linkbtn" id="srv-back">Back to setting up on this phone</button>
+    </div>
+  </section>
+</div>
+<div id="toast"></div>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const ICON = { check: "M5 12l5 5L20 7", x: "M6 6l12 12M18 6L6 18", dot: "M12 12h.01" };
+const icon = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[n]}"/></svg>`;
+const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+document.documentElement.dataset.theme = dark ? "dark" : "light";
+try { PA.setTheme(dark ? "dark" : "light", getComputedStyle(document.documentElement).getPropertyValue("--bg").trim()); } catch {}
+
+// ── native bridge ──
+const waiting = new Map(); let n = 0;
+const listeners = {};
+window.paNative = { emit(name, json) { const v = typeof json === "string" ? JSON.parse(json || "null") : json;
+  if (name === "rpc") { const w = waiting.get(v.id); if (w) { waiting.delete(v.id); v.error ? w[1](new Error(v.error)) : w[0](v.result); } }
+  (listeners[name] || []).forEach(f => f(v)); } };
+function rpc(method, params = {}) {
+  return new Promise((res, rej) => { if (!window.PA?.rpc) return rej(new Error("Update the app")); const id = "s" + (++n); waiting.set(id, [res, rej]); PA.rpc(id, method, JSON.stringify(params)); });
+}
+const on = (name, f) => (listeners[name] ||= []).push(f);
+function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("show"); setTimeout(() => el.classList.remove("show"), 2200); }
+function show(id) { document.querySelectorAll("section").forEach(s => s.hidden = s.id !== id); }
+
+// ── steps ──
+const STEPS = [["rootfs", "Linux system", "~4 MB"], ["packages", "Tools: Node.js, git, ripgrep", "~100 MB"], ["claude", "Claude Code", "~60 MB download"], ["server", "Pocket Agent server", "~60 MB"]];
+function renderSteps(cur, failed) {
+  const idx = STEPS.findIndex(s => s[0] === cur);
+  $("#steps").innerHTML = STEPS.map(([id, name, size], i) => {
+    const st = failed && i === idx ? "err" : (cur === "done" || i < idx) ? "done" : i === idx ? "run" : "wait";
+    const ic = st === "done" ? icon("check") : st === "err" ? icon("x") : st === "run" ? '<span class="spark"></span>' : icon("dot");
+    return `<div class="stp ${st}"><span class="ic">${ic}</span><span class="nm">${esc(name)}</span><span class="sz">${esc(size)}</span></div>`;
+  }).join("");
+}
+let lastStep = "rootfs";
+on("runtime", s => {
+  if (s.step === "error") { renderSteps(lastStep, true); $("#p-title").textContent = "Setup stopped"; $("#p-error").innerHTML = `<div class="err-box">${esc(s.detail)}</div>`; $("#retry").hidden = false; refreshLog(); return; }
+  if (s.step === "done") { renderSteps("done"); $("#bar").style.width = "100%"; afterInstall(); return; }
+  if (STEPS.some(x => x[0] === s.step)) lastStep = s.step;
+  if ($("#s-progress").hidden) show("s-progress");
+  renderSteps(lastStep);
+  if (s.pct >= 0) $("#bar").style.width = s.pct + "%";
+  $("#detail").textContent = s.detail || s.label;
+});
+
+async function refreshLog() { if ($("#log").hidden) return; try { $("#log").textContent = await rpc("runtime.logs", { which: "setup", bytes: 12000 }); $("#log").scrollTop = 1e9; } catch {} }
+setInterval(refreshLog, 2000);
+$("#toggle-log").onclick = () => { $("#log").hidden = !$("#log").hidden; $("#toggle-log").textContent = $("#log").hidden ? "Show details" : "Hide details"; refreshLog(); };
+
+function startInstall() {
+  show("s-progress"); $("#p-title").textContent = "Setting things up"; $("#p-error").innerHTML = ""; $("#retry").hidden = true;
+  renderSteps(lastStep); rpc("runtime.install").catch(e => toast(e.message));
+}
+$("#start").onclick = startInstall;
+$("#retry").onclick = startInstall;
+
+// ── sign-in ──
+async function afterInstall() {
+  show("s-start"); $("#st-text").textContent = "Checking your Claude sign-in…";
+  try {
+    const a = await rpc("runtime.auth");
+    if (!a.loggedIn) { show("s-login"); return; }
+  } catch (e) { /* if the check itself fails, try starting anyway */ }
+  openApp();
+}
+let loginUrl = null;
+$("#open-login").onclick = async () => {
+  $("#open-login").disabled = true; $("#open-login").textContent = "Opening…";
+  try { const r = await rpc("runtime.login.start"); loginUrl = r.url; await rpc("url.open", { url: loginUrl }); $("#open-login").textContent = "Open sign-in page again"; }
+  catch (e) { $("#l-msg").innerHTML = `<div class="err-box">${esc(e.message)}</div>`; $("#open-login").textContent = "Open sign-in page"; }
+  $("#open-login").disabled = false;
+};
+$("#code").oninput = () => { $("#finish-login").disabled = !$("#code").value.trim() || !loginUrl; };
+$("#finish-login").onclick = async () => {
+  $("#finish-login").disabled = true; $("#finish-login").textContent = "Signing in…"; $("#l-msg").innerHTML = "";
+  try {
+    const s = await rpc("runtime.login.code", { code: $("#code").value });
+    $("#l-msg").innerHTML = `<div class="ok-box">Signed in${s.email ? " as " + esc(s.email) : ""}.</div>`;
+    setTimeout(openApp, 900);
+  } catch (e) { $("#l-msg").innerHTML = `<div class="err-box">${esc(e.message)}</div>`; $("#finish-login").disabled = false; $("#finish-login").textContent = "Finish sign-in"; loginUrl = null; $("#open-login").textContent = "Open sign-in page"; }
+};
+
+// ── start the built-in server and hand over to the real app ──
+async function openApp() {
+  show("s-start"); $("#st-title").textContent = "Starting Pocket Agent"; $("#st-text").textContent = "Starting Claude Code…"; $("#st-error").innerHTML = "";
+  const st = await rpc("runtime.status");
+  await rpc("runtime.start");
+  const t0 = Date.now();
+  while (Date.now() - t0 < 60000) {
+    try { const r = await fetch(st.serverUrl + "/health", { cache: "no-store" }); if (r.ok) { location.href = st.serverUrl + "/ui/"; return; } } catch {}
+    $("#st-bar").style.width = Math.min(95, 30 + (Date.now() - t0) / 900) + "%";
+    await new Promise(r => setTimeout(r, 700));
+  }
+  trouble();
+}
+function trouble() {
+  show("s-start"); $("#st-title").textContent = "Couldn't start Pocket Agent";
+  $("#st-text").textContent = "The built-in server didn't come up. The log below usually says why.";
+  $("#st-restart").hidden = false; $("#st-logbox").hidden = false; loadServerLog();
+}
+async function loadServerLog() { try { $("#st-logbox").textContent = await rpc("runtime.logs", { which: "server", bytes: 12000 }) || "(empty)"; $("#st-logbox").scrollTop = 1e9; } catch (e) { $("#st-logbox").textContent = e.message; } }
+$("#st-restart").onclick = () => { rpc("runtime.restart").catch(() => {}); openApp(); };
+$("#st-log").onclick = () => { $("#st-logbox").hidden = !$("#st-logbox").hidden; loadServerLog(); };
+
+// ── server instead ──
+$("#use-server").onclick = () => show("s-server");
+$("#srv-back").onclick = () => show("s-intro");
+$("#srv-connect").onclick = async () => {
+  const server = $("#srv-url").value.trim().replace(/\/$/, ""), token = $("#srv-token").value.trim();
+  if (!server || !token) return toast("Enter the address and the token");
+  try { const r = await fetch(server + "/health"); if (!r.ok) throw 0; } catch { return toast("Can't reach " + server); }
+  try { const ui = JSON.parse(PA.uiSettings() || "{}"); PA.settingsChanged(JSON.stringify({ ...ui, server, token })); } catch {}
+  await rpc("mode.set", { server, token });
+};
+
+// ── where are we? ──
+(async () => {
+  try {
+    const st = await rpc("runtime.status");
+    $("#free").textContent = st.freeMB > 1024 ? (st.freeMB / 1024).toFixed(1) + " GB" : st.freeMB + " MB";
+    if (location.hash === "#trouble") return trouble();
+    if (location.hash === "#login") { show("s-login"); return; }
+    if (st.progress?.installing) { show("s-progress"); return; }
+    if (st.installed) return afterInstall();
+    show("s-intro");
+    if (st.freeMB < 1200) { $("#start").disabled = true; $("#start").textContent = "Free up storage to continue (1.2 GB needed)"; }
+  } catch (e) { show("s-intro"); toast(e.message); }
+})();
+try { PA.ready(); } catch {}
+</script>
+</body>
+</html>

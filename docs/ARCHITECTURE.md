@@ -24,15 +24,18 @@ Pocket Agent is a phone UI for **Claude Code**. The model runs on Anthropic's se
                          Anthropic API
 ```
 
-## Where things run today, and where they're going
+## Where things run
 
-| | Today | Next (see README "Roadmap") |
-|---|---|---|
-| Linux environment | Termux (`claude` = proot launcher) | bundled inside the APK (proot + Debian rootfs), no Termux |
-| Server start | Termux `pocket-agent start` (app triggers it via RUN_COMMAND) | the app's foreground service |
-| Remote compute | — | same server on a PC, reached over SSH/Tailscale |
+| Mode | Linux environment | Server | How the app connects |
+|---|---|---|---|
+| **Standalone** (default) | built into the app: Alpine Linux via proot (`Linux.java`) | started and supervised by the app, port 8790 | automatically, with the app's own token |
+| **Server** | Termux on this phone, or a computer | `pocket-agent start` (port 8765) | Settings → "Claude runs on" → address + token |
 
-The protocol between app and server stays the same in all cases; that's the contract that keeps the pieces swappable.
+Standalone setup (first run, `setup.html` + `Linux.java`): download the Alpine minirootfs (sha256-checked, resumable) → unpack in Java (`Tar.java`) → `apk add` Node, git, ripgrep, bash… (proot fake-root) → Claude Code's official installer (as a normal user: Claude refuses some flags as root) → copy the server + UI bundled in the APK (`assets/server`, `assets/ui`) to `/opt/pocket-agent` and `npm install` → sign in with `claude auth login` (URL out, pasted code in). Each step is recorded in `files/linux/state.json`, so a failed setup resumes. An app update re-copies the bundle when `assets/bundle.json` changed.
+
+proot ships as `lib*.so` in the APK (`app/jniLibs`, prepared by `app/native/prepare-proot.sh`): Android only executes files from the native-library dir, and the app targets SDK 28 so proot may run programs from the rootfs. Phone storage is bound at `/sdcard` once the storage permission is granted.
+
+The protocol between app and server is the same in both modes; that's what keeps them swappable.
 
 ## Lifecycle of one message
 

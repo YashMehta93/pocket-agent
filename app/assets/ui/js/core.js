@@ -81,7 +81,12 @@ const SETTINGS_KEY = "pa.settings";
 const settings = Object.assign({
   theme: "system", fontSize: 15.5, enterToSend: false, haptics: true, showThinking: true, autoExpandTools: false,
   server: "", token: "", notifyDone: true, notifyApproval: true,
-}, (() => { try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"); } catch { return {}; } })());
+}, (() => {
+  // In the app, settings live natively: the built-in server, Termux and a PC are different web
+  // origins with separate localStorage, and settings should survive switching between them.
+  try { const n = native && typeof native.uiSettings === "function" ? JSON.parse(native.uiSettings() || "{}") : null; if (n && Object.keys(n).length) return n; } catch {}
+  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"); } catch { return {}; }
+})());
 function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {} applySettings(); nativeCall("settingsChanged", JSON.stringify(settings)); }
 function applySettings() {
   const dark = settings.theme === "dark" || (settings.theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
@@ -105,7 +110,8 @@ const state = {
 const conn = {
   ws: null, ok: false, n: 0, waiting: new Map(), listeners: {}, retry: 0,
   base() { return (settings.server || nativeCall("serverUrl") || (location.protocol.startsWith("http") ? location.origin : "http://127.0.0.1:8765")).replace(/\/$/, ""); },
-  token() { return settings.token || nativeCall("token") || new URLSearchParams(location.hash.slice(1)).get("token") || ""; },
+  /** A typed-in token applies only to a custom server; the built-in server uses the app's own token. */
+  token() { return (settings.server && settings.token) || nativeCall("token") || new URLSearchParams(location.hash.slice(1)).get("token") || settings.token || ""; },
   url() { return this.base().replace(/^http/, "ws") + "/ws?token=" + encodeURIComponent(this.token()); },
   /** "up" = server reachable (so a failing socket means the token is wrong), "down" = unreachable. */
   async probe() {
