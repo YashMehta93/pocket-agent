@@ -70,7 +70,17 @@ final class Linux {
         try { JSONObject s = state(c); s.put(key, v); write(stateFile(c), s.toString()); } catch (Exception ignored) {}
     }
     /** Setup finished and the Linux system is present. */
-    static boolean installed(Context c) { return state(c).optBoolean("ready", false) && new File(rootfs(c), "bin/sh").exists(); }
+    static boolean installed(Context c) { return state(c).optBoolean("ready", false) && lexists(new File(rootfs(c), "bin/busybox")); }
+
+    /**
+     * Whether a path exists *without following symlinks*. Inside the rootfs, links like /bin/sh -> /bin/busybox
+     * are absolute and only resolve inside proot; File.exists() would follow them on Android and say false.
+     */
+    static boolean lexists(File f) { try { Os.lstat(f.getAbsolutePath()); return true; } catch (Exception e) { return false; } }
+    /** What each install step must leave behind; checked so a damaged install repairs itself. */
+    private static boolean hasRootfs(File r) { return lexists(new File(r, "bin/busybox")) && lexists(new File(r, "etc/alpine-release")); }
+    private static boolean hasPackages(File r) { return lexists(new File(r, "usr/bin/node")) && lexists(new File(r, "usr/bin/curl")) && lexists(new File(r, "bin/bash")); }
+    private static boolean hasClaude(File r) { return lexists(new File(r, "root/.local/bin/claude")); }
 
     static JSONObject status() { return status; }
     static void addListener(Listener l) { listeners.add(l); }
@@ -134,11 +144,11 @@ final class Linux {
     }
     private static void pump(InputStream in, LineSink sink) {
         try (InputStream i = in) {
-            StringBuilder line = new StringBuilder(); int b;
+            java.io.ByteArrayOutputStream line = new java.io.ByteArrayOutputStream(); int b;
             while ((b = i.read()) != -1) {
-                if (b == '\n') { if (sink != null) sink.line(line.toString()); line.setLength(0); } else line.append((char) b);
+                if (b == '\n') { if (sink != null) sink.line(line.toString("UTF-8").replace("\r", "")); line.reset(); } else line.write(b);
             }
-            if (line.length() > 0 && sink != null) sink.line(line.toString());
+            if (line.size() > 0 && sink != null) sink.line(line.toString("UTF-8"));
         } catch (IOException ignored) {}
     }
 
@@ -160,7 +170,10 @@ final class Linux {
         JSONObject st = state(c);
         File r = rootfs(c);
 
-        if (!st.optBoolean("rootfs") || !new File(r, "bin/sh").exists()) {
+        if (!st.optBoolean("rootfs") || !hasRootfs(r)) {
+            // a fresh rootfs invalidates everything installed into the old one
+            mark(c, "packages", false); mark(c, "claude", false); mark(c, "ready", false);
+            new File(rootfs(c).getParentFile(), "rootfs/opt/pocket-agent/bundle.json").delete();
             emit(c, "rootfs", "Downloading Linux", 2, "Alpine Linux base system");
             String yaml = httpText(ALPINE + "latest-releases.yaml");
             Matcher m = Pattern.compile("file:\\s*(alpine-minirootfs-[0-9.]+-aarch64\\.tar\\.gz)[\\s\\S]*?sha256:\\s*([0-9a-f]{64})").matcher(yaml);
@@ -180,7 +193,8 @@ final class Linux {
             mark(c, "rootfs", true);
         }
 
-        if (!state(c).optBoolean("packages")) {
+        if (!state(c).optBoolean("packages") || !hasPackages(r)) {
+            mark(c, "claude", false);
             emit(c, "packages", "Installing tools", 12, "Node.js, git, ripgrep, bash");
             int code = run(c, "apk update && apk add --no-cache " + PACKAGES, true, s -> { log(c, s); emit(c, "packages", "Installing tools", 30, s); }, 15 * 60_000);
             if (code != 0) throw new IOException("Installing tools failed (exit " + code + "). Check your connection and retry.");
@@ -191,7 +205,7 @@ final class Linux {
             mark(c, "packages", true);
         }
 
-        if (!state(c).optBoolean("claude") || !new File(r, "root/.local/bin/claude").exists()) {
+        if (!state(c).optBoolean("claude") || !hasClaude(r)) {
             emit(c, "claude", "Installing Claude Code", 40, "Official installer from claude.ai");
             int code = run(c, "curl -fsSL https://claude.ai/install.sh | bash", false, s -> { log(c, s); emit(c, "claude", "Installing Claude Code", 60, s); }, 20 * 60_000);
             String v = capture(c, "claude --version", 60_000).trim();
@@ -213,21 +227,24 @@ final class Linux {
     static synchronized void syncBundle(Context c, boolean reportProgress) throws Exception {
         AssetManager am = c.getAssets();
         String bundled = readAsset(am, "bundle.json");
-        File r = rootfs(c);
-        File dest = new File(r, "opt/pocket-agent");
+        File dest = new File(rootfs(c), "opt/pocket-agent");
         File marker = new File(dest, "bundle.json");
-        String installedBundle = marker.exists() ? read(marker) : "";
-        if (bundled.equals(installedBundle) && new File(dest, "server/node_modules").exists()) return;
+        // Written only after npm install succeeds, with the dependency files it installed from;
+        // a half-finished install (app killed mid-way) therefore reruns instead of being trusted.
+        File depsMarker = new File(dest, "server/.deps-installed");
+        if (marker.exists() && bundled.equals(read(marker)) && depsMarker.exists()) return;
         if (reportProgress) emit(c, "server", "Setting up Pocket Agent", 85, "Copying the server");
-        String oldPkg = new File(dest, "server/package.json").exists() ? read(new File(dest, "server/package.json")) : "";
         deleteTree(new File(dest, "server/src")); deleteTree(new File(dest, "app"));
         copyAssets(am, "server", new File(dest, "server"));
         copyAssets(am, "ui", new File(dest, "app/assets/ui"));
-        String newPkg = read(new File(dest, "server/package.json"));
-        if (!newPkg.equals(oldPkg) || !new File(dest, "server/node_modules").exists()) {
+        File lock = new File(dest, "server/package-lock.json");
+        String deps = read(new File(dest, "server/package.json")) + (lock.exists() ? read(lock) : "");
+        if (!depsMarker.exists() || !deps.equals(read(depsMarker))) {
+            depsMarker.delete();
             if (reportProgress) emit(c, "server", "Setting up Pocket Agent", 90, "Installing server packages");
             int code = run(c, "cd /opt/pocket-agent/server && npm install --omit=optional --no-audit --no-fund", false, s -> log(c, s), 15 * 60_000);
             if (code != 0) throw new IOException("Installing server packages failed (exit " + code + ")");
+            write(depsMarker, deps);
         }
         Os.chmod(new File(dest, "server/bin/pocket-agent").getAbsolutePath(), 0755);
         write(marker, bundled);
@@ -388,7 +405,7 @@ final class Linux {
     private static void write(File f, String s) throws IOException { f.getParentFile().mkdirs(); try (OutputStream o = new FileOutputStream(f)) { o.write(s.getBytes(StandardCharsets.UTF_8)); } }
     private static void append(File f, String s) throws IOException { try (OutputStream o = new FileOutputStream(f, true)) { o.write(s.getBytes(StandardCharsets.UTF_8)); } }
     static void deleteTree(File f) {
-        if (f == null || !f.exists()) return;
+        if (f == null || !lexists(f)) return;
         try {
             boolean link = android.system.OsConstants.S_ISLNK(Os.lstat(f.getAbsolutePath()).st_mode);
             if (f.isDirectory() && !link) { File[] k = f.listFiles(); if (k != null) for (File x : k) deleteTree(x); }
