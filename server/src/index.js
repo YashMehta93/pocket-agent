@@ -8,12 +8,17 @@ import { live, anyBusy } from "./live-session.js";
 import { createServer } from "./http.js";
 import { prefs, savePrefs, DEFAULT_REPO } from "./config.js";
 import { ensureDefaults } from "./devtools.js";
+import { startUpdateChecks } from "./autoupdate.js";
+import { ensureTrustedKeys } from "./signing.js";
+import { ROOT } from "./transfer.js";
 
 const server = createServer();
+if (ensureTrustedKeys(ROOT)) log("restored server/trusted-keys.json");   // see trusted-keys.default.js
 // Inside the app: first-start defaults, and follow the project's GitHub releases unless told otherwise.
 if (process.env.PA_SUPERVISED) {
   ensureDefaults();
   if (prefs.updateChannel === undefined && DEFAULT_REPO) { prefs.updateChannel = { github: DEFAULT_REPO, token: "" }; savePrefs(); }
+  startUpdateChecks();   // a notification when a new release is out (autoupdate.js)
 }
 server.listen(PORT, HOST, () => log(`pocket-agent server ${VERSION} on http://${HOST}:${PORT}`));
 

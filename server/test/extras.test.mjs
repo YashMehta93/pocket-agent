@@ -28,6 +28,7 @@ try {
   write(path.join(HOME, ".claude/settings.json"), "{}");
   write(path.join(HOME, "projects/app/main.js"), "console.log(1)\n");
   write(path.join(HOME, "projects/app/pocket-agent.keystore"), "key");
+  write(path.join(HOME, "projects/app/release-key.pem"), "-----BEGIN PRIVATE KEY-----");
   write(path.join(HOME, "projects/app/node_modules/big/index.js"), "x");
   write(path.join(HOME, ".config/pocket-agent/github-token"), "ghp_secret");
   write(path.join(process.env.PA_DATA, "prefs.json"), "{\"pinned\":[]}");
@@ -39,7 +40,7 @@ try {
   const names = sh(`tar tzf '${b.file}'`).split("\n");
   ok("backup written to phone storage", fs.existsSync(b.file) && b.bytes > 0, b.file.replace(T, ""));
   ok("backup has chats, memory, projects, keystore, prefs", [".claude/projects/-root/chat1.jsonl", ".claude/projects/-root/memory/MEMORY.md", "projects/app/main.js", "projects/app/pocket-agent.keystore", ".pocket-agent/prefs.json"].every(n => names.includes(n)));
-  ok("backup has no sign-in, tokens or node_modules", !names.some(n => /credentials|github-token|node_modules/.test(n)));
+  ok("backup has no sign-in, tokens, release-signing key or node_modules", !names.some(n => /credentials|github-token|node_modules|release-key/.test(n)));
   ok("backup is listed", (await listBackups()).some(x => x.file === b.file));
   fs.rmSync(path.join(HOME, ".claude/projects"), { recursive: true });
   await restoreBackup(b.file);
@@ -82,6 +83,16 @@ try {
   await personalBranch(clone, { login: "alice", id: 8 });
   ok("returning person gets their existing branch", sh("git branch --show-current", clone).trim() === "me/alice" && sh("git rev-parse HEAD", clone) === sh("git rev-parse origin/me/alice", clone));
   ok("Claude is told about the termux command", /`termux <command>`/.test(phoneContext()));
+  // trusted keys: the built-in copy matches the file, and a missing file comes back exactly as released
+  const { ensureTrustedKeys, trustedKeys } = await import("../src/signing.js");
+  const { DEFAULT_TRUSTED_KEYS } = await import("../src/trusted-keys.default.js");
+  const keyFile = fs.readFileSync(path.join(REPO, "server/trusted-keys.json"), "utf8");
+  ok("built-in trusted keys match server/trusted-keys.json", JSON.stringify(DEFAULT_TRUSTED_KEYS, null, 2) + "\n" === keyFile);
+  const bare = path.join(T, "bare"); fs.mkdirSync(path.join(bare, "server"), { recursive: true });
+  ok("without the file, the built-in keys are trusted", trustedKeys(bare).length === DEFAULT_TRUSTED_KEYS.keys.length && trustedKeys(bare).length > 0);
+  ok("a missing keys file is restored byte for byte", ensureTrustedKeys(bare) === true && fs.readFileSync(path.join(bare, "server/trusted-keys.json"), "utf8") === keyFile && ensureTrustedKeys(bare) === false);
+  const { githubRepo } = await import("../src/config.js");
+  ok("any way of writing a GitHub repo becomes owner/repo", ["me/pa", "github.com/me/pa", "https://github.com/me/pa.git", "https://www.github.com/me/pa/", "git@github.com:me/pa.git", " me/pa.git "].every(x => githubRepo(x) === "me/pa"));
 
   // ───── open-pr.sh against a fake GitHub ─────
   let got = null;
@@ -107,7 +118,7 @@ try {
     const cmd = await new Promise(res => { ws.on("message", raw => { const m = JSON.parse(raw); if (m.t === "reply" && m.id === 1) res(m.command); }); ws.send(JSON.stringify({ t: "termux.installCommand", id: 1 })); });
     ws.close();
     const url = cmd.match(/'(http[^']+)'/)[1], code = new URL(url).searchParams.get("code");
-    ok("install command is a one-liner with a code, not the token", /^curl -fsSL '.+' \| bash$/.test(cmd) && !cmd.includes(token));
+    ok("install command upgrades Termux, then runs the script with a code, not the token", /^apt-get update && apt-get -y .* full-upgrade && curl -fsSL '.+' \| bash$/.test(cmd) && !cmd.includes(token));
     const script = await (await fetch(url)).text();
     ok("installer script has this server and the code filled in", script.includes(`APP="\${PA_APP:-http://127.0.0.1:8769}"`) && script.includes(code));
     fs.writeFileSync(path.join(T, "install.sh"), script);

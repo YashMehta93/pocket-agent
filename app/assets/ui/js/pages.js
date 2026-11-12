@@ -146,6 +146,9 @@ function openSettings() {
       <h3>Updates &amp; chats</h3>
       <div class="set-row"><div class="l">Get updates from<small id="u-src">${esc(state.updateChannel ? state.updateChannel + (state.updateKind === "github" && !state.githubToken ? " (no token)" : "") : "Not set: updates come with new app versions")}</small></div><button class="chip" id="u-set">${state.updateChannel ? "Change" : "Set"}</button></div>
       <div class="set-row"><div class="l">Check for updates<small id="u-status">New server code and app screens</small></div><button class="chip" id="u-check">Check</button></div>
+      ${state.updateKind === "github" ? `<div class="set-row"><div class="l">Release track<small>${esc(trackLabel(state.updateTrack))}</small></div></div>
+      <div class="seg" id="u-track">${[["stable", "Stable"], ["beta", "Beta"], ["pin", "Pinned"]].map(([v, l]) => `<button data-v="${v}" class="${(state.updateTrack?.track || "stable") === v ? "on" : ""}">${l}</button>`).join("")}</div>
+      <div class="set-row"><div class="l">Versions<small>Every release, with what changed: switch to any of them</small></div><button class="chip" id="u-versions">Open</button></div>` : ""}
       <div class="set-row"><div class="l">Import chats<small>Copy chats from another Pocket Agent server, like Termux</small></div><button class="chip" id="i-chats">Import</button></div>
       <div class="set-row"><div class="l">Back up to phone storage<small>Chats, memory, settings and projects, to Download/Pocket Agent. Not your sign-in.</small></div><button class="chip" id="b-make">Back up</button></div>
       <div class="set-row"><div class="l">Restore a backup<small>After reinstalling, or on a new phone</small></div><button class="chip" id="b-restore">Restore</button></div>
@@ -181,6 +184,8 @@ function openSettings() {
     body.querySelector("#b-make").onclick = () => makeBackup();
     body.querySelector("#b-restore").onclick = () => chooseBackup();
     body.querySelector("#u-check").onclick = () => checkServerUpdate(true);
+    body.querySelector("#u-versions")?.addEventListener("click", () => openVersions());
+    body.querySelectorAll("#u-track button").forEach(b => b.onclick = () => b.dataset.v === "pin" ? openVersions() : setTrack({ track: b.dataset.v }));
     body.querySelector("#m-open")?.addEventListener("click", () => openMigration());
     body.querySelector("#i-chats").onclick = async () => {
       const src = await askOtherServer("Import chats from", "Copies that server's chats here. Nothing is deleted on either side; their project folders are created here empty.");
@@ -327,6 +332,49 @@ async function askOtherServer(title, text) {
   settings.otherServer = url.trim().replace(/\/$/, ""); settings.otherToken = token.trim(); saveSettings();
   return { url: settings.otherServer, token: settings.otherToken };
 }
+// ───────────── release tracks and versions (GitHub releases) ─────────────
+function trackLabel(t) {
+  if (t?.track === "beta") return "Beta: the newest release, including test versions";
+  if (t?.track === "pin") return `Pinned to ${t.tag}: no updates until you choose another`;
+  return "Stable: the newest full release";
+}
+async function setTrack(t) {
+  try { state.updateTrack = (await conn.call("update.track", t)).track; } catch (e) { return toast(e.message, 5000); }
+  openSettingsRefresh();
+  toast(trackLabel(state.updateTrack), 3000);
+  checkAppUpdate(); checkServerUpdate(true);
+}
+/** All releases, newest first; any of them can be chosen, older ones too (screens and server only). */
+async function openVersions() {
+  let r; try { r = await conn.call("releases.list"); } catch (e) { return toast(e.message, 5000); }
+  const app = nativeCall("appVersion") || "";
+  page.open("Versions", body => {
+    body.innerHTML = `<div class="settings">
+      <div class="sub" style="margin:12px 0">You're on <b>${esc(r.current.version)}</b> (build ${r.current.build})${app ? ` · app ${esc(app)}` : ""}. ${esc(trackLabel(r.track))}.</div>
+      <div id="vers"></div></div>`;
+    const box = body.querySelector("#vers");
+    if (!r.releases.length) box.innerHTML = `<div class="sub">No releases yet.</div>`;
+    for (const rel of r.releases) {
+      const isPinned = r.track.track === "pin" && r.track.tag === rel.tag;
+      const notes = rel.notes.split("\n").filter(l => l.trim()).slice(0, 6).join("\n");
+      const el = h(`<div class="set-row" style="align-items:flex-start"><div class="l">${esc(rel.tag)}${rel.prerelease ? ' <span class="chip">beta</span>' : ""}${isPinned ? ' <span class="chip">pinned</span>' : ""}
+        <small>${esc(new Date(rel.publishedAt).toLocaleDateString())}</small><small style="white-space:pre-wrap">${esc(notes)}</small></div>
+        <button class="chip">Use</button></div>`);
+      el.querySelector("button").onclick = () => switchVersion(rel);
+      box.append(el);
+    }
+  });
+}
+async function switchVersion(rel) {
+  const ok = await confirmSheet({ title: `Use ${rel.tag}?`, ok: "Switch",
+    text: `Pocket Agent stays on ${rel.tag} until you pick Stable, Beta or another version here. Screens and the server switch now; if this release has a newer app, you'll be offered it. An older release keeps your current app: Android can't install an older app over a newer one.` });
+  if (!ok) return;
+  try { state.updateTrack = (await conn.call("update.track", { track: "pin", tag: rel.tag })).track; } catch (e) { return toast(e.message, 5000); }
+  page.close();
+  checkAppUpdate();
+  checkServerUpdate(true);
+}
+
 /** Checks the update source; offers to apply. quiet=false also reports "up to date" and errors. */
 async function checkServerUpdate(loud) {
   try {

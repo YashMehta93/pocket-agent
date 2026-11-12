@@ -35,6 +35,8 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 | `app.update` | | `versionCode, versionName, url` of the newest built APK |
 | `sessions.import` | `url, token` of another server | `added, updated, unchanged, foldersCreated` |
 | `update.channel` | `url, token` (empty url = none) | `channel` |
+| `releases.list` | | `releases[{tag, name, prerelease, publishedAt, notes}]` newest first, `track`, `current{version, build}` (GitHub source only) |
+| `update.track` | `track`: `stable` \| `beta` \| `pin`, `tag` (for pin) | `track`. `update.check` / `update.apply` / `app.update` then follow it; a pinned older release is allowed |
 | `update.check` | (`url, token`, default: the saved channel) | `available, remote, local, channel` |
 | `update.apply` | (same) | `updated, depsChanged`; the server then restarts when idle |
 | `migrate.run` | `url, token` of the Termux server | `job`; progress arrives as `{ t: "migrate", job }` events (built-in mode only) |

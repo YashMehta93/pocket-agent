@@ -14,7 +14,9 @@ export function installCommand() {
   codes.set(code, Date.now() + TTL);
   for (const [c, exp] of codes) if (exp < Date.now()) codes.delete(c);
   const url = `http://127.0.0.1:${PORT}/termux/install.sh?code=${code}`;
-  return { command: `curl -fsSL '${url}' | bash`, expiresIn: TTL };
+  // Upgrade first: curl itself breaks on a partly upgraded Termux, and the script arrives through curl.
+  const upgrade = "apt-get update && apt-get -y -o Dpkg::Options::=--force-confold full-upgrade";
+  return { command: `${upgrade} && curl -fsSL '${url}' | bash`, expiresIn: TTL };
 }
 export const validCode = c => typeof c === "string" && (codes.get(c) || 0) > Date.now();
 

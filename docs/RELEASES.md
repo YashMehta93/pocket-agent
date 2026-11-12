@@ -10,7 +10,7 @@
 | `feat/…`, `fix/…` | Day-to-day work, one topic per branch | Pushed freely; deleted after merging |
 | `me/<github-name>` | One person's own version of the app: their experiments and tweaks (see below) | Only by that person |
 
-GitHub can't lock branches on a free private repo, so the locks are enforced by `.githooks/pre-push` (enabled with `git config core.hooksPath .githooks`; *Build Pocket Agent yourself* does this) and by the rules below. Override for emergencies only: `PA_ALLOW_PROTECTED_PUSH=1 git push …`.
+GitHub enforces these: `master` and `v1.x` accept changes only through pull requests (no force-push or deletion), and `v1.0` is locked read-only; the owner can override in an emergency. Locally, `.githooks/pre-push` refuses the same pushes before they leave your phone (enabled with `git config core.hooksPath .githooks`; *Build Pocket Agent yourself* does this). Its emergency override: `PA_ALLOW_PROTECTED_PUSH=1 git push …`.
 
 ## Day-to-day flow
 
@@ -18,6 +18,17 @@ GitHub can't lock branches on a free private repo, so the locks are enforced by 
 2. Commit, push the branch, and open a pull request **into `v1.x`**: `bash scripts/open-pr.sh "Title"` (or `gh pr create --base v1.x`).
 3. The owner reviews and merges it on GitHub. **Merging is the approval.**
 4. `git switch v1.x && git pull --ff-only`.
+
+## Who can release
+
+Only the owner approves code into `v1.x` and `master`, and only the owner cuts releases. Four layers make sure of it:
+
+1. **Approval**: `v1.x` and `master` need a pull request approved by the owner (`.github/CODEOWNERS`), and pushing new commits after an approval needs approving again. The owner merges their own PRs with the admin bypass.
+2. **Release tags**: only the owner can create, move or delete `v*` tags (a GitHub ruleset), so nobody else can publish a release.
+3. **Immutable releases**: a published release's files can't be changed afterwards.
+4. **Signed code** (the one that protects phones even if GitHub is compromised): `release.sh` signs `bundle.tgz` with `release-key.pem` and uploads `bundle.sig`. Apps install release code only if it's signed, for that exact tag, by a key in `server/trusted-keys.json`. That file ships with the app, and changing it needs the owner's approval like any other code. APKs are already protected the same way by Android: an update must be signed with `pocket-agent.keystore`.
+
+To trust another person's releases later: they run `node scripts/release-key.mjs new <github-name>` on their phone and open a PR with the changed `server/trusted-keys.json`; the owner merges it. To stop trusting a key, remove it the same way.
 
 ## Personal versions: `me/<github-name>`
 
@@ -46,6 +57,10 @@ In the app, Settings → **Improve Pocket Agent** starts a chat in your copy, an
    - builds the APK and code bundle, tags `v1.1.0` (pushing only the tag), and publishes the GitHub release friends' apps update from;
    - opens a PR `v1.x` → `master`; the owner merges it.
 
+## Beta releases
+
+To let testers try something first: set `VERSION` to a pre-release like `1.2.0-beta.1` in the release PR, and run `bash scripts/release.sh` as usual. A version with a dash is published as a GitHub *pre-release*. Only apps on the **Beta** track (Settings → Updates & chats) get it; Stable apps wait for `1.2.0`.
+
 ## Versions
 
 - `VERSION` (repo root) is the single source: `MAJOR.MINOR.PATCH`.
@@ -67,4 +82,6 @@ When `2.0.0` is ready on `master` (merged from feature PRs):
 
 ## Keys
 
-Every release is signed with `pocket-agent.keystore`. It's ignored by git; keep it backed up and private. Without it, existing installs can never be updated.
+Two private files, both ignored by git, sign every release; keep both backed up somewhere private (a password manager, not phone storage):
+- `pocket-agent.keystore` signs the APK. Without it, existing installs can never be updated.
+- `release-key.pem` (from `node scripts/release-key.mjs new <name>`) signs the code. Without it, apps refuse new releases until an APK update brings a new trusted key. The app's phone-storage backups never include it.

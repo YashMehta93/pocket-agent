@@ -16,19 +16,26 @@ die() { printf '\n\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 [ -d "$P" ] && [ "${PREFIX:-}" = "$P" ] || die "Run this in Termux."
 [ "$(uname -m)" = aarch64 ] || die "Claude Code needs a 64-bit ARM phone (this is $(uname -m))."
 
-step "1/5 Termux packages (nodejs, git, proot, glibc)"
-export DEBIAN_FRONTEND=noninteractive
-PKG_OPTS=(-y -o Dpkg::Options::=--force-confold)
-pkg update "${PKG_OPTS[@]}" >/dev/null 2>&1 || pkg update "${PKG_OPTS[@]}"
-pkg install "${PKG_OPTS[@]}" nodejs-lts git curl proot glibc-repo
-pkg install "${PKG_OPTS[@]}" glibc-runner          # glibc's loader and libraries, in $PREFIX/glibc/lib
-[ -e "$P/glibc/lib/ld-linux-aarch64.so.1" ] || die "glibc didn't install ($P/glibc/lib/ld-linux-aarch64.so.1 is missing)."
-
-step "2/5 Let Pocket Agent run commands in Termux"
+step "1/5 Let Pocket Agent run commands in Termux"
+# First, because it needs nothing else: even if a later step fails, the app's `termux` command works.
 mkdir -p ~/.termux; F=~/.termux/termux.properties; touch "$F"
 if grep -qE '^\s*allow-external-apps' "$F"; then sed -i -E 's/^\s*allow-external-apps.*/allow-external-apps = true/' "$F"
 else echo "allow-external-apps = true" >> "$F"; fi
 command -v termux-reload-settings >/dev/null && termux-reload-settings || true
+
+step "2/5 Termux packages (upgrade, then nodejs, git, proot, glibc)"
+export DEBIAN_FRONTEND=noninteractive
+APT=(apt-get -y -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef)
+# `pkg update` also picks a mirror; it needs curl, so fall back to apt-get if curl is already broken.
+pkg update -y >/dev/null 2>&1 || apt-get update || die "Couldn't refresh Termux's package lists. Try: termux-change-repo"
+# Termux supports only fully upgraded systems. Installing new packages on old ones mixes library
+# versions (e.g. a new curl with an old OpenSSL: "cannot locate symbol SSL_..."), so upgrade first.
+"${APT[@]}" full-upgrade || die "Upgrading Termux's packages failed. Run: apt update && apt full-upgrade, then this again."
+"${APT[@]}" install nodejs-lts git curl proot glibc-repo
+apt-get update >/dev/null                          # glibc-repo adds a package source
+"${APT[@]}" install glibc-runner                   # glibc's loader and libraries, in $PREFIX/glibc/lib
+[ -e "$P/glibc/lib/ld-linux-aarch64.so.1" ] || die "glibc didn't install ($P/glibc/lib/ld-linux-aarch64.so.1 is missing)."
+curl --version >/dev/null 2>&1 || die "curl still doesn't run. Run: apt update && apt full-upgrade, then this again."
 
 step "3/5 Claude Code"
 BASE=https://downloads.claude.ai/claude-code-releases

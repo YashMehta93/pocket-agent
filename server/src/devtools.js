@@ -8,7 +8,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { HOME, CLAUDE_DIR, prefs, savePrefs, log } from "./config.js";
+import { HOME, CLAUDE_DIR, prefs, savePrefs, log, githubRepo } from "./config.js";
 import { broadcastAll, callNative } from "./hub.js";
 import { ROOT } from "./transfer.js";
 
@@ -79,7 +79,8 @@ export function runDevSetup({ repo, token }) {
 }
 
 async function devSetup(repo, token) {
-  const url = /^https?:\/\//.test(repo) ? repo : `https://github.com/${repo.replace(/^\/|\.git$/g, "")}.git`;
+  // A GitHub repo in any form (owner/repo, github.com/…, git@…) → its https URL; other https remotes as given.
+  const url = /^https?:\/\//.test(repo) && !/github\.com/i.test(repo) ? repo : `https://github.com/${githubRepo(repo)}.git`;
   const dest = path.join(HOME, "projects", path.basename(url, ".git"));
   emit({ step: "tools" }); await installBuildTools(line);
 

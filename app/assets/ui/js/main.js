@@ -42,27 +42,28 @@ async function onConnected() {
   else updateHeader();
   updateComposer();
   if (window.__pendingIntent) { const i = window.__pendingIntent; window.__pendingIntent = null; handleIntent(i); }
-  Object.assign(state, { updateChannel: hello.updateChannel || null, updateKind: hello.updateKind || null, githubToken: !!hello.githubToken, defaultRepo: hello.defaultRepo || "", devRepo: hello.devRepo || null });
+  Object.assign(state, { updateChannel: hello.updateChannel || null, updateKind: hello.updateKind || null, githubToken: !!hello.githubToken, defaultRepo: hello.defaultRepo || "", devRepo: hello.devRepo || null, updateTrack: hello.updateTrack || { track: "stable" } });
   askBatteryOnce();
-  checkAppUpdate();
-  if (state.updateChannel) checkServerUpdate(false);
+  // An app update brings the matching code too: offer only that, one banner, one tap.
+  checkAppUpdate().then(shown => { if (!shown && state.updateChannel) checkServerUpdate(false); });
 }
 
 /** If the server has a newer APK than the one installed, offer a one-tap update. */
 async function checkAppUpdate() {
-  if (!native) return;
+  if (!native) return false;
   try {
     const u = await conn.call("app.update");
     const have = nativeCall("appVersionCode") || 0;
-    if (!u.versionCode || u.versionCode <= have) return;
+    if (!u.versionCode || u.versionCode <= have) return false;
     // Android installs an update only if it's signed with the same key as the installed app.
     const mine = u.signer ? (await nativeRpc("capabilities").catch(() => ({}))).signer : null;
     if (u.signer && mine && u.signer !== mine) {
       showBanner(`v${u.versionName} is signed with a different key`, "Why", explainSigner);
-      return;
+      return false;   // can't install it: the code update still applies
     }
     showBanner(`App update available (v${u.versionName})`, "Update", () => installAppUpdate(u.url));
-  } catch {}
+    return true;
+  } catch { return false; }
 }
 /** Android stops background apps to save power, which cuts off Claude mid-reply. Ask once to be exempt. */
 async function askBatteryOnce() {

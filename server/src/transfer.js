@@ -8,11 +8,12 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
-import { CLAUDE_DIR, UI_DIR, DATA, log } from "./config.js";
+import { CLAUDE_DIR, UI_DIR, DATA, prefs, log } from "./config.js";
+import { SIG_NAME, trustedKeys, verifyBundle } from "./signing.js";
 
 /** Repo / install root: ~/projects/pocket-agent in Termux, /opt/pocket-agent in the app. */
 export const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
-const BUNDLE_PATHS = ["VERSION", "server/src", "server/bin", "server/devtools", "server/package.json", "server/package-lock.json", "app/assets/ui"];
+const BUNDLE_PATHS = ["VERSION", "server/src", "server/bin", "server/devtools", "server/package.json", "server/package-lock.json", "server/trusted-keys.json", "app/assets/ui"];
 
 // ───── helpers ─────
 function run(cmd, args, opts = {}) {
@@ -106,10 +107,13 @@ async function buildNumber(root) {
   }
   return best;
 }
-/** An update is "older" when both sides know their build number and the source's is lower. */
-const compare = (remote, local) => {
+/**
+ * An update is "older" when both sides know their build number and the source's is lower. Older code is
+ * offered only when the person pinned that release on purpose (Settings → Versions), never automatically.
+ */
+const compare = (remote, local, allowOlder = false) => {
   const older = !!(remote.build && local.build && remote.build < local.build);
-  return { available: remote.hash !== local.hash && !older, older, remote, local };
+  return { available: remote.hash !== local.hash && (!older || allowOlder), older, allowOlder, remote, local };
 };
 export const bundleStream = () => tarStream(ROOT, BUNDLE_PATHS);
 
@@ -123,7 +127,10 @@ async function folderSource(dir) {
   if (!fs.existsSync(path.join(dir, ".git"))) return { root: dir, build };
   try {
     const sha = (await run("git", ["-C", dir, "rev-parse", "HEAD"])).trim();
-    const base = path.join(DATA, "snapshots"), snap = path.join(base, sha);
+    // Keyed by commit and by which paths this code ships: another version's snapshot of the same commit
+    // can lack files this one needs (1.0.0's had no trusted-keys.json).
+    const which = crypto.createHash("sha1").update(BUNDLE_PATHS.join("\n")).digest("hex").slice(0, 8);
+    const base = path.join(DATA, "snapshots"), snap = path.join(base, `${sha}-${which}`);
     if (!fs.existsSync(path.join(snap, ".done"))) {
       await fsp.rm(base, { recursive: true, force: true });
       await fsp.mkdir(snap, { recursive: true });
@@ -155,6 +162,30 @@ export async function latestRelease({ github, token }) {
   if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
   return r.json();
 }
+/** Every published release, newest first: tag, name, notes, and whether it's a pre-release (beta). */
+export async function listReleases({ github, token }) {
+  const r = await fetch(`${GH_API}/repos/${github}/releases?per_page=50`, { headers: ghHeaders(token) });
+  if (r.status === 404) throw new Error(`Can't see ${github}. If it's private, add a GitHub token in Settings.`);
+  if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
+  return (await r.json()).filter(x => !x.draft);
+}
+/**
+ * The release to follow, by track (prefs.updateTrack):
+ *   stable (default)  the newest full release
+ *   beta              the newest release, pre-releases included
+ *   pin + tag         exactly that release, until the person picks another
+ */
+export async function pickRelease(ch, track = prefs.updateTrack) {
+  const kind = track?.track || "stable";
+  if (kind === "stable") return latestRelease(ch);
+  const all = await listReleases(ch);
+  if (kind === "beta") { if (!all.length) throw new Error(`No release in ${ch.github} yet`); return all[0]; }
+  const rel = all.find(x => x.tag_name === track.tag);
+  if (!rel) throw new Error(`Release ${track.tag} isn't in ${ch.github} anymore`);
+  return rel;
+}
+const pinned = (track = prefs.updateTrack) => track?.track === "pin";
+
 /** Fetch response for a release file (follows GitHub's redirect to its download host). */
 export async function releaseAsset(ch, rel, name) {
   const a = (rel.assets || []).find(x => x.name === name);
@@ -166,9 +197,9 @@ export async function releaseAsset(ch, rel, name) {
 
 export async function checkUpdate(ch) {
   if (ch.github) {
-    const rel = await latestRelease(ch), local = await bundleInfo();
-    const remote = { ...(await (await releaseAsset(ch, rel, "bundle.json")).json()), release: rel.tag_name };
-    return compare(remote, local);
+    const rel = await pickRelease(ch), local = await bundleInfo();
+    const remote = { ...(await (await releaseAsset(ch, rel, "bundle.json")).json()), release: rel.tag_name, prerelease: !!rel.prerelease };
+    return compare(remote, local, pinned());
   }
   if (ch.path) { const src = await folderSource(ch.path); return compare({ ...(await bundleInfo(src.root)), build: src.build }, await bundleInfo()); }
   const { url, token } = ch;
@@ -181,20 +212,33 @@ export async function checkUpdate(ch) {
 export async function applyUpdate(ch, restart) {
   const { url, token } = ch;
   const chk = await checkUpdate(ch);
-  if (chk.older) throw new Error(`That source has older code (build ${chk.remote.build}) than this app (build ${chk.local.build}), so nothing was changed.`);
+  if (chk.older && !chk.allowOlder) throw new Error(`That source has older code (build ${chk.remote.build}) than this app (build ${chk.local.build}), so nothing was changed.`);
   if (!chk.available) return { updated: false, upToDate: true };
   const tmp = await tmpDir("update");
   try {
     const tgz = path.join(tmp, "bundle.tgz");
     if (ch.path) { const src = await folderSource(ch.path); await new Promise((res, rej) => { const o = fs.createWriteStream(tgz); tarStream(src.root, BUNDLE_PATHS).pipe(o).on("finish", res).on("error", rej); }); }
-    else if (ch.github) await fsp.writeFile(tgz, Buffer.from(await (await releaseAsset(ch, await latestRelease(ch), "bundle.tgz")).arrayBuffer()));
+    else if (ch.github) {
+      // Release code is installed only if signed by a key this app trusts (signing.js): the keys come
+      // from the code already installed, so nobody can swap in their own through a release.
+      const rel = await pickRelease(ch);
+      const code = Buffer.from(await (await releaseAsset(ch, rel, "bundle.tgz")).arrayBuffer());
+      let sig = null;
+      try { sig = await (await releaseAsset(ch, rel, SIG_NAME)).json(); } catch {}
+      const key = verifyBundle(code, rel.tag_name, sig, trustedKeys(ROOT));
+      log("release", rel.tag_name, "signed by", key.id);
+      await fsp.writeFile(tgz, code);
+    }
     else await download(withToken(url, "/bundle.tgz", token), tgz);
     const x = path.join(tmp, "x"); await fsp.mkdir(x);
     await run("tar", ["xzf", tgz, "-C", x]);
     if (!fs.existsSync(path.join(x, "server/src/index.js"))) throw new Error("The update was incomplete");
     const depsOf = dir => ["server/package.json", "server/package-lock.json"].map(f => { try { return fs.readFileSync(path.join(dir, f), "utf8"); } catch { return ""; } }).join("");
     const depsChanged = depsOf(x) !== depsOf(ROOT);
-    for (const p of BUNDLE_PATHS) {
+    // Everything the new code brings, including server files this version doesn't know about yet
+    // (1.0.0 copied only its own list, and dropped 1.1.0's trusted-keys.json).
+    const extra = fs.existsSync(path.join(x, "server")) ? fs.readdirSync(path.join(x, "server")).map(n => "server/" + n).filter(p => !BUNDLE_PATHS.includes(p) && !p.endsWith("node_modules")) : [];
+    for (const p of [...BUNDLE_PATHS, ...extra]) {
       if (!fs.existsSync(path.join(x, p))) continue;
       await fsp.rm(path.join(ROOT, p), { recursive: true, force: true });
       await fsp.mkdir(path.dirname(path.join(ROOT, p)), { recursive: true });
