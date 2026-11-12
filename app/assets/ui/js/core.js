@@ -111,7 +111,7 @@ const conn = {
   ws: null, ok: false, n: 0, waiting: new Map(), listeners: {}, retry: 0,
   base() { return (settings.server || nativeCall("serverUrl") || (location.protocol.startsWith("http") ? location.origin : "http://127.0.0.1:8765")).replace(/\/$/, ""); },
   /** A typed-in token applies only to a custom server; the built-in server uses the app's own token. */
-  token() { return (settings.server && settings.token) || nativeCall("token") || new URLSearchParams(location.hash.slice(1)).get("token") || settings.token || ""; },
+  token() { return (settings.server && settings.token) || nativeCall("token") || settings.token || new URLSearchParams(location.hash.slice(1)).get("token") || ""; },
   url() { return this.base().replace(/^http/, "ws") + "/ws?token=" + encodeURIComponent(this.token()); },
   /** "up" = server reachable (so a failing socket means the token is wrong), "down" = unreachable. */
   async probe() {

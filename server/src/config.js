@@ -13,7 +13,13 @@ const args = parseArgs(process.argv.slice(2));
 export const PORT = +(args.port || process.env.PA_PORT || 8765);
 export const HOST = args.host || process.env.PA_HOST || "127.0.0.1";
 /** The `claude` executable the Agent SDK spawns (in Termux: the proot launcher). */
-export const CLAUDE = args.claude || process.env.PA_CLAUDE || "/data/data/com.termux/files/usr/bin/claude";
+export const CLAUDE = args.claude || process.env.PA_CLAUDE || findClaude();
+function findClaude() {
+  // The app passes --claude; otherwise look where Claude Code usually lives (app Linux, Termux, PATH).
+  const candidates = [path.join(os.homedir(), ".local/bin/claude"), "/data/data/com.termux/files/usr/bin/claude"];
+  for (const dir of (process.env.PATH || "").split(":")) if (dir) candidates.push(path.join(dir, "claude"));
+  return candidates.find(p => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; } }) || "claude";
+}
 /** Directory with the chat UI; served at /ui/ so UI changes reach the app without a reinstall. */
 export const UI_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../app/assets/ui");
 /** Latest APK and its version info (written by build.sh), offered to the app as an in-app update. */
