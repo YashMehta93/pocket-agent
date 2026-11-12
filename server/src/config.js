@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 
-export const VERSION = "0.2.0";
+/** App version, from ./VERSION (repo or install root), or the copy bundled inside the app. */
+export const VERSION = (() => {
+  for (const rel of ["../../VERSION", "../VERSION"]) { try { return fs.readFileSync(new URL(rel, import.meta.url), "utf8").trim(); } catch {} }
+  return "0.0.0";
+})();
 export const HOME = os.homedir();
 export const DATA = process.env.PA_DATA || path.join(HOME, ".pocket-agent");   // token, prefs, cache, logs
 export const CLAUDE_DIR = path.join(HOME, ".claude");                          // Claude Code's own state

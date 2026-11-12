@@ -86,6 +86,7 @@ async function devSetup(repo, token) {
   const auth = token ? `-c http.extraHeader="Authorization: Basic ${Buffer.from("x-access-token:" + token).toString("base64")}"` : "";
   if (exists(path.join(dest, ".git"))) { line(`Updating ${dest.replace(HOME, "~")}…`); await sh(`git -C "${dest}" ${auth} pull --ff-only`, line); }
   else { line(`Cloning ${url}…`); await fsp.mkdir(path.dirname(dest), { recursive: true }); await sh(`git ${auth} clone "${url}" "${dest}"`, line); }
+  await sh(`git -C "${dest}" config core.hooksPath .githooks`);   // branch rules, docs/RELEASES.md
 
   emit({ step: "sdk" });
   if (!exists(path.join(dest, "sdk/android.jar"))) {

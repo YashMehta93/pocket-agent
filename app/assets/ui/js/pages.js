@@ -251,6 +251,7 @@ async function checkServerUpdate(loud) {
   try {
     const r = await conn.call("update.check");
     if (!r.channel) { if (loud) toast("Set where updates come from first"); return; }
+    if (r.older) { if (loud) toast(`${r.channel} has older code (build ${r.remote.build}) than this app (build ${r.local.build}). Not updating.`, 6000); return; }
     if (!r.available) { if (loud) toast("Up to date"); return; }
     showBanner("An update is ready for Pocket Agent", "Update", applyServerUpdate);
     if (loud) applyServerUpdate();

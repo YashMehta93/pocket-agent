@@ -55,11 +55,19 @@ ok(`APK version from the release (${app.versionName})`, app.versionCode === want
 const dl = await fetch("http://127.0.0.1:8767/apk/download?token=" + process.env.TOK);
 const apk = Buffer.from(await dl.arrayBuffer());
 ok(`APK streams through the app server (${apk.length} bytes)`, dl.ok && apk.equals(fs.readFileSync(process.env.REPO + "/build/release/pocket-agent.apk")));
+// rollback guard: an app that already runs newer code must refuse the (older) release
+fs.writeFileSync(process.env.T + "/root/applied.json", JSON.stringify({ build: 999999 }));
+const old = await call("update.check");
+ok(`older release is not offered (release build ${old.remote?.build} < app build ${old.local?.build})`, old.older === true && old.available === false);
+const refused = await err(call("update.apply"));
+ok(`applying it is refused ("${(refused || "").slice(0, 60)}…")`, /older code/.test(refused || ""));
+fs.unlinkSync(process.env.T + "/root/applied.json");
 const ap = await call("update.apply");
 ok("update applied", ap.updated === true);
 await new Promise(r => setTimeout(r, 2500));
 const css = fs.readFileSync(process.env.T + "/root/app/assets/ui/css/app.css", "utf8");
 ok("code replaced by the release version", !css.includes("/* older */"));
+ok("the applied build is recorded for the next check", JSON.parse(fs.readFileSync(process.env.T + "/root/applied.json", "utf8")).build > 0);
 let alive = true; try { process.kill(+process.env.SPID, 0); } catch { alive = false; }
 ok("server exited to be restarted by the app", !alive);
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED"); process.exit(fails ? 1 : 0);

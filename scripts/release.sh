@@ -22,13 +22,24 @@ REMOTE=$(git remote get-url origin 2>/dev/null || true)
 REPO=$(echo "$REMOTE" | sed -E 's#^(https://([^@]+@)?github.com/|git@github.com:)##; s#\.git$##')
 $DRY || [ -n "$REPO" ] || { echo "No GitHub remote 'origin'."; exit 1; }
 
-echo "== build"
-bash build.sh >/dev/null
+VERSION=$(cat VERSION); TAG="v$VERSION"
+# Releases come only from a release line (v1.x, v2.x…) that matches GitHub exactly — i.e. everything
+# in it was merged through a pull request (docs/RELEASES.md). PA_RELEASE_BRANCH_OK=1 skips this (first v1.0.0).
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if ! $DRY && [ "${PA_RELEASE_BRANCH_OK:-}" != 1 ]; then
+  [[ "$BRANCH" =~ ^v[0-9]+\.x$ ]] || { echo "Release from a release line (e.g. v1.x), not '$BRANCH'."; exit 1; }
+  [[ "$VERSION" == "${BRANCH%.x}".* ]] || { echo "VERSION $VERSION doesn't belong to $BRANCH."; exit 1; }
+  git fetch -q origin "$BRANCH"
+  [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$BRANCH")" ] || { echo "$BRANCH differs from GitHub. Merge your PR there, then: git pull --ff-only"; exit 1; }
+fi
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && [ "$(git rev-list -n1 "$TAG")" != "$(git rev-parse HEAD)" ]; then
+  echo "$TAG already exists on another commit. Bump VERSION first (docs/RELEASES.md)."; exit 1; fi
+echo "== build $TAG"
+PA_RELEASE=1 bash build.sh >/dev/null
 OUT=build/release; rm -rf "$OUT"; mkdir -p "$OUT"
 cp build/pocket-agent.apk build/pocket-agent.json "$OUT/"
-tar czf "$OUT/bundle.tgz" server/src server/bin server/devtools server/package.json server/package-lock.json app/assets/ui
+tar czf "$OUT/bundle.tgz" VERSION server/src server/bin server/devtools server/package.json server/package-lock.json app/assets/ui
 node --input-type=module -e 'import { bundleInfo } from "./server/src/transfer.js"; console.log(JSON.stringify(await bundleInfo(process.cwd())))' > "$OUT/bundle.json"
-VERSION=$(node -p 'require("./build/pocket-agent.json").versionName'); TAG="v$VERSION"
 echo "   $TAG: $(ls "$OUT" | tr '\n' ' ')"
 $DRY && { echo "dry run: files in $OUT"; exit 0; }
 
@@ -40,7 +51,7 @@ AUTH="Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -
 echo "== push $TAG"
 PREV=$(git describe --tags --abbrev=0 2>/dev/null || true)
 git tag -a "$TAG" -m "Pocket Agent $VERSION" 2>/dev/null || echo "   (tag exists)"
-git -c http.extraHeader="$AUTH" push -q origin HEAD "$TAG"
+git -c http.extraHeader="$AUTH" push -q origin "refs/tags/$TAG"   # only the tag: branches change through PRs
 
 echo "== release"
 NOTES=$(git log --pretty='- %s' ${PREV:+$PREV..}HEAD | head -40)
@@ -54,3 +65,12 @@ for f in "$OUT"/*; do
   echo "   uploaded $n"
 done
 echo "done: https://github.com/$REPO/releases/tag/$TAG"
+
+# Bring master up to date with the release, through a pull request for the owner to merge.
+if [[ "$BRANCH" =~ ^v[0-9]+\.x$ ]] && command -v gh >/dev/null; then
+  if [ -z "$(gh pr list --repo "$REPO" --base master --head "$BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null)" ]; then
+    gh pr create --repo "$REPO" --base master --head "$BRANCH" --title "Release $TAG into master" \
+      --body "Release $TAG from $BRANCH. Merging this is your approval for master (docs/RELEASES.md)." >/dev/null 2>&1 \
+      && echo "opened PR: $BRANCH → master (merge it on GitHub)" || echo "(no PR opened: $BRANCH may already match master)"
+  else echo "PR $BRANCH → master is already open"; fi
+fi

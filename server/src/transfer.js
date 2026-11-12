@@ -12,7 +12,7 @@ import { CLAUDE_DIR, UI_DIR, log } from "./config.js";
 
 /** Repo / install root: ~/projects/pocket-agent in Termux, /opt/pocket-agent in the app. */
 export const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
-const BUNDLE_PATHS = ["server/src", "server/bin", "server/devtools", "server/package.json", "server/package-lock.json", "app/assets/ui"];
+const BUNDLE_PATHS = ["VERSION", "server/src", "server/bin", "server/devtools", "server/package.json", "server/package-lock.json", "app/assets/ui"];
 
 // ───── helpers ─────
 function run(cmd, args, opts = {}) {
@@ -89,9 +89,28 @@ export async function bundleInfo(root = ROOT) {
     try { if ((await fsp.stat(full)).isDirectory()) for (const f of await walk(full)) files.push(path.join(p, f)); else files.push(p); } catch {}
   }
   for (const f of files.filter(f => !f.includes("node_modules")).sort()) { h.update(f + "\0"); h.update(await fsp.readFile(path.join(root, f))); }
-  let version = ""; try { version = JSON.parse(await fsp.readFile(path.join(root, "server/package.json"), "utf8")).version; } catch {}
-  return { hash: h.digest("hex").slice(0, 16), version, uiVersion: undefined };
+  let version = "";
+  for (const v of ["VERSION", "server/VERSION"]) { try { version = (await fsp.readFile(path.join(root, v), "utf8")).trim(); break; } catch {} }
+  return { hash: h.digest("hex").slice(0, 16), version, build: await buildNumber(root) };
 }
+
+/**
+ * Monotonic build number of the code in root, used to refuse updates that would go backwards:
+ * a git checkout → its commit count; an installed copy → what the last update or the APK recorded.
+ */
+async function buildNumber(root) {
+  if (fs.existsSync(path.join(root, ".git"))) { try { return +(await run("git", ["-C", root, "rev-list", "--count", "HEAD"])).trim() || 0; } catch {} }
+  let best = 0;
+  for (const [file, key] of [["applied.json", "build"], ["bundle.json", "versionCode"]]) {
+    try { best = Math.max(best, +JSON.parse(await fsp.readFile(path.join(root, file), "utf8"))[key] || 0); } catch {}
+  }
+  return best;
+}
+/** An update is "older" when both sides know their build number and the source's is lower. */
+const compare = (remote, local) => {
+  const older = !!(remote.build && local.build && remote.build < local.build);
+  return { available: remote.hash !== local.hash && !older, older, remote, local };
+};
 export const bundleStream = () => tarStream(ROOT, BUNDLE_PATHS);
 
 /** Source label for messages: a server URL or a local folder. */
@@ -126,19 +145,21 @@ export async function checkUpdate(ch) {
   if (ch.github) {
     const rel = await latestRelease(ch), local = await bundleInfo();
     const remote = { ...(await (await releaseAsset(ch, rel, "bundle.json")).json()), release: rel.tag_name };
-    return { available: remote.hash !== local.hash, remote, local };
+    return compare(remote, local);
   }
-  if (ch.path) { const remote = await bundleInfo(ch.path), local = await bundleInfo(); return { available: remote.hash !== local.hash, remote, local }; }
+  if (ch.path) return compare(await bundleInfo(ch.path), await bundleInfo());
   const { url, token } = ch;
   const r = await fetch(withToken(url, "/bundle/info", token));
   if (!r.ok) throw new Error(`${new URL(url).origin} answered ${r.status}${r.status === 401 ? " (wrong token?)" : ""}`);
-  const remote = await r.json(), local = await bundleInfo();
-  return { available: remote.hash !== local.hash, remote, local };
+  return compare(await r.json(), await bundleInfo());
 }
 
 /** Replaces server + UI code with the other server's, installs changed dependencies, then restarts. */
 export async function applyUpdate(ch, restart) {
   const { url, token } = ch;
+  const chk = await checkUpdate(ch);
+  if (chk.older) throw new Error(`That source has older code (build ${chk.remote.build}) than this app (build ${chk.local.build}), so nothing was changed.`);
+  if (!chk.available) return { updated: false, upToDate: true };
   const tmp = await tmpDir("update");
   try {
     const tgz = path.join(tmp, "bundle.tgz");
@@ -161,6 +182,7 @@ export async function applyUpdate(ch, restart) {
       // same marker format as the app's installer (Linux.java), so it won't redo this
       await fsp.writeFile(path.join(ROOT, "server/.deps-installed"), depsOf(ROOT)).catch(() => {});
     }
+    await fsp.writeFile(path.join(ROOT, "applied.json"), JSON.stringify({ build: chk.remote.build || 0, version: chk.remote.version, hash: chk.remote.hash, from: sourceName(ch), at: new Date().toISOString() }));
     log("updated from", sourceName(ch), depsChanged ? "(dependencies changed)" : "");
     setTimeout(restart, 600);
     return { updated: true, depsChanged };

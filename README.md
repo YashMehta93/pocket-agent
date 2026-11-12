@@ -52,7 +52,7 @@ Bridge server (Node, server/)  ── Claude Agent SDK ──►  Claude Code
    └── all inside Alpine Linux run by proot, inside the app's private storage
 ```
 
-Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), then [CONTRIBUTING.md](CONTRIBUTING.md). Protocol: [docs/PROTOCOL.md](docs/PROTOCOL.md).
+Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), then [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/RELEASES.md](docs/RELEASES.md) (branches and versions). Changes: [CHANGELOG.md](CHANGELOG.md). Protocol: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 | Path | What |
 |---|---|

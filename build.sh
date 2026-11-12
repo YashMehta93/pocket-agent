@@ -16,8 +16,13 @@ SDK=sdk/android.jar
 APP=app
 OUT=build
 KS=pocket-agent.keystore
+# Versions (see docs/RELEASES.md): the name comes from ./VERSION; the Android version code is the
+# number of commits on this branch, so it only ever goes up. Builds that aren't exactly a release
+# tag are marked "-dev.<code>".
+VERSION=$(cat VERSION)
 VERSION_CODE=$(git rev-list --count HEAD 2>/dev/null || echo 1)
-VERSION_NAME="0.2.$VERSION_CODE"
+if [ "$(git describe --tags --exact-match HEAD 2>/dev/null)" = "v$VERSION" ] || [ "${PA_RELEASE:-}" = 1 ]; then VERSION_NAME="$VERSION"
+else VERSION_NAME="$VERSION-dev.$VERSION_CODE"; fi
 # SDK 28 like Termux: newer targets can't execute programs from app storage (needed by proot).
 TARGET_SDK=28
 
@@ -28,6 +33,7 @@ echo "[1/7] bundle"
 cp -r "$APP/assets/." "$OUT/assets/"
 mkdir -p "$OUT/assets/server"
 cp -r server/src server/bin server/devtools server/package.json "$OUT/assets/server/"
+cp VERSION "$OUT/assets/server/VERSION"
 [ -f server/package-lock.json ] && cp server/package-lock.json "$OUT/assets/server/"
 BUNDLE_HASH=$( (cd "$OUT/assets" && find server ui -type f | sort | xargs cat) | sha256sum | cut -c1-16)
 printf '{"version": "%s", "versionCode": %s, "hash": "%s"}\n' "$VERSION_NAME" "$VERSION_CODE" "$BUNDLE_HASH" > "$OUT/assets/bundle.json"

@@ -41,6 +41,10 @@ UI files, by feature: `core.js` (helpers, connection, sheets), `render.js` (chat
 
 Updating the bundled proot: `bash app/native/prepare-proot.sh` (downloads Termux's packages; needs `patchelf`), then rebuild and commit `app/jniLibs`.
 
+## Branches and releases
+
+Read [docs/RELEASES.md](docs/RELEASES.md): work happens on feature branches with PRs into `v1.x`; `master` and the `v1.x` line change only by merging PRs; `v1.0` is frozen.
+
 ## Releases (what friends' apps update from)
 
 ```bash
