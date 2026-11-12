@@ -215,6 +215,7 @@ async function openApp() {
   const t0 = Date.now();
   while (Date.now() - t0 < 60000) {
     try { const r = await fetch(st.serverUrl + "/health", { cache: "no-store" }); if (r.ok) { location.href = st.serverUrl + "/ui/"; return; } } catch {}
+    if (!globalThis.document) return;   // this page is gone (navigated away, or a test closed it)
     $("#st-bar").style.width = Math.min(95, 30 + (Date.now() - t0) / 900) + "%";
     await new Promise(r => setTimeout(r, 700));
   }
