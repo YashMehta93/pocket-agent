@@ -59,6 +59,17 @@ const copyMissing = (src, dst) => fsp.cp(src, dst, { recursive: true, force: fal
 /** Copies, replacing files only when the incoming one is newer or larger (chat transcripts grow). */
 const copyNewer = (src, dst) => fsp.cp(src, dst, { recursive: true, force: true, preserveTimestamps: true, verbatimSymlinks: true,
   filter: async (a, b) => { const sa = await fsp.lstat(a); if (sa.isDirectory()) return true; try { const sb = await fsp.lstat(b); return sa.size > sb.size || sa.mtimeMs > sb.mtimeMs + 1000; } catch { return true; } } });
+async function findGitRepos(root, depth = 3) {
+  const out = [];
+  async function walk(d, n) {
+    if (n > depth) return;
+    let ents; try { ents = await fsp.readdir(d, { withFileTypes: true }); } catch { return; }
+    if (ents.some(e => e.name === ".git")) { out.push(d); return; }
+    for (const e of ents) if (e.isDirectory() && e.name !== "node_modules" && !e.name.startsWith(".claude")) await walk(path.join(d, e.name), n + 1);
+  }
+  await walk(root, 0);
+  return out;
+}
 async function findPackages(dirs, depth = 3) {
   const out = [];
   async function walk(d, n) {
@@ -109,6 +120,19 @@ async function migrate(url, token) {
     line(`  ${name}`);
     await copyMissing(path.join(x, name), path.join(HOME, name));
   }
+  // Re-runs: bring git projects that were moved before up to date (fast-forward only, never over local work).
+  for (const repo of await findGitRepos(x)) {
+    const rel = path.relative(x, repo), dest = path.join(HOME, rel);
+    if (!exists(path.join(dest, ".git"))) continue;
+    try {
+      const dirty = (await sh(`git -C "${dest}" status --porcelain --untracked-files=no`, { stream: false })).trim();
+      if (dirty) { summary.warnings.push(`~/${rel} has uncommitted changes here, so it wasn't updated from Termux`); continue; }
+      const before = (await sh(`git -C "${dest}" rev-parse HEAD`, { stream: false })).trim();
+      await sh(`git -C "${dest}" -c safe.directory='*' pull --ff-only --quiet "${repo}" HEAD`, { stream: false });
+      const after = (await sh(`git -C "${dest}" rev-parse HEAD`, { stream: false })).trim();
+      if (before !== after) line(`  updated ~/${rel} to the Termux version`);
+    } catch (e) { summary.warnings.push(`~/${rel}: couldn't update from Termux (${e.message.slice(0, 120)})`); }
+  }
   if (exists(path.join(HOME, ".ssh"))) await sh(`chmod 700 "${HOME}/.ssh" && chmod 600 "${HOME}"/.ssh/* 2>/dev/null; true`, { stream: false });
   // Claude data: chats merge newest-wins (same rules as chat import); config fills in what's missing here
   const xc = path.join(x, ".claude");
@@ -125,7 +149,7 @@ async function migrate(url, token) {
     // memory is keyed by project folder: Termux home → /root
     const key = p => p.replace(/[^a-zA-Z0-9]/g, "-");
     const oldMem = path.join(CLAUDE_DIR, "projects", key(TERMUX_CHATS_PATH), "memory"), newMem = path.join(CLAUDE_DIR, "projects", key(HOME), "memory");
-    if (exists(oldMem)) { await copyMissing(oldMem, newMem); line("  memory → " + newMem.replace(HOME, "~")); }
+    if (exists(oldMem)) { await copyNewer(oldMem, newMem); line("  memory → " + newMem.replace(HOME, "~")); }
   }
   summary.files = true;
 
@@ -150,7 +174,10 @@ async function migrate(url, token) {
     const caps = await callNative("capabilities", {}, 10000);
     if ((caps.api || 0) < 3) throw new Error("Update the Pocket Agent app first (it needs version 0.2.14 or newer for this step)");
     const repo = "https://dl-cdn.alpinelinux.org/alpine/edge";
-    const cmd = `apk add --no-cache openjdk21-jdk zip unzip file && (grep -q '@testing' /etc/apk/repositories || echo '@testing ${repo}/testing' >> /etc/apk/repositories) && `
+    // Java 17: Alpine's JDK 21 dies at start-up in Android's app sandbox ("Failed to mark memory page
+    // as executable"); JDK 17 runs. Remove 21 if an earlier move installed it, and make 17 the default.
+    const cmd = `J21=$(apk info 2>/dev/null | grep '^openjdk21' | tr '\\n' ' '); [ -z "$J21" ] || apk del --no-cache $J21; `
+      + `apk add --no-cache openjdk17-jdk zip unzip file && ln -sfn java-17-openjdk /usr/lib/jvm/default-jvm && (grep -q '@testing' /etc/apk/repositories || echo '@testing ${repo}/testing' >> /etc/apk/repositories) && `
       + `(apk add --no-cache android-build-tools@testing || apk add --no-cache -X ${repo}/testing -X ${repo}/main -X ${repo}/community android-build-tools)`;
     const res = await callNative("runtime.exec", { cmd, root: true, timeoutMs: 30 * 60_000 }, 31 * 60_000);
     line(res.output.split("\n").slice(-12).join("\n"));

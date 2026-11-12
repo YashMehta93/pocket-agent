@@ -43,9 +43,15 @@ ok("update check against the local repo works", typeof chk.available === "boolea
 ok("build tools step reported clearly when the phone is not connected", (final?.summary?.warnings || []).some(w => /Build tools/.test(w)));
 // Running the move again after it finished (e.g. "Try again" for a failed step) must work.
 final = null; steps.clear();
+// Simulate "the app copy is behind Termux": rewind it one commit; the re-run must fast-forward it.
+const { execSync } = await import("node:child_process");
+const repoDir = H + "/projects/pocket-agent";
+execSync(`git -C "${repoDir}" reset --hard -q HEAD~1`);
+const srcHead = execSync(`git -C "${process.env.REPO}" rev-parse HEAD`).toString().trim();
 let again = null; try { again = (await call("migrate.run", { url: "http://127.0.0.1:8765", token: process.env.SRC_TOKEN })).job; } catch (e) { again = { error: e.message }; }
 ok("running the move a second time is allowed (" + (again.error || "started") + ")", !again.error);
 const t1 = Date.now(); while (!final && Date.now() - t1 < 240000) await new Promise(r => setTimeout(r, 250));
 ok("second run finishes and keeps everything", final?.done && fs.lstatSync(ft).isSymbolicLink() && ex("/projects/pocket-agent/build.sh"));
+ok("re-run brought the project up to the Termux version", execSync(`git -C "${repoDir}" rev-parse HEAD`).toString().trim() === srcHead);
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED"); process.exit(fails ? 1 : 0);
 '
