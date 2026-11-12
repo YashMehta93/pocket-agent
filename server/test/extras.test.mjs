@@ -11,6 +11,10 @@ const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../.
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "pa-extras-"));
 const HOME = path.join(T, "home");
 Object.assign(process.env, { HOME, PA_DATA: path.join(HOME, ".pocket-agent"), PA_BACKUP_DIR: path.join(T, "sdcard/Pocket Agent"), PA_PORT: "8769" });
+// A stand-in for Claude Code, so nothing here can start the real one (config.js would find it on PATH).
+const FAKE_CLAUDE = path.join(T, "fake-claude");
+fs.writeFileSync(FAKE_CLAUDE, "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
+process.env.PA_CLAUDE = FAKE_CLAUDE;
 delete process.env.PA_MODE; delete process.env.PA_SUPERVISED;
 fs.mkdirSync(process.env.PA_DATA, { recursive: true });
 
@@ -105,6 +109,16 @@ try {
   const out = await new Promise(res => { const p = spawn("bash", ["scripts/open-pr.sh", "Add a thing"], { cwd: clone, env: { ...process.env, GITHUB_TOKEN: "t0k", PA_GITHUB_API: "http://127.0.0.1:8778" } }); let o = ""; p.stdout.on("data", d => o += d); p.stderr.on("data", d => o += d); p.on("close", () => res(o)); });
   gh.close();
   ok("open-pr.sh opens a PR into the newest vN.x", got?.url === "/repos/me/pa/pulls" && got.body.base === "v10.x" && got.body.head === "feat/thing" && got.auth === "Bearer t0k" && /pull\/1/.test(out), out.trim().split("\n").pop());
+
+  // ───── opening a chat ─────
+  {
+    const { openSession, live } = await import("../src/live-session.js");
+    const id = "11111111-2222-4333-8444-555555555555";
+    const [a, b2] = await Promise.all([openSession({ sessionId: id, cwd: HOME }), openSession({ sessionId: id, cwd: HOME })]);
+    ok("two opens of one chat at once share one Claude process", a === b2 && live.get(id) === a);
+    ok("a later open returns the live one", await openSession({ sessionId: id }) === a);
+    a.close();
+  }
 
   // ───── Termux setup routes ─────
   const server = spawn("node", [path.join(REPO, "server/src/index.js"), "--port", "8769"], { env: process.env, stdio: "ignore" });
