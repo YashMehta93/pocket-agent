@@ -79,16 +79,19 @@ async function send(textOverride) {
   }
 }
 
-// The chat is open in Termux (terminal or background session): ask how to continue.
+// The chat is open in another Claude Code process (a terminal or background session): ask how to continue.
 function busySheet(e, text, images) {
   const cur = state.current;
   const bg = e.kind === "background";
-  const b = sheet.open(`<h2>This chat is open in Termux</h2>
+  // In the built-in Linux that other process runs inside the app; only the Termux server lives in Termux.
+  const inTermux = native && nativeCall("isStandalone") !== true;
+  const where = inTermux ? "in Termux" : "elsewhere";
+  const b = sheet.open(`<h2>This chat is open ${where}</h2>
     <div class="sub">${esc(e.message)} Claude Code can only run a chat in one place at a time. Your message is kept.</div>
     <div class="btns">
       <button class="btn primary" data-a="fork">Continue in a copy</button>
       ${bg ? `<button class="btn" data-a="stop">Stop it there and continue here</button>` : ""}
-      ${native ? `<button class="btn ghost" data-a="termux">${bg ? "Open it in Termux" : "Go to Termux"}</button>` : ""}
+      ${inTermux ? `<button class="btn ghost" data-a="termux">${bg ? "Open it in Termux" : "Go to Termux"}</button>` : ""}
       <button class="btn ghost" data-a="cancel">Cancel</button>
     </div>`, { onClose: () => restoreDraft(text) });
   const go = async mode => {
@@ -96,13 +99,13 @@ function busySheet(e, text, images) {
     try {
       const r = await conn.call("session.continueHere", { sessionId: cur.sessionId, mode });
       if (mode === "fork") { await refreshSessions(); await openSession(r.sessionId); toast("Continuing in a copy"); }
-      else toast("Stopped in Termux");
+      else toast("Stopped " + where);
       await send(text);
     } catch (err) { toast(err.message); restoreDraft(text); }
   };
   b.querySelector('[data-a="fork"]').onclick = () => go("fork");
   b.querySelector('[data-a="stop"]')?.addEventListener("click", async () => {
-    if (await confirmSheet({ title: "Stop the Termux copy?", text: "Whatever Claude is doing in that background session stops. Its history is kept.", ok: "Stop it", danger: true })) go("stop");
+    if (await confirmSheet({ title: "Stop the other copy?", text: "Whatever Claude is doing in that background session stops. Its history is kept.", ok: "Stop it", danger: true })) go("stop");
     else restoreDraft(text);
   });
   b.querySelector('[data-a="termux"]')?.addEventListener("click", () => {

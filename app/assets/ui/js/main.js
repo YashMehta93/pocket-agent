@@ -34,7 +34,8 @@ async function onConnected() {
     commands: hello.commands || [], models: hello.models || [], account: hello.account });
   for (const i of hello.live || []) { state.liveInfo[i.sessionId] = i; if (i.activity) state.activity[i.sessionId] = i.activity; }
   state.pending = (hello.live || []).flatMap(i => i.pending || []);
-  $("#conn-foot").innerHTML = `${icon("wifi")}<span>${esc(native ? "Termux" : hello.host)} · server ${esc(hello.version)}</span>`;
+  const where = hello.mode === "standalone" ? "This phone" : settings.server ? settings.server.replace(/^https?:\/\//, "") : hello.host;
+  $("#conn-foot").innerHTML = `${icon("wifi")}<span>${esc(where)} · server ${esc(hello.version)}</span>`;
   await refreshSessions();
   const cur = state.current;
   if (cur && !cur.isNew) await openSession(cur.sessionId, { keepScroll: true });

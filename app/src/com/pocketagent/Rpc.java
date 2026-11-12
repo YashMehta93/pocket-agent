@@ -143,7 +143,7 @@ final class Rpc {
                 for (int k = 0; k < args.length; k++) args[k] = a.optString(k);
                 d.ok(Termux.run(c, p.optString("path"), args, p.optString("workdir", null), p.optBoolean("background", true))); return;
             }
-            case "termux.exec": Termux.exec(c, p.optString("cmd"), p.optString("workdir", null), p.optLong("timeoutMs", 60_000), d); return;
+            case "termux.exec": Termux.exec(c, p.optString("cmd"), p.isNull("workdir") ? null : p.optString("workdir"), p.optLong("timeoutMs", 60_000), d); return;
             case "termux.status": d.ok(new JSONObject().put("installed", Termux.installed(c)).put("permission", Termux.hasPermission(c))); return;
             case "battery.request": {
                 // Lets the app (and so the built-in server and running chats) keep running in the background.

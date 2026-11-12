@@ -1,0 +1,4 @@
+{
+  "type": "commonjs",
+  "description": "Command-line tools installed into /usr/local/bin (cs, termux): plain CommonJS scripts, wherever they run from"
+}

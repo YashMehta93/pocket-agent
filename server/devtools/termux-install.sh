@@ -70,7 +70,10 @@ curl -fsSL "$APP/termux/bundle.tgz?code=$CODE" -o "$TGZ" || die "Couldn't downlo
 mkdir -p "$DEST"; rm -rf "$DEST/server/src" "$DEST/app"
 tar xzf "$TGZ" -C "$DEST"; rm -f "$TGZ"
 (cd "$DEST/server" && npm install --omit=optional --no-audit --no-fund 2>&1 | tail -1)
-chmod 755 "$DEST/server/bin/pocket-agent"; ln -sf "$DEST/server/bin/pocket-agent" "$P/bin/pocket-agent"
+chmod 755 "$DEST/server/bin/pocket-agent"
+# Its #!/usr/bin/env line works in Termux's shells only; the app starts it through RUN_COMMAND, which doesn't.
+termux-fix-shebang "$DEST/server/bin/pocket-agent"
+ln -sf "$DEST/server/bin/pocket-agent" "$P/bin/pocket-agent"
 
 step "5/5 Start"
 pocket-agent stop >/dev/null 2>&1 || true

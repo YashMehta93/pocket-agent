@@ -30,7 +30,7 @@ const timeoutMs = +(process.env.TERMUX_TIMEOUT_MS || 10 * 60_000);
 const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${token}`);
 ws.on("error", e => { console.error("termux: Pocket Agent's server isn't reachable:", e.message); process.exit(2); });
 ws.on("open", () => ws.send(JSON.stringify({ t: "native.call", id: 1, method: "termux.exec",
-  params: { cmd: args.join(" "), workdir, timeoutMs }, timeoutMs: timeoutMs + 5000 })));
+  params: { cmd: args.join(" "), timeoutMs, ...(workdir ? { workdir } : {}) }, timeoutMs: timeoutMs + 5000 })));
 ws.on("message", raw => {
   const m = JSON.parse(raw);
   if (m.t !== "reply" || m.id !== 1) return;
