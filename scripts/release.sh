@@ -61,7 +61,8 @@ git -c http.extraHeader="$AUTH" push -q origin "refs/tags/$TAG"   # only the tag
 
 echo "== release"
 NOTES=$(git log --pretty='- %s' ${PREV:+$PREV..}HEAD | head -40)
-BODY=$(node -e 'console.log(JSON.stringify({ tag_name: process.argv[1], name: "Pocket Agent " + process.argv[2], body: process.argv[3] }))' "$TAG" "$VERSION" "$NOTES")
+# A version with a dash (1.1.0-beta.1) is a pre-release: only apps on the Beta track get it.
+BODY=$(node -e 'const v = process.argv[2]; console.log(JSON.stringify({ tag_name: process.argv[1], name: "Pocket Agent " + v, body: process.argv[3], prerelease: v.includes("-") }))' "$TAG" "$VERSION" "$NOTES")
 REL=$(api -X POST "https://api.github.com/repos/$REPO/releases" -d "$BODY")
 ID=$(echo "$REL" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).id))')
 for f in "$OUT"/*; do
