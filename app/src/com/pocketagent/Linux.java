@@ -70,6 +70,8 @@ final class Linux {
         try { JSONObject s = state(c); s.put(key, v); write(stateFile(c), s.toString()); } catch (Exception ignored) {}
     }
     /** Setup finished and the Linux system is present. */
+    /** Signed in to Claude, as of the last check (the setup screen checks when this is false). */
+    static boolean signedIn(Context c) { return state(c).optBoolean("signedIn", false); }
     static boolean installed(Context c) { return state(c).optBoolean("ready", false) && lexists(new File(rootfs(c), "bin/busybox")); }
 
     /**
@@ -322,7 +324,9 @@ final class Linux {
     static JSONObject authStatus(Context c) throws Exception {
         String out = capture(c, "claude auth status --json", 60_000);
         int i = out.indexOf('{');
-        return i >= 0 ? new JSONObject(out.substring(i, out.lastIndexOf('}') + 1)) : new JSONObject().put("loggedIn", false).put("error", out.trim());
+        JSONObject s = i >= 0 ? new JSONObject(out.substring(i, out.lastIndexOf('}') + 1)) : new JSONObject().put("loggedIn", false).put("error", out.trim());
+        mark(c, "signedIn", s.optBoolean("loggedIn"));   // lets the app open straight into chats next time
+        return s;
     }
 
     static void reset(Context c) { stopServer(); deleteTree(base(c)); }

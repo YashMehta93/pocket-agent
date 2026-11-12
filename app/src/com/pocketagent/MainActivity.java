@@ -120,7 +120,8 @@ public class MainActivity extends Activity {
             String server = Prefs.server(this);
             boolean up = healthy(server);
             if (Prefs.standalone(this)) {
-                if (!Linux.installed(this)) { load("file:///android_asset/ui/setup.html"); return; }
+                // Not set up or not signed in yet: the setup screen takes it from wherever it stopped.
+                if (!Linux.installed(this) || !Linux.signedIn(this)) { load("file:///android_asset/ui/setup.html"); return; }
                 Linux.startServer(this);
                 for (int i = 0; i < 120 && !up; i++) { sleep(250); up = healthy(server); }
                 load(up ? server + "/ui/" : "file:///android_asset/ui/setup.html#trouble");
