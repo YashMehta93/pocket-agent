@@ -34,7 +34,7 @@ VERSION=$(cat VERSION); TAG="v$VERSION"
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if ! $DRY && [ "${PA_RELEASE_BRANCH_OK:-}" != 1 ]; then
   [[ "$BRANCH" =~ ^v[0-9]+\.x$ ]] || { echo "Release from a release line (e.g. v1.x), not '$BRANCH'."; exit 1; }
-  [[ "$VERSION" == "${BRANCH%.x}".* ]] || { echo "VERSION $VERSION doesn't belong to $BRANCH."; exit 1; }
+  [[ "v$VERSION" == "${BRANCH%.x}".* ]] || { echo "VERSION $VERSION doesn't belong to $BRANCH."; exit 1; }   # 1.2.0 ↔ v1.x
   git fetch -q origin "$BRANCH"
   [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$BRANCH")" ] || { echo "$BRANCH differs from GitHub. Merge your PR there, then: git pull --ff-only"; exit 1; }
 fi

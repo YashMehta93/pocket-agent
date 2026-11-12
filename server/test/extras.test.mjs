@@ -82,6 +82,8 @@ try {
   await personalBranch(clone, { login: "alice", id: 8 });
   ok("returning person gets their existing branch", sh("git branch --show-current", clone).trim() === "me/alice" && sh("git rev-parse HEAD", clone) === sh("git rev-parse origin/me/alice", clone));
   ok("Claude is told about the termux command", /`termux <command>`/.test(phoneContext()));
+  const { githubRepo } = await import("../src/config.js");
+  ok("any way of writing a GitHub repo becomes owner/repo", ["me/pa", "github.com/me/pa", "https://github.com/me/pa.git", "https://www.github.com/me/pa/", "git@github.com:me/pa.git", " me/pa.git "].every(x => githubRepo(x) === "me/pa"));
 
   // ───── open-pr.sh against a fake GitHub ─────
   let got = null;
