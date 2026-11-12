@@ -75,7 +75,10 @@ export function runMigration({ url, token }) {
   if (job.running) throw new Error("A move is already running");
   // Safety: only inside the app (supervised), and never when this *is* the Termux home.
   if (!process.env.PA_SUPERVISED) throw new Error("Moving from Termux runs inside the Pocket Agent app (built-in mode), not on this server.");
-  if (path.resolve(HOME) === path.resolve(TERMUX_HOME) || fs.realpathSync(HOME) === (exists(TERMUX_HOME) ? fs.realpathSync(TERMUX_HOME) : "")) throw new Error("Refusing to move: this server already runs in the Termux home.");
+  // The old Termux path being a *link* to this home is fine: that is what a previous move created.
+  const termuxIsLink = exists(TERMUX_HOME) && fs.lstatSync(TERMUX_HOME).isSymbolicLink();
+  if (path.resolve(HOME) === path.resolve(TERMUX_HOME) || (!termuxIsLink && exists(TERMUX_HOME) && fs.realpathSync(HOME) === fs.realpathSync(TERMUX_HOME)))
+    throw new Error("Refusing to move: this server already runs in the Termux home.");
   job = { running: true, step: "download", lines: [], error: null, done: false, summary: null };
   migrate(url.replace(/\/$/, ""), token).then(summary => emit({ running: false, done: true, step: "done", summary }))
     .catch(e => { log("migration failed", e.message); line("ERROR: " + e.message); emit({ running: false, error: e.message }); });

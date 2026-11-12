@@ -41,6 +41,11 @@ ok("updates now come from the local repo", (await call("hello")).updateChannel =
 const chk = await call("update.check");
 ok("update check against the local repo works", typeof chk.available === "boolean" && chk.remote?.hash);
 ok("build tools step reported clearly when the phone is not connected", (final?.summary?.warnings || []).some(w => /Build tools/.test(w)));
-let refused = null; try { await call("migrate.run", { url: "http://127.0.0.1:8765", token: "x" }); } catch (e) { refused = e.message; }
+// Running the move again after it finished (e.g. "Try again" for a failed step) must work.
+final = null; steps.clear();
+let again = null; try { again = (await call("migrate.run", { url: "http://127.0.0.1:8765", token: process.env.SRC_TOKEN })).job; } catch (e) { again = { error: e.message }; }
+ok("running the move a second time is allowed (" + (again.error || "started") + ")", !again.error);
+const t1 = Date.now(); while (!final && Date.now() - t1 < 240000) await new Promise(r => setTimeout(r, 250));
+ok("second run finishes and keeps everything", final?.done && fs.lstatSync(ft).isSymbolicLink() && ex("/projects/pocket-agent/build.sh"));
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED"); process.exit(fails ? 1 : 0);
 '
