@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 DRY=false; [ "${1:-}" = "--dry-run" ] && DRY=true
 
-[ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "Commit your changes first (git status)."; exit 1; }
+$DRY || [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "Commit your changes first (git status)."; exit 1; }
 REMOTE=$(git remote get-url origin 2>/dev/null || true)
 REPO=$(echo "$REMOTE" | sed -E 's#^(https://([^@]+@)?github.com/|git@github.com:)##; s#\.git$##')
 $DRY || [ -n "$REPO" ] || { echo "No GitHub remote 'origin'."; exit 1; }

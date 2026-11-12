@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # pocket-agent — control the Pocket Agent bridge server.
 #   pocket-agent start [--token T]   start in the background (no-op if running)
 #   pocket-agent stop | restart [--when-idle] | status | logs | token

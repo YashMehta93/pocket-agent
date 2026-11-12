@@ -1,4 +1,14 @@
+# build output and downloaded SDK
 build/
-*.keystore
-node_modules/
 sdk/
+node_modules/
+# signing keys and secrets — never commit (updates only install over the same key)
+*.keystore
+*.jks
+*.p12
+*.pem
+.env
+github-token
+# runtime files
+.pocket-agent-uploads/
+*.log

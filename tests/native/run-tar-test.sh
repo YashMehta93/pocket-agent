@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # Compares the app's tar extractor (Tar.java) with GNU tar on the real Alpine rootfs archive.
 set -euo pipefail
 cd "$(dirname "$0")/../.."

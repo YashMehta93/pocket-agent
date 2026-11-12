@@ -100,7 +100,7 @@ export const sourceName = ch => ch.github ? "github.com/" + ch.github : ch.path 
 // ───── GitHub releases as an update source ─────
 // A release (scripts/release.sh) carries: pocket-agent.apk, pocket-agent.json (APK version),
 // bundle.tgz (server + UI code) and bundle.json ({ hash }). Private repos need a token.
-const GH_API = "https://api.github.com";
+const GH_API = process.env.PA_GITHUB_API || "https://api.github.com";   // overridable for tests
 function ghHeaders(token, accept = "application/vnd.github+json") {
   const h = { Accept: accept, "User-Agent": "pocket-agent", "X-GitHub-Api-Version": "2022-11-28" };
   if (token) h.Authorization = "Bearer " + token;

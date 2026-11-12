@@ -1,7 +1,7 @@
 {
   "name": "pocket-agent",
   "private": true,
-  "description": "Android chat app for Claude Code. See README.md.",
+  "description": "Claude Code on your Android phone. See README.md.",
   "scripts": {
     "test": "npm run test:native && npm run test:ui && npm run test:server",
     "test:server": "node server/test/e2e.mjs",
@@ -13,9 +13,11 @@
     "test:setup": "node tests/ui/setup.test.mjs",
     "test:tar": "bash tests/native/run-tar-test.sh",
     "test:transfer": "bash server/test/transfer.test.sh",
-    "test:migrate": "bash server/test/migrate.test.sh"
+    "test:migrate": "bash server/test/migrate.test.sh",
+    "test:github": "bash server/test/github.test.sh"
   },
   "devDependencies": {
     "jsdom": "^25.0.1"
-  }
+  },
+  "license": "MIT"
 }

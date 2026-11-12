@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # Builds the Pocket Agent APK without Gradle, using Termux's Android tools:
 # aapt2 (resources) -> javac (code) -> d8 (dex) -> zip (+ native libs) -> zipalign -> apksigner.
 #

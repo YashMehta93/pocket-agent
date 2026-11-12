@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # Tests chat import + update channel between two servers: the running Termux server (source, 8765)
 # and a throwaway "app" server (target, 8766) with its own empty HOME and its own copy of the code.
 set -uo pipefail
@@ -9,7 +9,7 @@ cp -r server/src server/bin server/package.json server/package-lock.json "$T/roo
 ln -s "$REPO/server/node_modules" "$T/root/server/node_modules"
 cp -r app/assets/ui "$T/root/app/assets/"
 echo "/* local edit that the update must replace */" >> "$T/root/app/assets/ui/css/app.css"
-(HOME="$T/home" PA_SUPERVISED=1 node "$T/root/server/src/index.js" --port 8766 > "$T/server.log" 2>&1) & PID=$!
+(env -u PA_MODE HOME="$T/home" PA_DATA="$T/home/.pocket-agent" PA_SUPERVISED=1 node "$T/root/server/src/index.js" --port 8766 > "$T/server.log" 2>&1) & PID=$!
 for i in $(seq 1 30); do curl -fs http://127.0.0.1:8766/health >/dev/null && break; sleep 0.3; done
 SRC_TOKEN=$(cat ~/.pocket-agent/token) TGT_TOKEN=$(cat "$T/home/.pocket-agent/token") TROOT="$T/root" REPO="$REPO" PID=$PID node --input-type=module -e '
 import WebSocket from "'"$REPO"'/server/node_modules/ws/index.js";
@@ -27,10 +27,9 @@ const r = await call("sessions.import", src);
 ok(`import copied chats (added ${r.added})`, r.added > 0);
 const list = (await call("sessions.list")).sessions;
 ok(`imported chats are listed (${list.length})`, list.length > 0);
-const dd = list.find(s => s.sessionId.startsWith("dd5c2a3b"));
-ok("this conversation (dd5c2a3b) is among them: " + (dd?.title || "").slice(0, 40), !!dd);
-const hist = await call("session.history", { sessionId: dd.sessionId });
-ok(`its history loads (${hist.messages.length} messages)`, hist.messages.length > 100);
+const one = list[0];
+const hist = await call("session.history", { sessionId: one.sessionId });
+ok(`an imported chat opens with its history ("${(one.title || "").slice(0, 30)}", ${hist.messages.length} messages)`, hist.messages.length > 0);
 const again = await call("sessions.import", src);
 ok(`re-import is idempotent (added ${again.added}, unchanged ${again.unchanged})`, again.added === 0);
 const chk = await call("update.check", src);

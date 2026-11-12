@@ -37,6 +37,18 @@ proot ships as `lib*.so` in the APK (`app/jniLibs`, prepared by `app/native/prep
 
 The protocol between app and server is the same in both modes; that's what keeps them swappable.
 
+## Updates
+
+The app's built-in server replaces its own code (server + UI) from an **update source** (`server/src/transfer.js`), and offers new APKs from the same place:
+
+| Source | Who uses it | Code | APK |
+|---|---|---|---|
+| GitHub releases (`owner/repo`, plus a token for private repos) | everyone; fresh installs follow `server/package.json` → `pocketAgent.githubRepo` | release file `bundle.tgz`, checked against `bundle.json`'s hash | `pocket-agent.apk` + `pocket-agent.json` |
+| A project folder on the phone | developing Pocket Agent in the app | the folder itself | `build/pocket-agent.apk` |
+| Another Pocket Agent server | e.g. a computer or Termux | `/bundle.tgz` | `/apk/download` |
+
+Applying an update waits until no chat is mid-reply; then the app restarts the server. An APK update is installed by Android after one confirmation tap (`Updater.java`).
+
 ## Lifecycle of one message
 
 1. UI `send` → server `handlers.send` → `openSession` (resumes the chat from disk if needed) → `LiveSession.send` pushes a user message into the session's `Inbox` (the SDK's streaming input).

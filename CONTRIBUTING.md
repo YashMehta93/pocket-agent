@@ -2,53 +2,64 @@
 
 Read `docs/ARCHITECTURE.md` first (5 minutes). It explains the three parts and how a message flows.
 
-## Where to work
+## Set up: develop inside the app (no computer, no Termux)
 
-Pocket Agent can develop itself. After Settings → *Move everything from Termux*, the app's built-in Linux has the repo at `~/projects/pocket-agent`, plus Node, git, Java and the Android build tools. Run scripts with `bash` (`bash build.sh`), because their shebangs still point at Termux. The update source is the local repo: server and UI edits ship with *Check for updates*, new APKs with the update banner.
+1. Install Pocket Agent and finish its first-run setup (see README).
+2. Settings → **Build Pocket Agent yourself**. Enter the repo (`owner/pocket-agent`) and, for a private repo, a GitHub token (see README, "Updates"). It:
+   - installs Java 17, `aapt2`, `zipalign`, `d8` (Google's r8) and `apksigner` (our CLI on Google's apksig);
+   - clones the repo into `~/projects/pocket-agent`;
+   - downloads `android.jar` and runs `npm install`;
+   - builds once, and switches the app's updates to that folder.
+3. Ask Claude (in the app) to change Pocket Agent, or edit yourself. Run scripts with `bash`, e.g. `bash build.sh`.
 
-## Setup (Termux on Android)
+Your own builds are signed with your own `pocket-agent.keystore` (created on first build). Android only installs an update signed with the same key as the installed app. To switch between the official build and your own, uninstall first; that wipes the app's Linux and chats.
+
+### On a computer instead
+
+You need JDK 17, Node 20+, and the Android SDK build-tools (`aapt2`, `zipalign`, `d8`, `apksigner`) on `PATH`:
 
 ```bash
-pkg install nodejs git aapt aapt2 d8 apksigner openjdk-17 proot
-# Claude Code must be installed and logged in (`claude` works in Termux)
-git clone <repo> ~/projects/pocket-agent && cd ~/projects/pocket-agent
-(cd server && npm install --omit=optional)   # Agent SDK + ws; skip the bundled 200 MB binaries
-npm install                                   # jsdom for UI tests
-# android.jar (API 34) for builds, not committed:
-mkdir -p sdk && cd sdk && curl -LO https://dl.google.com/android/repository/platform-34-ext7_r03.zip \
-  && unzip -j platform-34-ext7_r03.zip '*/android.jar' && rm platform-34-ext7_r03.zip && cd ..
-ln -sf "$PWD/server/bin/pocket-agent" "$PREFIX/bin/pocket-agent"
+git clone https://github.com/<owner>/pocket-agent && cd pocket-agent
+bash scripts/fetch-android-jar.sh            # sdk/android.jar (API 34)
+(cd server && npm install --omit=optional)   # Agent SDK + ws
+npm install                                  # jsdom for UI tests
+bash build.sh                                # → build/pocket-agent.apk
 ```
 
 ## Where to make a change
 
 | You want to change… | Edit | How it reaches the phone |
 |---|---|---|
-| Look, layout, chat behaviour | `app/assets/ui/` | reopen the app (it reloads UI from the server) |
-| Server behaviour, new request | `server/src/` (+ `docs/PROTOCOL.md`) | `pocket-agent restart --when-idle` |
-| Notification wording, buttons, when to notify | `server/src/notify.js` | `pocket-agent restart --when-idle` |
-| Phone features built from native capabilities | server/UI code calling `callNative()` / `nativeRpc()` | as above, no reinstall |
-| Built-in Linux setup (packages, install steps) | `app/src/.../Linux.java`, `app/assets/ui/setup.html` | `./build.sh` → one-tap update |
-| A genuinely new native capability | `app/src/.../Rpc.java` (+ manifest for a new permission/service) | `./build.sh`, then the app shows "Update available": one tap |
+| Look, layout, chat behaviour | `app/assets/ui/` | Settings → Check for updates (the screen reloads) |
+| Server behaviour, a new request | `server/src/` (+ `docs/PROTOCOL.md`) | same: Check for updates; restarts when no reply is running |
+| Notification wording, buttons, when to notify | `server/src/notify.js` | same |
+| Phone features built from native capabilities | server/UI code calling `callNative()` / `nativeRpc()` | same, no reinstall |
+| Built-in Linux setup (packages, install steps) | `app/src/.../Linux.java`, `app/assets/ui/setup.html` | `bash build.sh`, then tap the "App update available" banner |
+| A genuinely new native capability | `app/src/.../Rpc.java` (+ manifest for a new permission or service) | same: build, then tap the banner |
 
-UI files, by feature: `core.js` (helpers, connection, sheets), `render.js` (chat rendering), `activity.js` (activity bar/log), `sessions.js` (drawer), `composer.js` (input, pickers, edit/retry), `approvals.js`, `pages.js` (menus, files, settings), `main.js` (start-up, events). They're plain scripts sharing globals, loaded in the order in `index.html`. `base.js` first, `main.js` last.
+UI files, by feature: `core.js` (helpers, connection, sheets), `render.js` (chat rendering), `activity.js` (activity bar and log), `sessions.js` (drawer), `composer.js` (input, pickers, edit/retry), `approvals.js`, `pages.js` (menus, files, settings, background jobs), `main.js` (start-up, events). They're plain scripts sharing globals, loaded in the order in `index.html`: `base.js` first, `main.js` last.
 
-Updating proot: `pkg upgrade proot && app/native/prepare-proot.sh`, then rebuild.
+Updating the bundled proot: `bash app/native/prepare-proot.sh` (downloads Termux's packages; needs `patchelf`), then rebuild and commit `app/jniLibs`.
 
-## Shipping changes to the app's built-in server
+## Releases (what friends' apps update from)
 
-The app's built-in server (standalone mode) updates from an **update source**: Settings → *Get updates from* → your Termux server (`http://127.0.0.1:8765` + `pocket-agent token`). After you change `server/` or `app/assets/ui/`, the app shows "An update is ready"; one tap pulls the code (`/bundle.tgz`) and restarts it when idle. New APKs built with `./build.sh` are offered the same way. Friends point their app at whatever server you share.
+```bash
+bash scripts/release.sh --dry-run   # build + package into build/release/
+bash scripts/release.sh             # tag vX.Y.Z, create the GitHub release, upload the 4 files
+```
+
+It needs a GitHub token that can write the repo, in `$GITHUB_TOKEN` or `~/.config/pocket-agent/github-token`. Releases are signed with `pocket-agent.keystore`. **Keep that file private and backed up.** It's ignored by git, and losing it means existing installs can't update.
+
+Fresh installs follow the repo named in `server/package.json` → `pocketAgent.githubRepo`.
 
 ## Develop without breaking your running app
 
-Run a second server on another port and point tests at it:
+Run a second server and point tests at it. It shares this app's chats; keep test chats disposable.
 
 ```bash
-npm run dev:server &          # port 8766
+node server/src/index.js --port 8766 &
 PA_PORT=8766 npm run test:ui
 ```
-
-The phone keeps using 8765. Deploy with `pocket-agent restart --when-idle`; it waits until no chat is mid-reply.
 
 ## Tests
 
@@ -59,16 +70,18 @@ npm run test:server      # protocol end-to-end, includes a real Claude turn
 npm run test:native      # server ↔ phone channel with a fake phone (fast, no Claude)
 npm run test:setup       # first-run setup screen with a fake native bridge
 npm run test:tar         # the app's tar extractor vs GNU tar on the real Alpine archive
-npm run test:migrate     # Move from Termux end to end, into a throwaway home (needs the Termux server)
-npm run test:transfer    # chat import + update channel between two servers (needs the Termux server running)
+npm run test:github      # updating from GitHub releases, against a fake GitHub API
+npm run test:migrate     # Move from Termux, into a throwaway home (needs a Termux server)
+npm run test:transfer    # chat import + update channel between servers (needs a Termux server)
 ```
 
-Add a check for anything you fix. UI tests drive the real UI code. `ev("someFunction()")` calls into the page.
+Add a check for anything you fix. UI tests drive the real UI code: `ev("someFunction()")` calls into the page. Tests that start their own server give it a throwaway `HOME` and `PA_DATA`, and must never touch the app's real data.
 
 ## Conventions
 
-- No build step for the UI, no frameworks. Plain JS, `esc()` any text you put into HTML, `h()` to make elements.
+- No build step for the UI, no frameworks. Plain JS; `esc()` any text you put into HTML; `h()` to make elements.
 - Java: framework APIs only (no AndroidX), so `build.sh` keeps working on a phone.
-- Server: ES modules, one responsibility per file, comment the *why*.
+- Server: ES modules, one responsibility per file; comment the *why*.
 - Keep user-facing text short and plain.
 - Commit messages: what changed and why, in the imperative ("Add activity bar").
+- Never commit keys, tokens or personal data. `.gitignore` covers `*.keystore`, `sdk/`, `build/`.
