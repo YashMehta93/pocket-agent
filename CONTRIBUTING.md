@@ -19,7 +19,7 @@ Your own builds are signed with your own `pocket-agent.keystore` (created on fir
 You need JDK 17, Node 20+, and the Android SDK build-tools (`aapt2`, `zipalign`, `d8`, `apksigner`) on `PATH`:
 
 ```bash
-git clone https://github.com/<owner>/pocket-agent && cd pocket-agent
+git clone https://github.com/YashMehta93/pocket-agent && cd pocket-agent
 bash scripts/fetch-android-jar.sh            # sdk/android.jar (API 34)
 (cd server && npm install --omit=optional)   # Agent SDK + ws
 npm install                                  # jsdom for UI tests
