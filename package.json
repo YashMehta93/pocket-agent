@@ -11,7 +11,8 @@
     "dev:server": "PA_PORT=8766 node server/src/index.js --port 8766",
     "test:native": "cd server && node test/native.test.mjs",
     "test:setup": "node tests/ui/setup.test.mjs",
-    "test:tar": "tests/native/run-tar-test.sh"
+    "test:tar": "tests/native/run-tar-test.sh",
+    "test:transfer": "server/test/transfer.test.sh"
   },
   "devDependencies": {
     "jsdom": "^25.0.1"

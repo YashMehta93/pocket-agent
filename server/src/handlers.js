@@ -8,6 +8,7 @@ import { VERSION, HOME, UI_DIR, APK_INFO, prefs, savePrefs, cache } from "./conf
 import { broadcastAll, callNative } from "./hub.js";
 import { live, getLive, openSession, busyElsewhere, runClaude } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
+import { importSessions, checkUpdate, applyUpdate } from "./transfer.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
 
@@ -24,6 +25,7 @@ export const handlers = {
   async hello() {
     return { version: VERSION, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
       defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account,
+      updateChannel: prefs.updateChannel?.url || null, mode: process.env.PA_MODE || "server",
       live: [...live.values()].map(s => s.info()) };
   },
 
@@ -93,11 +95,27 @@ export const handlers = {
   },
   async "defaults.set"({ defaults }) { prefs.defaults = { ...prefs.defaults, ...defaults }; savePrefs(); return { defaults: prefs.defaults }; },
 
+  // ───── between servers (transfer.js) ─────
+  /** Copy chats from another Pocket Agent server (e.g. Termux) into this one. */
+  async "sessions.import"({ url, token }) { const r = await importSessions({ url, token }); changed(); return r; },
+  /** Where this server gets code/UI updates from ({url, token}, or null to stop). */
+  async "update.channel"({ url, token }) { prefs.updateChannel = url ? { url: url.replace(/\/$/, ""), token } : null; savePrefs(); return { channel: prefs.updateChannel?.url || null }; },
+  async "update.check"(m) { const ch = m.url ? m : prefs.updateChannel; if (!ch) return { available: false, channel: null }; return { ...(await checkUpdate(ch)), channel: ch.url }; },
+  /** Pulls the update, then restarts once no chat is mid-reply (SIGUSR2, see index.js). */
+  async "update.apply"(m) { const ch = m.url ? m : prefs.updateChannel; if (!ch) throw new Error("No update source set"); return await applyUpdate(ch, () => process.kill(process.pid, "SIGUSR2")); },
+
   // ───── the app itself ─────
   /** Version of the newest built APK, so the app can offer a one-tap update. */
   async "app.update"() {
     try { const info = JSON.parse(fs.readFileSync(APK_INFO, "utf8")); return { ...info, url: "/apk/download" }; }
-    catch { return { versionCode: 0 }; }
+    catch {}
+    // No APK built here (the app's built-in server): ask the update source, and download from it directly.
+    const ch = prefs.updateChannel;
+    if (ch) try {
+      const r = await fetch(`${ch.url}/apk/info?token=${encodeURIComponent(ch.token || "")}`);
+      if (r.ok) { const info = await r.json(); if (info.versionCode) return { ...info, url: `${ch.url}/apk/download?token=${encodeURIComponent(ch.token || "")}` }; }
+    } catch {}
+    return { versionCode: 0 };
   },
   /** Calls a native capability on the phone through the background service (for tools and tests). */
   async "native.call"({ method, params, timeoutMs }) { return { result: await callNative(method, params || {}, timeoutMs || 20000) }; },

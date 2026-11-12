@@ -38,7 +38,9 @@ async function onConnected() {
   else updateHeader();
   updateComposer();
   if (window.__pendingIntent) { const i = window.__pendingIntent; window.__pendingIntent = null; handleIntent(i); }
+  state.updateChannel = hello.updateChannel || null;
   checkAppUpdate();
+  if (state.updateChannel) checkServerUpdate(false);
 }
 
 /** If the server has a newer APK than the one installed, offer a one-tap update. */
@@ -48,14 +50,14 @@ async function checkAppUpdate() {
     const u = await conn.call("app.update");
     const have = nativeCall("appVersionCode") || 0;
     if (!u.versionCode || u.versionCode <= have) return;
-    showBanner(`App update available (v${u.versionName})`, "Update", installAppUpdate);
+    showBanner(`App update available (v${u.versionName})`, "Update", () => installAppUpdate(u.url));
   } catch {}
 }
-async function installAppUpdate() {
+async function installAppUpdate(url) {
   // Old apps (before v0.1.6) can't install updates themselves; point them to the file.
   if (typeof native.rpc !== "function") { toast("Install pocket-agent.apk from Downloads/claude apps once; after that, updates are one tap.", 6000); return; }
   toast("Downloading update…");
-  try { await nativeRpc("update.install", { url: "/apk/download" }); hideBanner(); }
+  try { await nativeRpc("update.install", { url: url || "/apk/download" }); hideBanner(); }
   catch (e) { toast(e.message, 5000); }
 }
 function showBanner(text, action, fn) {

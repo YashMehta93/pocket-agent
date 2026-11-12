@@ -33,7 +33,13 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 | `fs.list` / `fs.search` / `fs.read` / `fs.mkdir` | `path` / `cwd, q` / `path` / `path` | entries / results / `text, binary, truncated` / |
 | `upload` | `cwd, name, data` (base64) | `path` (saved under `<cwd>/.pocket-agent-uploads/`) |
 | `app.update` | | `versionCode, versionName, url` of the newest built APK |
+| `sessions.import` | `url, token` of another server | `added, updated, unchanged, foldersCreated` |
+| `update.channel` | `url, token` (empty url = none) | `channel` |
+| `update.check` | (`url, token`, default: the saved channel) | `available, remote, local, channel` |
+| `update.apply` | (same) | `updated, depsChanged`; the server then restarts when idle |
 | `native.call` | `method, params, timeoutMs?` | `result` from the phone (server → phone RPC, see below) |
+
+Token-protected HTTP routes another server pulls from (see `server/src/transfer.js`): `GET /bundle/info`, `GET /bundle.tgz` (server + UI code), `GET /export/sessions.tgz` (chats), `GET /apk/info`, `GET /apk/download`.
 
 ## Events
 

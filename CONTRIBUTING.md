@@ -31,6 +31,10 @@ UI files, by feature: `core.js` (helpers, connection, sheets), `render.js` (chat
 
 Updating proot: `pkg upgrade proot && app/native/prepare-proot.sh`, then rebuild.
 
+## Shipping changes to the app's built-in server
+
+The app's built-in server (standalone mode) updates from an **update source**: Settings → *Get updates from* → your Termux server (`http://127.0.0.1:8765` + `pocket-agent token`). After you change `server/` or `app/assets/ui/`, the app shows "An update is ready"; one tap pulls the code (`/bundle.tgz`) and restarts it when idle. New APKs built with `./build.sh` are offered the same way. Friends point their app at whatever server you share.
+
 ## Develop without breaking your running app
 
 Run a second server on another port and point tests at it:
@@ -51,6 +55,7 @@ npm run test:server      # protocol end-to-end, includes a real Claude turn
 npm run test:native      # server ↔ phone channel with a fake phone (fast, no Claude)
 npm run test:setup       # first-run setup screen with a fake native bridge
 npm run test:tar         # the app's tar extractor vs GNU tar on the real Alpine archive
+npm run test:transfer    # chat import + update channel between two servers (needs the Termux server running)
 ```
 
 Add a check for anything you fix. UI tests drive the real UI code. `ev("someFunction()")` calls into the page.

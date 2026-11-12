@@ -6,12 +6,14 @@
 //   POST /permission?token=…   answer a permission request from a notification button
 //   POST /native/result?token= result of a server → phone RPC call (hub.callNative)
 //   GET  /apk/download?token=  latest built APK, for in-app updates
+//   GET  /bundle/info, /bundle.tgz, /export/sessions.tgz (?token=)  for another server's update / chat import
 import http from "node:http";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { WebSocketServer } from "ws";
-import { VERSION, TOKEN, UI_DIR, APK_PATH, safeEq, log } from "./config.js";
+import { VERSION, TOKEN, UI_DIR, APK_PATH, APK_INFO, CLAUDE_DIR, safeEq, log } from "./config.js";
+import { bundleInfo, bundleStream, tarStream } from "./transfer.js";
 import { clients, sseClients, nativeResult } from "./hub.js";
 import { toNative } from "./notify.js";
 import { toolDetail } from "./activity.js";
@@ -33,6 +35,11 @@ export function createServer() {
       let body = ""; for await (const c of req) body += c;
       try { return json(res, 200, { ok: nativeResult(JSON.parse(body || "{}")) }); } catch (e) { return json(res, 400, { error: String(e.message) }); }
     }
+    // Sources for another server's chat import / update channel (see transfer.js).
+    if (url.pathname === "/bundle/info") return json(res, 200, await bundleInfo());
+    if (url.pathname === "/apk/info") { try { return json(res, 200, JSON.parse(await fsp.readFile(APK_INFO, "utf8"))); } catch { return json(res, 200, { versionCode: 0 }); } }
+    if (url.pathname === "/bundle.tgz") { res.writeHead(200, { "content-type": "application/gzip" }); return bundleStream().pipe(res); }
+    if (url.pathname === "/export/sessions.tgz") { res.writeHead(200, { "content-type": "application/gzip" }); return tarStream(CLAUDE_DIR, ["projects"]).pipe(res); }
     if (url.pathname === "/apk/download") {
       try {
         const st = await fsp.stat(APK_PATH);

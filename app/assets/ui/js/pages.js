@@ -143,6 +143,10 @@ function openSettings() {
       ${native ? `<div class="set-row"><div class="l">Restart Claude's server<small>Stops any reply in progress</small></div><button class="chip" id="s-restart">Restart</button></div>` : ""}
       ${standalone ? `<div class="set-row"><div class="l">Claude sign-in<small id="s-auth">Checking…</small></div><button class="chip" id="s-login">Sign in again</button></div>
       <div class="set-row"><div class="l">Server log<small>For troubleshooting</small></div><button class="chip" id="s-log">View</button></div>` : ""}
+      <h3>Updates &amp; chats</h3>
+      <div class="set-row"><div class="l">Get updates from<small id="u-src">${esc(state.updateChannel || "Not set: updates come with new app versions")}</small></div><button class="chip" id="u-set">${state.updateChannel ? "Change" : "Set"}</button></div>
+      <div class="set-row"><div class="l">Check for updates<small id="u-status">New server code and app screens</small></div><button class="chip" id="u-check">Check</button></div>
+      <div class="set-row"><div class="l">Import chats<small>Copy chats from another Pocket Agent server, like Termux</small></div><button class="chip" id="i-chats">Import</button></div>
       ${native ? `<h3>Phone control</h3><div id="phone-ctl"><div class="set-row"><div class="l">Checking…</div></div></div>` : ""}
       <h3>Account</h3>
       <div class="set-row"><div class="l">${esc(state.account?.email || state.account?.organization || "Claude account")}<small>${esc(state.account?.subscriptionType || state.account?.apiKeySource || "Signed in through Claude Code")}</small></div></div>
@@ -164,6 +168,22 @@ function openSettings() {
       }
     };
     body.querySelector("#s-server").onclick = () => chooseServer();
+    body.querySelector("#u-set").onclick = async () => {
+      const src = await askOtherServer("Get updates from", "Pocket Agent will pull new server code and screens from this server.");
+      if (!src) return;
+      try { await conn.call("update.channel", src); state.updateChannel = src.url; toast("Update source saved"); openSettingsRefresh(); } catch (e) { toast(e.message); }
+    };
+    body.querySelector("#u-check").onclick = () => checkServerUpdate(true);
+    body.querySelector("#i-chats").onclick = async () => {
+      const src = await askOtherServer("Import chats from", "Copies that server's chats here. Nothing is deleted on either side; their project folders are created here empty.");
+      if (!src) return;
+      toast("Importing chats…", 8000);
+      try {
+        const r = await conn.call("sessions.import", src);
+        toast(`Imported ${r.added} new chat${r.added === 1 ? "" : "s"}${r.updated ? `, updated ${r.updated}` : ""}`, 4000);
+        refreshSessions();
+      } catch (e) { toast(e.message, 5000); }
+    };
     body.querySelector("#s-login")?.addEventListener("click", () => nativeCall("openSetup", "#login"));
     body.querySelector("#s-log")?.addEventListener("click", () => page.open("Server log", async b => {
       b.className = "viewer"; b.append(codeBlock(await nativeRpc("runtime.logs", { which: "server", bytes: 40000 }).catch(e => e.message) || "(empty)"));
@@ -216,6 +236,29 @@ function chooseServer() {
     };
     b.querySelector("#srv-opts").append(el);
   }
+}
+/** Address + token of another Pocket Agent server (defaults to Termux on this phone); remembered for next time. */
+async function askOtherServer(title, text) {
+  const url = await promptSheet({ title, value: settings.otherServer || "http://127.0.0.1:8765", placeholder: "http://host:8765" });
+  if (!url) return null;
+  const token = await promptSheet({ title: "Token for " + url.replace(/^https?:\/\//, ""), value: settings.otherToken || "", placeholder: "In Termux: pocket-agent token" });
+  if (token === null) return null;
+  settings.otherServer = url.trim().replace(/\/$/, ""); settings.otherToken = token.trim(); saveSettings();
+  return { url: settings.otherServer, token: settings.otherToken };
+}
+/** Checks the update source; offers to apply. quiet=false also reports "up to date" and errors. */
+async function checkServerUpdate(loud) {
+  try {
+    const r = await conn.call("update.check");
+    if (!r.channel) { if (loud) toast("Set where updates come from first"); return; }
+    if (!r.available) { if (loud) toast("Up to date"); return; }
+    showBanner("An update is ready for Pocket Agent", "Update", applyServerUpdate);
+    if (loud) applyServerUpdate();
+  } catch (e) { if (loud) toast(e.message, 5000); }
+}
+async function applyServerUpdate() {
+  showBanner("Updating… Pocket Agent restarts when no reply is in progress.");
+  try { await conn.call("update.apply"); } catch (e) { hideBanner(); toast(e.message, 5000); }
 }
 function openSettingsRefresh() { page.close(); openSettings(); }
 function seg(root, sel, fn) { root.querySelectorAll(sel + " button").forEach(b => b.onclick = () => { root.querySelectorAll(sel + " button").forEach(x => x.classList.remove("on")); b.classList.add("on"); fn(b.dataset.v); }); }
