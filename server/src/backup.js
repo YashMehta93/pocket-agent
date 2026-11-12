@@ -12,7 +12,8 @@ export const BACKUP_DIR = process.env.PA_BACKUP_DIR || "/sdcard/Download/Pocket 
 // Relative to HOME: Claude Code's chats, memory, settings, skills and plugins; projects; app preferences.
 const ITEMS = [".claude", ".claude.json", "projects", path.relative(HOME, path.join(DATA, "prefs.json"))];
 const EXCLUDE = [".claude/.credentials.json", ".claude/shell-snapshots", ".claude/session-env", ".claude/cache",
-  ".claude/downloads", ".config", "node_modules", ".cache"];
+  ".claude/downloads", ".config", "node_modules", ".cache",
+  ".l2s.*"];   // proot's stand-ins for hard links: the linked files are stored by content instead (-h)
 const NAME = /^pocket-agent-backup-[\w-]+\.tgz$/;
 
 const sizeOf = f => { try { return fs.statSync(f).size; } catch { return 0; } };
@@ -25,7 +26,10 @@ export async function createBackup() {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
   const file = path.join(BACKUP_DIR, `pocket-agent-backup-${stamp}.tgz`), tmp = file + ".part";
   const ex = EXCLUDE.map(e => `--exclude=${quote(e)}`).join(" ");
-  try { await sh(`tar czf ${quote(tmp)} ${ex} -C ${quote(HOME)} ${items.map(quote).join(" ")}`); }
+  // -h stores files by content (proot turns hard links, e.g. in .git, into symlinks to .l2s.* files);
+  // --ignore-failed-read skips leftovers that can't be read (e.g. a broken temp file) instead of failing.
+  // GNU tar exits 1 when files changed while reading (live chats): still a good backup. 2 is a real failure.
+  try { await sh(`tar czhf ${quote(tmp)} --ignore-failed-read --warning=no-file-changed ${ex} -C ${quote(HOME)} ${items.map(quote).join(" ")} 2>/dev/null; c=$?; [ $c -le 1 ] && [ -s ${quote(tmp)} ]`); }
   catch (e) { await fsp.rm(tmp, { force: true }); throw e; }
   await fsp.rename(tmp, file);
   log("backup", file, sizeOf(file));

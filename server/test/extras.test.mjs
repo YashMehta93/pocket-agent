@@ -31,6 +31,10 @@ try {
   write(path.join(HOME, "projects/app/node_modules/big/index.js"), "x");
   write(path.join(HOME, ".config/pocket-agent/github-token"), "ghp_secret");
   write(path.join(process.env.PA_DATA, "prefs.json"), "{\"pinned\":[]}");
+  // what real homes have: hard links (proot fakes them with .l2s.* symlinks) and broken leftovers in .git
+  write(path.join(HOME, "projects/app/.git/objects/pack/pack-1.pack"), "PACK");
+  fs.linkSync(path.join(HOME, "projects/app/.git/objects/pack/pack-1.pack"), path.join(HOME, "projects/app/.git/objects/pack/pack-1.keep"));
+  fs.symlinkSync("loop", path.join(HOME, "projects/app/.git/objects/pack/loop"));
   const b = await createBackup();
   const names = sh(`tar tzf '${b.file}'`).split("\n");
   ok("backup written to phone storage", fs.existsSync(b.file) && b.bytes > 0, b.file.replace(T, ""));
@@ -40,6 +44,7 @@ try {
   fs.rmSync(path.join(HOME, ".claude/projects"), { recursive: true });
   await restoreBackup(b.file);
   ok("restore brings chats back", fs.readFileSync(path.join(HOME, ".claude/projects/-root/chat1.jsonl"), "utf8").includes("hello"));
+  ok("hard-linked files are backed up by content", names.includes("projects/app/.git/objects/pack/pack-1.keep") && !names.some(n => n.includes(".l2s.")));
   const evil = path.join(process.env.PA_BACKUP_DIR, "pocket-agent-backup-evil.tgz");
   write(path.join(T, "evil/x"), "x"); sh(`tar czf '${evil}' -C '${T}/evil' --transform 's,^,../,' x`);
   let refused = null; try { await restoreBackup(evil); } catch (e) { refused = e.message; }
