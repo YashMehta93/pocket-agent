@@ -1,7 +1,7 @@
 // "Move from Termux": brings a Termux setup into the app's built-in Linux in one go.
 //
 // Source side (Termux server): GET /export/migration.tgz streams the home folder minus caches,
-// Termux's own Claude install and secrets, plus the Java build tools (d8, apksigner) and `cs`.
+// Termux's own Claude install and secrets, plus `cs`.
 // Target side (the app's built-in server): runMigration() downloads it, merges it into /root,
 // installs Java + Android build tools (via the app, which can run apk as root), maps old Termux
 // paths onto /root so imported chats find their files, and points updates at the local repo.
@@ -10,7 +10,8 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { HOME, CLAUDE_DIR, prefs, savePrefs, log } from "./config.js";
-import { broadcastAll, callNative } from "./hub.js";
+import { broadcastAll } from "./hub.js";
+import { installBuildTools } from "./devtools.js";
 
 // Where Termux kept the home folder. Inside the app this path becomes a link to /root.
 // Tests override it with a throwaway folder (PA_TERMUX_HOME): the move must never touch a real Termux home.
@@ -33,7 +34,7 @@ export async function migrationEntries() {
 export async function migrationStream() {
   const args = ["czf", "-", ...EXCLUDES.map(e => "--exclude=" + e), "-C", HOME, ...(await migrationEntries())];
   const prefix = process.env.PREFIX || TERMUX_PREFIX;
-  const extra = [["share/java", "d8.jar"], ["share/java", "apksigner.jar"], ["bin", "cs"]].filter(([d, f]) => fs.existsSync(path.join(prefix, d, f)));
+  const extra = [["bin", "cs"]].filter(([d, f]) => fs.existsSync(path.join(prefix, d, f)));
   for (const [d, f] of extra) args.push("--transform", `s,^${f.replace(".", "\\.")}$,pa-tools/${f},`, "-C", path.join(prefix, d), f);
   return spawn("tar", args, { stdio: ["ignore", "pipe", "ignore"] }).stdout;
 }
@@ -168,31 +169,10 @@ async function migrate(url, token) {
     line("  ~/storage → phone storage");
   } else summary.warnings.push("Phone storage isn't visible yet: allow Pocket Agent's storage permission, then restart it (Settings → Restart).");
 
-  // 4. build tools (Java, aapt2/zipalign from Alpine, d8/apksigner jars from Termux)
-  emit({ step: "tools" }); line("Installing Java and Android build tools (a few minutes)…");
-  try {
-    const caps = await callNative("capabilities", {}, 10000);
-    if ((caps.api || 0) < 3) throw new Error("Update the Pocket Agent app first (it needs version 0.2.14 or newer for this step)");
-    const repo = "https://dl-cdn.alpinelinux.org/alpine/edge";
-    // Java 17: Alpine's JDK 21 dies at start-up in Android's app sandbox ("Failed to mark memory page
-    // as executable"); JDK 17 runs. Remove 21 if an earlier move installed it, and make 17 the default.
-    const cmd = `J21=$(apk info 2>/dev/null | grep '^openjdk21' | tr '\\n' ' '); [ -z "$J21" ] || apk del --no-cache $J21; `
-      + `apk add --no-cache openjdk17-jdk zip unzip file && ln -sfn java-17-openjdk /usr/lib/jvm/default-jvm && (grep -q '@testing' /etc/apk/repositories || echo '@testing ${repo}/testing' >> /etc/apk/repositories) && `
-      + `(apk add --no-cache android-build-tools@testing || apk add --no-cache -X ${repo}/testing -X ${repo}/main -X ${repo}/community android-build-tools)`;
-    const res = await callNative("runtime.exec", { cmd, root: true, timeoutMs: 30 * 60_000 }, 31 * 60_000);
-    line(res.output.split("\n").slice(-12).join("\n"));
-    if (res.code !== 0) throw new Error("apk exit " + res.code);
-    await fsp.mkdir("/usr/local/share/java", { recursive: true });
-    for (const j of ["d8.jar", "apksigner.jar"]) if (exists(path.join(x, "pa-tools", j))) await fsp.copyFile(path.join(x, "pa-tools", j), path.join("/usr/local/share/java", j));
-    await fsp.writeFile("/usr/local/bin/d8", "#!/bin/sh\nexec java -cp /usr/local/share/java/d8.jar com.android.tools.r8.D8 \"$@\"\n", { mode: 0o755 });
-    await fsp.writeFile("/usr/local/bin/apksigner", "#!/bin/sh\nexec java -jar /usr/local/share/java/apksigner.jar \"$@\"\n", { mode: 0o755 });
-    if (exists(path.join(x, "pa-tools", "cs"))) {
-      const cs = (await fsp.readFile(path.join(x, "pa-tools", "cs"), "utf8")).replace(/^#!.*\n/, "#!/usr/bin/env node\n");
-      await fsp.writeFile("/usr/local/bin/cs", cs, { mode: 0o755 });
-    }
-    const v = await sh(`javac -version 2>&1; aapt2 version 2>&1 | head -1; d8 --version 2>&1 | head -1; apksigner --version 2>&1`, { stream: false });
-    line(v); summary.tools = true;
-  } catch (e) { summary.warnings.push("Build tools: " + e.message); line("Build tools not installed: " + e.message); }
+  // 4. build tools (shared with developer setup; nothing from Termux needed)
+  emit({ step: "tools" });
+  try { await installBuildTools(line); summary.tools = true; }
+  catch (e) { summary.warnings.push("Build tools: " + e.message); line("Build tools not installed: " + e.message); }
 
   // 5. project dependencies
   emit({ step: "deps" }); line("Installing project dependencies…");

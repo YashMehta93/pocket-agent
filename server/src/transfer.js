@@ -12,7 +12,7 @@ import { CLAUDE_DIR, UI_DIR, log } from "./config.js";
 
 /** Repo / install root: ~/projects/pocket-agent in Termux, /opt/pocket-agent in the app. */
 export const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
-const BUNDLE_PATHS = ["server/src", "server/bin", "server/package.json", "server/package-lock.json", "app/assets/ui"];
+const BUNDLE_PATHS = ["server/src", "server/bin", "server/devtools", "server/package.json", "server/package-lock.json", "app/assets/ui"];
 
 // ───── helpers ─────
 function run(cmd, args, opts = {}) {
@@ -95,8 +95,39 @@ export async function bundleInfo(root = ROOT) {
 export const bundleStream = () => tarStream(ROOT, BUNDLE_PATHS);
 
 /** Source label for messages: a server URL or a local folder. */
-export const sourceName = ch => ch.path || ch.url;
+export const sourceName = ch => ch.github ? "github.com/" + ch.github : ch.path || ch.url;
+
+// ───── GitHub releases as an update source ─────
+// A release (scripts/release.sh) carries: pocket-agent.apk, pocket-agent.json (APK version),
+// bundle.tgz (server + UI code) and bundle.json ({ hash }). Private repos need a token.
+const GH_API = "https://api.github.com";
+function ghHeaders(token, accept = "application/vnd.github+json") {
+  const h = { Accept: accept, "User-Agent": "pocket-agent", "X-GitHub-Api-Version": "2022-11-28" };
+  if (token) h.Authorization = "Bearer " + token;
+  return h;
+}
+export async function latestRelease({ github, token }) {
+  const r = await fetch(`${GH_API}/repos/${github}/releases/latest`, { headers: ghHeaders(token) });
+  if (r.status === 404) throw new Error(token ? `No release in ${github} yet, or the token can't see that repo` : `Can't see ${github}. If it's private, add a GitHub token in Settings.`);
+  if (r.status === 401) throw new Error("GitHub rejected the token (expired or mistyped?)");
+  if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
+  return r.json();
+}
+/** Fetch response for a release file (follows GitHub's redirect to its download host). */
+export async function releaseAsset(ch, rel, name) {
+  const a = (rel.assets || []).find(x => x.name === name);
+  if (!a) throw new Error(`Release ${rel.tag_name} has no ${name}`);
+  const r = await fetch(a.url, { headers: ghHeaders(ch.token, "application/octet-stream") });
+  if (!r.ok) throw new Error(`Downloading ${name} failed (${r.status})`);
+  return r;
+}
+
 export async function checkUpdate(ch) {
+  if (ch.github) {
+    const rel = await latestRelease(ch), local = await bundleInfo();
+    const remote = { ...(await (await releaseAsset(ch, rel, "bundle.json")).json()), release: rel.tag_name };
+    return { available: remote.hash !== local.hash, remote, local };
+  }
   if (ch.path) { const remote = await bundleInfo(ch.path), local = await bundleInfo(); return { available: remote.hash !== local.hash, remote, local }; }
   const { url, token } = ch;
   const r = await fetch(withToken(url, "/bundle/info", token));
@@ -112,6 +143,7 @@ export async function applyUpdate(ch, restart) {
   try {
     const tgz = path.join(tmp, "bundle.tgz");
     if (ch.path) await new Promise((res, rej) => { const o = fs.createWriteStream(tgz); tarStream(ch.path, BUNDLE_PATHS).pipe(o).on("finish", res).on("error", rej); });
+    else if (ch.github) await fsp.writeFile(tgz, Buffer.from(await (await releaseAsset(ch, await latestRelease(ch), "bundle.tgz")).arrayBuffer()));
     else await download(withToken(url, "/bundle.tgz", token), tgz);
     const x = path.join(tmp, "x"); await fsp.mkdir(x);
     await run("tar", ["xzf", tgz, "-C", x]);

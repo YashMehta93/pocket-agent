@@ -26,6 +26,9 @@ export const UI_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathnam
 export const APK_PATH = process.env.PA_APK || path.resolve(UI_DIR, "../../../build/pocket-agent.apk");
 export const APK_INFO = APK_PATH.replace(/\.apk$/, ".json");
 
+/** GitHub repo ("owner/name") whose releases fresh installs update from; from server/package.json. */
+export const DEFAULT_REPO = (() => { try { return JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).pocketAgent?.githubRepo || ""; } catch { return ""; } })();
+
 export const IDLE_CLOSE_MS = 20 * 60 * 1000;  // close an idle, unwatched session process after 20 min
 export const BUFFER_MAX = 4000;               // events kept per live session so reconnecting clients catch up
 

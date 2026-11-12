@@ -4,11 +4,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, deleteSession, forkSession } from "@anthropic-ai/claude-agent-sdk";
-import { VERSION, HOME, UI_DIR, APK_INFO, prefs, savePrefs, cache } from "./config.js";
+import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache } from "./config.js";
 import { broadcastAll, callNative } from "./hub.js";
 import { live, getLive, openSession, busyElsewhere, runClaude } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
-import { importSessions, checkUpdate, applyUpdate, sourceName } from "./transfer.js";
+import { importSessions, checkUpdate, applyUpdate, sourceName, latestRelease, releaseAsset } from "./transfer.js";
+import { runDevSetup, devSetupStatus } from "./devtools.js";
 import { runMigration, migrationStatus } from "./migrate.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
@@ -26,7 +27,9 @@ export const handlers = {
   async hello() {
     return { version: VERSION, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
       defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account,
-      updateChannel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null, mode: process.env.PA_MODE || "server",
+      updateChannel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null,
+      updateKind: prefs.updateChannel ? (prefs.updateChannel.github ? "github" : prefs.updateChannel.path ? "path" : "server") : null,
+      githubToken: !!prefs.updateChannel?.token, defaultRepo: DEFAULT_REPO, mode: process.env.PA_MODE || "server",
       live: [...live.values()].map(s => s.info()) };
   },
 
@@ -101,17 +104,23 @@ export const handlers = {
   async "sessions.import"({ url, token }) { const r = await importSessions({ url, token }); changed(); return r; },
   /** Where this server gets code/UI updates from ({url, token}, or null to stop). */
   /** { url, token } of a server, { path } of a local Pocket Agent folder, or nothing to clear. */
-  async "update.channel"({ url, token, path: p }) {
-    prefs.updateChannel = p ? { path: p } : url ? { url: url.replace(/\/$/, ""), token } : null; savePrefs();
+  async "update.channel"({ url, token, path: p, github }) {
+    prefs.updateChannel = github ? { github: github.replace(/^https:\/\/github\.com\//, "").replace(/\.git$|\/$/g, ""), token: token || "" }
+      : p ? { path: p } : url ? { url: url.replace(/\/$/, ""), token } : null;
+    savePrefs();
     return { channel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null };
   },
-  async "update.check"(m) { const ch = m.url || m.path ? m : prefs.updateChannel; if (!ch) return { available: false, channel: null }; return { ...(await checkUpdate(ch)), channel: sourceName(ch) }; },
+  async "update.check"(m) { const ch = m.url || m.path || m.github ? m : prefs.updateChannel; if (!ch) return { available: false, channel: null }; return { ...(await checkUpdate(ch)), channel: sourceName(ch) }; },
   /** Pulls the update, then restarts once no chat is mid-reply (SIGUSR2, see index.js). */
-  async "update.apply"(m) { const ch = m.url || m.path ? m : prefs.updateChannel; if (!ch) throw new Error("No update source set"); return await applyUpdate(ch, () => process.kill(process.pid, "SIGUSR2")); },
+  async "update.apply"(m) { const ch = m.url || m.path || m.github ? m : prefs.updateChannel; if (!ch) throw new Error("No update source set"); return await applyUpdate(ch, () => process.kill(process.pid, "SIGUSR2")); },
 
   /** "Move from Termux": runs in the background; progress arrives as { t: "migrate", job } events. */
   async "migrate.run"({ url, token }) { return { job: runMigration({ url, token }) }; },
   async "migrate.status"() { return { job: migrationStatus() }; },
+
+  /** "Build Pocket Agent yourself" (app built-in mode): progress arrives as { t: "devsetup", job } events. */
+  async "dev.setup"({ repo, token }) { return { job: runDevSetup({ repo: repo || DEFAULT_REPO, token: token || prefs.updateChannel?.token || "" }) }; },
+  async "dev.status"() { return { job: devSetupStatus() }; },
 
   // ───── the app itself ─────
   /** Version of the newest built APK, so the app can offer a one-tap update. */
@@ -121,6 +130,10 @@ export const handlers = {
     // No APK built here (the app's built-in server): ask the update source, and download from it directly.
     const ch = prefs.updateChannel;
     if (ch?.path) try { const info = JSON.parse(fs.readFileSync(path.join(ch.path, "build/pocket-agent.json"), "utf8")); return { ...info, url: "/apk/download" }; } catch {}
+    if (ch?.github) try {
+      const info = await (await releaseAsset(ch, await latestRelease(ch), "pocket-agent.json")).json();
+      if (info.versionCode) return { ...info, url: "/apk/download" };
+    } catch {}
     if (ch?.url) try {
       const r = await fetch(`${ch.url}/apk/info?token=${encodeURIComponent(ch.token || "")}`);
       if (r.ok) { const info = await r.json(); if (info.versionCode) return { ...info, url: `${ch.url}/apk/download?token=${encodeURIComponent(ch.token || "")}` }; }

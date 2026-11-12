@@ -38,7 +38,7 @@ async function onConnected() {
   else updateHeader();
   updateComposer();
   if (window.__pendingIntent) { const i = window.__pendingIntent; window.__pendingIntent = null; handleIntent(i); }
-  state.updateChannel = hello.updateChannel || null;
+  Object.assign(state, { updateChannel: hello.updateChannel || null, updateKind: hello.updateKind || null, githubToken: !!hello.githubToken, defaultRepo: hello.defaultRepo || "" });
   checkAppUpdate();
   if (state.updateChannel) checkServerUpdate(false);
 }

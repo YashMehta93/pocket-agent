@@ -6,8 +6,15 @@ import { spawn } from "node:child_process";
 import { VERSION, PORT, HOST, log } from "./config.js";
 import { live, anyBusy } from "./live-session.js";
 import { createServer } from "./http.js";
+import { prefs, savePrefs, DEFAULT_REPO } from "./config.js";
+import { ensureDefaults } from "./devtools.js";
 
 const server = createServer();
+// Inside the app: first-start defaults, and follow the project's GitHub releases unless told otherwise.
+if (process.env.PA_SUPERVISED) {
+  ensureDefaults();
+  if (prefs.updateChannel === undefined && DEFAULT_REPO) { prefs.updateChannel = { github: DEFAULT_REPO, token: "" }; savePrefs(); }
+}
 server.listen(PORT, HOST, () => log(`pocket-agent server ${VERSION} on http://${HOST}:${PORT}`));
 
 function shutdown() { for (const s of live.values()) s.close(); process.exit(0); }
