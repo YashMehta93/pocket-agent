@@ -246,7 +246,10 @@ final class Linux {
         if (!depsMarker.exists() || !deps.equals(read(depsMarker))) {
             depsMarker.delete();
             if (reportProgress) emit(c, "server", "Setting up Pocket Agent", 90, "Installing server packages");
-            int code = run(c, "cd /opt/pocket-agent/server && npm install --omit=optional --no-audit --no-fund", false, s -> log(c, s), 15 * 60_000);
+            // Keep the shipped package-lock.json even if npm rewrites it, so this copy hashes like its source.
+            int code = run(c, "cd /opt/pocket-agent/server && cp package-lock.json /tmp/pa-lock.json 2>/dev/null; "
+                    + "npm install --omit=optional --no-audit --no-fund; s=$?; "
+                    + "[ -f /tmp/pa-lock.json ] && mv /tmp/pa-lock.json package-lock.json; exit $s", false, s -> log(c, s), 15 * 60_000);
             if (code != 0) throw new IOException("Installing server packages failed (exit " + code + ")");
             write(depsMarker, deps);
         }

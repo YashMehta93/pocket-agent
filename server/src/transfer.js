@@ -178,7 +178,12 @@ export async function applyUpdate(ch, restart) {
       await fsp.rename(path.join(x, p), path.join(ROOT, p));
     }
     if (depsChanged) {
-      await run("npm", ["install", "--omit=optional", "--no-audit", "--no-fund"], { cwd: path.join(ROOT, "server") });
+      // npm may rewrite package-lock.json (another npm version, or a lock behind package.json). Put the
+      // shipped one back: otherwise this copy never hashes like its source and the update is offered forever.
+      const lockFile = path.join(ROOT, "server/package-lock.json");
+      const lock = fs.existsSync(lockFile) ? await fsp.readFile(lockFile) : null;
+      try { await run("npm", ["install", "--omit=optional", "--no-audit", "--no-fund"], { cwd: path.join(ROOT, "server") }); }
+      finally { if (lock) await fsp.writeFile(lockFile, lock); }
       // same marker format as the app's installer (Linux.java), so it won't redo this
       await fsp.writeFile(path.join(ROOT, "server/.deps-installed"), depsOf(ROOT)).catch(() => {});
     }

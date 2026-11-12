@@ -7,11 +7,14 @@
 hydrateIcons();
 applySettings();
 conn.on("open", onConnected);
-conn.on("close", () => showBanner("Connection lost. Reconnecting…"));
+conn.on("close", () => showBanner(state.updating ? "Installing the update… back in a few seconds." : "Connection lost. Reconnecting…"));
 conn.on("retrying", async n => {
   if (n < 3) return;
+  const standalone = native && nativeCall("isStandalone") === true;
   if (await conn.probe() === "up") showBanner("The server is running but this app isn't paired with it yet.", "Pair", pairServer);
-  else showBanner(native ? "Starting the Claude server in Termux… If this takes long, open Termux and run: pocket-agent start" : "Can't reach the server.", native ? "Open Termux" : null, () => nativeCall("openTermux"));
+  // The built-in server is restarted by the app itself; there's nothing for the user to open.
+  else if (standalone) showBanner(state.updating ? "Installing the update… back in a few seconds." : "Restarting Pocket Agent's server…");
+  else showBanner(native ?"Starting the Claude server in Termux… If this takes long, open Termux and run: pocket-agent start" : "Can't reach the server.", native ? "Open Termux" : null, () => nativeCall("openTermux"));
 });
 async function pairServer() {
   const tok = await promptSheet({ title: "Pair with the server", placeholder: "Paste the token here", ok: "Pair",

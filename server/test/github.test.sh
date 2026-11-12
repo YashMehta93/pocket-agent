@@ -70,5 +70,14 @@ ok("code replaced by the release version", !css.includes("/* older */"));
 ok("the applied build is recorded for the next check", JSON.parse(fs.readFileSync(process.env.T + "/root/applied.json", "utf8")).build > 0);
 let alive = true; try { process.kill(+process.env.SPID, 0); } catch { alive = false; }
 ok("server exited to be restarted by the app", !alive);
+// restart it like the app does: the same release must now count as installed (no update offered again)
+const { spawn } = await import("node:child_process");
+const env = { ...process.env, HOME: process.env.T + "/home", PA_DATA: process.env.T + "/home/.pocket-agent", PA_SUPERVISED: "1", PA_GITHUB_API: "http://127.0.0.1:8777" }; delete env.PA_MODE;
+const srv = spawn("node", [process.env.T + "/root/server/src/index.js", "--port", "8767"], { env, stdio: "ignore" });
+for (let i = 0; i < 40; i++) { try { if ((await fetch("http://127.0.0.1:8767/health")).ok) break; } catch {} await new Promise(r => setTimeout(r, 300)); }
+const ws2 = new WebSocket("ws://127.0.0.1:8767/ws?token=" + process.env.TOK); await new Promise(r => ws2.on("open", r));
+const again = await new Promise(res => { ws2.on("message", raw => { const r = JSON.parse(raw); if (r.t === "reply" && r.id === 1) res(r); }); ws2.send(JSON.stringify({ t: "update.check", id: 1 })); });
+ok(`after restarting, the release counts as installed (local ${again.local?.hash} = release ${again.remote?.hash})`, again.available === false && again.local?.hash === again.remote?.hash);
+ws2.close(); srv.kill();
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED"); process.exit(fails ? 1 : 0);
 '

@@ -18,6 +18,12 @@ cd "$(dirname "$0")/.."
 DRY=false; [ "${1:-}" = "--dry-run" ] && DRY=true
 
 $DRY || [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "Commit your changes first (git status)."; exit 1; }
+# A lock behind package.json gets rewritten by npm on every install, so installs would never match the release.
+for d in . server; do
+  before=$(cksum < "$d/package-lock.json")
+  (cd "$d" && npm install --package-lock-only --omit=optional --no-audit --no-fund >/dev/null 2>&1) || true
+  [ "$before" = "$(cksum < "$d/package-lock.json")" ] || { echo "$d/package-lock.json was out of date with package.json; it's updated now, commit it."; exit 1; }
+done
 REMOTE=$(git remote get-url origin 2>/dev/null || true)
 REPO=$(echo "$REMOTE" | sed -E 's#^(https://([^@]+@)?github.com/|git@github.com:)##; s#\.git$##')
 $DRY || [ -n "$REPO" ] || { echo "No GitHub remote 'origin'."; exit 1; }

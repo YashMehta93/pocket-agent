@@ -259,7 +259,15 @@ async function checkServerUpdate(loud) {
 }
 async function applyServerUpdate() {
   showBanner("Updating… Pocket Agent restarts when no reply is in progress.");
-  try { await conn.call("update.apply"); } catch (e) { hideBanner(); toast(e.message, 5000); }
+  state.updating = true;
+  try {
+    const r = await conn.call("update.apply");
+    if (r.upToDate) { state.updating = false; hideBanner(); toast("Up to date"); }
+  } catch (e) {
+    // The server restarting with the update drops the connection before or right after it answers.
+    if (e.message === "Disconnected") return;
+    state.updating = false; hideBanner(); toast(e.message, 5000);
+  }
 }
 /** Where server code, screens and new APKs come from. */
 function chooseUpdateSource() {
