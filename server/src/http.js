@@ -14,7 +14,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { WebSocketServer } from "ws";
 import { VERSION, TOKEN, UI_DIR, APK_PATH, APK_INFO, CLAUDE_DIR, prefs, safeEq, log } from "./config.js";
-import { bundleInfo, bundleStream, tarStream, latestRelease, releaseAsset } from "./transfer.js";
+import { bundleInfo, bundleStream, tarStream, pickRelease, releaseAsset } from "./transfer.js";
 import { migrationStream } from "./migrate.js";
 import { clients, sseClients, nativeResult } from "./hub.js";
 import { toNative } from "./notify.js";
@@ -53,8 +53,8 @@ export function createServer() {
     if (url.pathname === "/apk/download") {
       try {
         // the APK built in a local update folder (app's built-in server) or next to this server (Termux)
-        if (prefs.updateChannel?.github) {   // stream the APK from the latest GitHub release
-          const r = await releaseAsset(prefs.updateChannel, await latestRelease(prefs.updateChannel), "pocket-agent.apk");
+        if (prefs.updateChannel?.github) {   // stream the APK of the release this app follows (stable, beta or pinned)
+          const r = await releaseAsset(prefs.updateChannel, await pickRelease(prefs.updateChannel), "pocket-agent.apk");
           res.writeHead(200, { "content-type": "application/vnd.android.package-archive", ...(r.headers.get("content-length") ? { "content-length": r.headers.get("content-length") } : {}) });
           for await (const chunk of r.body) res.write(chunk);
           return res.end();

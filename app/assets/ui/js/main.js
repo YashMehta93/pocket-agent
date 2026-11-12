@@ -42,7 +42,7 @@ async function onConnected() {
   else updateHeader();
   updateComposer();
   if (window.__pendingIntent) { const i = window.__pendingIntent; window.__pendingIntent = null; handleIntent(i); }
-  Object.assign(state, { updateChannel: hello.updateChannel || null, updateKind: hello.updateKind || null, githubToken: !!hello.githubToken, defaultRepo: hello.defaultRepo || "", devRepo: hello.devRepo || null });
+  Object.assign(state, { updateChannel: hello.updateChannel || null, updateKind: hello.updateKind || null, githubToken: !!hello.githubToken, defaultRepo: hello.defaultRepo || "", devRepo: hello.devRepo || null, updateTrack: hello.updateTrack || { track: "stable" } });
   askBatteryOnce();
   checkAppUpdate();
   if (state.updateChannel) checkServerUpdate(false);

@@ -2,6 +2,19 @@
 
 Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 
+## 1.1.0
+
+**Updates**
+- The repo is public: apps follow releases with no GitHub token, and new installs need no invite.
+- A notification when a new release is out, even with the app closed (checked every 6 hours, once per release).
+- Release tracks in Settings → Updates & chats: **Stable**, **Beta** (pre-releases, for testers) or **Pinned** to one version. **Versions** lists every release with its notes; pick any, older ones too (screens and server go back; the app stays newer).
+- `release.sh` publishes versions with a dash (`1.2.0-beta.1`) as pre-releases, and works from `v1.x` again (it compared `1.0.0` with `v1`).
+
+**Fixes**
+- Termux setup upgrades Termux first (a partly upgraded Termux broke curl), and turns on the app's access to Termux before anything else.
+- GitHub repos can be written any way (`owner/repo`, `github.com/…`, `git@…`), for updates and *Build Pocket Agent yourself*.
+- README: install help for OnePlus/Oppo phones (two prompts and a scan; StdSP Core).
+
 ## 1.0.0
 
 The first stable version: Claude Code on an Android phone, with no Termux or computer needed.

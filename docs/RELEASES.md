@@ -10,7 +10,7 @@
 | `feat/…`, `fix/…` | Day-to-day work, one topic per branch | Pushed freely; deleted after merging |
 | `me/<github-name>` | One person's own version of the app: their experiments and tweaks (see below) | Only by that person |
 
-GitHub can't lock branches on a free private repo, so the locks are enforced by `.githooks/pre-push` (enabled with `git config core.hooksPath .githooks`; *Build Pocket Agent yourself* does this) and by the rules below. Override for emergencies only: `PA_ALLOW_PROTECTED_PUSH=1 git push …`.
+GitHub enforces these: `master` and `v1.x` accept changes only through pull requests (no force-push or deletion), and `v1.0` is locked read-only; the owner can override in an emergency. Locally, `.githooks/pre-push` refuses the same pushes before they leave your phone (enabled with `git config core.hooksPath .githooks`; *Build Pocket Agent yourself* does this). Its emergency override: `PA_ALLOW_PROTECTED_PUSH=1 git push …`.
 
 ## Day-to-day flow
 
@@ -45,6 +45,10 @@ In the app, Settings → **Improve Pocket Agent** starts a chat in your copy, an
    - refuses unless `v1.x` matches GitHub exactly and `VERSION` belongs to `v1.x`;
    - builds the APK and code bundle, tags `v1.1.0` (pushing only the tag), and publishes the GitHub release friends' apps update from;
    - opens a PR `v1.x` → `master`; the owner merges it.
+
+## Beta releases
+
+To let testers try something first: set `VERSION` to a pre-release like `1.2.0-beta.1` in the release PR, and run `bash scripts/release.sh` as usual. A version with a dash is published as a GitHub *pre-release*. Only apps on the **Beta** track (Settings → Updates & chats) get it; Stable apps wait for `1.2.0`.
 
 ## Versions
 

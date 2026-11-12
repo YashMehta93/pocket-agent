@@ -8,7 +8,7 @@ import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache 
 import { broadcastAll, callNative } from "./hub.js";
 import { live, getLive, openSession, busyElsewhere, runClaude } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
-import { importSessions, checkUpdate, applyUpdate, sourceName, latestRelease, releaseAsset } from "./transfer.js";
+import { importSessions, checkUpdate, applyUpdate, sourceName, pickRelease, listReleases, releaseAsset, bundleInfo } from "./transfer.js";
 import { runDevSetup, devSetupStatus, devRepo } from "./devtools.js";
 import { runMigration, migrationStatus } from "./migrate.js";
 import { createBackup, listBackups, restoreBackup, BACKUP_DIR } from "./backup.js";
@@ -31,7 +31,7 @@ export const handlers = {
       defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account,
       updateChannel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null,
       updateKind: prefs.updateChannel ? (prefs.updateChannel.github ? "github" : prefs.updateChannel.path ? "path" : "server") : null,
-      githubToken: !!prefs.updateChannel?.token, defaultRepo: DEFAULT_REPO, mode: process.env.PA_MODE || "server", devRepo: devRepo(),
+      githubToken: !!prefs.updateChannel?.token, defaultRepo: DEFAULT_REPO, mode: process.env.PA_MODE || "server", devRepo: devRepo(), updateTrack: prefs.updateTrack || { track: "stable" },
       live: [...live.values()].map(s => s.info()) };
   },
 
@@ -113,6 +113,23 @@ export const handlers = {
     return { channel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null };
   },
   async "update.check"(m) { const ch = m.url || m.path || m.github ? m : prefs.updateChannel; if (!ch) return { available: false, channel: null }; return { ...(await checkUpdate(ch)), channel: sourceName(ch) }; },
+  // ───── release tracks (GitHub releases): stable, beta, or one pinned version ─────
+  async "releases.list"() {
+    const ch = prefs.updateChannel;
+    if (!ch?.github) throw new Error("Versions come from GitHub releases: set that as the update source first");
+    const local = await bundleInfo();
+    const releases = (await listReleases(ch)).map(r => ({ tag: r.tag_name, name: r.name, prerelease: !!r.prerelease,
+      publishedAt: r.published_at, notes: String(r.body || "").slice(0, 2000) }));
+    return { releases, track: prefs.updateTrack || { track: "stable" }, current: { version: local.version, build: local.build } };
+  },
+  async "update.track"({ track, tag }) {
+    if (!["stable", "beta", "pin"].includes(track)) throw new Error("track is stable, beta or pin");
+    if (track === "pin" && !tag) throw new Error("Pick a version to pin");
+    prefs.updateTrack = track === "pin" ? { track, tag } : { track };
+    delete prefs.notifiedRelease;   // tell about the new track's newest release again
+    savePrefs();
+    return { track: prefs.updateTrack };
+  },
   /** Pulls the update, then restarts once no chat is mid-reply (SIGUSR2, see index.js). */
   async "update.apply"(m) { const ch = m.url || m.path || m.github ? m : prefs.updateChannel; if (!ch) throw new Error("No update source set"); return await applyUpdate(ch, () => process.kill(process.pid, "SIGUSR2")); },
 
@@ -144,7 +161,7 @@ export const handlers = {
     const ch = prefs.updateChannel;
     if (ch?.path) try { const info = JSON.parse(fs.readFileSync(path.join(ch.path, "build/pocket-agent.json"), "utf8")); return { ...info, url: "/apk/download" }; } catch {}
     if (ch?.github) try {
-      const info = await (await releaseAsset(ch, await latestRelease(ch), "pocket-agent.json")).json();
+      const info = await (await releaseAsset(ch, await pickRelease(ch), "pocket-agent.json")).json();
       if (info.versionCode) return { ...info, url: "/apk/download" };
     } catch {}
     if (ch?.url) try {

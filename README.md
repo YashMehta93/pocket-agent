@@ -6,22 +6,26 @@ You need a Claude account (Pro or Max) and an Android phone (Android 8+, 64-bit 
 
 ## Install
 
-1. This repo is private. Ask its owner to invite you, accept the invite on GitHub, and stay signed in to GitHub in your phone's browser.
-2. On the phone, open **Releases** (right side of the repo page) → latest → download **`pocket-agent.apk`**.
-3. Open it and install. Allow your browser or Files app to install apps if Android asks, and stay on the dialog until it finishes.
-4. Open Pocket Agent → **Set up Pocket Agent**. It downloads about 300 MB once (Alpine Linux, Node, git, Claude Code) and takes 3–8 minutes on Wi-Fi. Keep the app open.
-5. **Sign in to Claude**: open the sign-in page, approve, copy the code, paste it into the app.
-6. Tap **Allow** on the "keep running in the background" banner, so Android doesn't stop Claude mid-reply. On Vivo, Xiaomi, Oppo and similar phones, also set Pocket Agent's battery use to *Unrestricted* / *No restrictions* in its App info.
+1. On the phone, open **[Releases](https://github.com/YashMehta93/pocket-agent/releases/latest)** → download **`pocket-agent.apk`**.
+2. Open it and install. Allow your browser or Files app to install apps if Android asks. Tap **Install** on every prompt, and stay on the dialog until it finishes. OnePlus, Oppo and Realme phones show two install prompts and a security scan: cancelling either prompt cancels the install. If it still won't install there, see [Troubleshooting](#troubleshooting).
+3. Open Pocket Agent → **Set up Pocket Agent**. It downloads about 300 MB once (Alpine Linux, Node, git, Claude Code) and takes 3–8 minutes on Wi-Fi. Keep the app open.
+4. **Sign in to Claude**: open the sign-in page, approve, copy the code, paste it into the app.
+5. Tap **Allow** on the "keep running in the background" banner, so Android doesn't stop Claude mid-reply. On Vivo, Xiaomi, Oppo and similar phones, also set Pocket Agent's battery use to *Unrestricted* / *No restrictions* in its App info.
 
 ### Updates
 
-Pocket Agent updates itself from this repo's releases, but a private repo needs a read-only GitHub token:
+Pocket Agent follows this repo's releases on its own, with nothing to set up. When a new release is out, you get a notification, and the app shows a banner: screen and server changes apply in seconds, a new APK installs with one tap.
 
-1. On GitHub: **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
-2. **Repository access**: *Only select repositories* → `pocket-agent`. **Permissions → Repository → Contents**: *Read-only*. Generate, then copy it.
-3. In the app: **Settings → Updates & chats → Get updates from → GitHub releases**. The repo is prefilled; paste the token.
+**Settings → Updates & chats** chooses what you follow:
+- **Stable**: the newest full release (default).
+- **Beta**: also test versions (pre-releases), first.
+- **Versions**: every release with what changed. Pick one to stay on it ("Pinned"), including an older one. Going back switches the screens and server; the app itself stays newer, because Android can't install an older app over a newer one.
 
-Then **Check for updates** (or the banner) applies new versions: screen and server changes instantly, new APKs with one tap.
+## Troubleshooting
+
+- **OnePlus / Oppo / Realme: "App not installed"**: tap Install on *both* prompts, then *Continue installation* after the scan. If it still fails: Settings → Apps → *StdSP Core* → ⋮ → *Uninstall updates* (this phone's own APK scanner), then try again.
+- **"Signed with a different key"**: the APK was built by someone else. See [Your own version](CONTRIBUTING.md#your-own-version-and-its-signing-key).
+- **Termux setup stopped with a curl error**: in Termux, run `apt update && apt full-upgrade -y`, then get a new setup command in Settings → Termux.
 
 ## What it does
 
