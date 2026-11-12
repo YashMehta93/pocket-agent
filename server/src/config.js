@@ -16,11 +16,15 @@ export const CLAUDE_DIR = path.join(HOME, ".claude");                          /
 const args = parseArgs(process.argv.slice(2));
 export const PORT = +(args.port || process.env.PA_PORT || 8765);
 export const HOST = args.host || process.env.PA_HOST || "127.0.0.1";
+process.env.PA_PORT = String(PORT);   // inherited by Claude's shell, so `termux` and `cs` find this server
 /** The `claude` executable the Agent SDK spawns (in Termux: the proot launcher). */
 export const CLAUDE = args.claude || process.env.PA_CLAUDE || findClaude();
 function findClaude() {
   // The app passes --claude; otherwise look where Claude Code usually lives (app Linux, Termux, PATH).
-  const candidates = [path.join(os.homedir(), ".local/bin/claude"), "/data/data/com.termux/files/usr/bin/claude"];
+  // In Termux, its launcher (scripts/termux-install.sh) first: a ~/.local/bin/claude there is the glibc
+  // binary, which can't start in Termux on its own.
+  const termux = "/data/data/com.termux/files/usr/bin/claude", local = path.join(os.homedir(), ".local/bin/claude");
+  const candidates = (process.env.PREFIX || "").includes("com.termux") ? [termux, local] : [local, termux];
   for (const dir of (process.env.PATH || "").split(":")) if (dir) candidates.push(path.join(dir, "claude"));
   return candidates.find(p => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; } }) || "claude";
 }

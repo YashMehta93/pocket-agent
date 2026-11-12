@@ -8,7 +8,7 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
-import { CLAUDE_DIR, UI_DIR, log } from "./config.js";
+import { CLAUDE_DIR, UI_DIR, DATA, log } from "./config.js";
 
 /** Repo / install root: ~/projects/pocket-agent in Termux, /opt/pocket-agent in the app. */
 export const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
@@ -113,6 +113,29 @@ const compare = (remote, local) => {
 };
 export const bundleStream = () => tarStream(ROOT, BUNDLE_PATHS);
 
+/**
+ * What a local folder offers as an update. A git checkout offers its last commit, not edits in progress,
+ * so half-finished work never reaches the app: committing is "ship it". Snapshotted once per commit.
+ * A folder without git offers its files as they are.
+ */
+async function folderSource(dir) {
+  const build = await buildNumber(dir);
+  if (!fs.existsSync(path.join(dir, ".git"))) return { root: dir, build };
+  try {
+    const sha = (await run("git", ["-C", dir, "rev-parse", "HEAD"])).trim();
+    const base = path.join(DATA, "snapshots"), snap = path.join(base, sha);
+    if (!fs.existsSync(path.join(snap, ".done"))) {
+      await fsp.rm(base, { recursive: true, force: true });
+      await fsp.mkdir(snap, { recursive: true });
+      const tar = path.join(base, sha + ".tar");
+      await run("git", ["-C", dir, "archive", "--format=tar", "-o", tar, "HEAD", "--", ...BUNDLE_PATHS.filter(p => fs.existsSync(path.join(dir, p)))]);
+      await run("tar", ["xf", tar, "-C", snap]); await fsp.rm(tar, { force: true });
+      await fsp.writeFile(path.join(snap, ".done"), sha);
+    }
+    return { root: snap, build };
+  } catch (e) { log("update from folder: using its files as they are:", e.message); return { root: dir, build }; }
+}
+
 /** Source label for messages: a server URL or a local folder. */
 export const sourceName = ch => ch.github ? "github.com/" + ch.github : ch.path || ch.url;
 
@@ -147,7 +170,7 @@ export async function checkUpdate(ch) {
     const remote = { ...(await (await releaseAsset(ch, rel, "bundle.json")).json()), release: rel.tag_name };
     return compare(remote, local);
   }
-  if (ch.path) return compare(await bundleInfo(ch.path), await bundleInfo());
+  if (ch.path) { const src = await folderSource(ch.path); return compare({ ...(await bundleInfo(src.root)), build: src.build }, await bundleInfo()); }
   const { url, token } = ch;
   const r = await fetch(withToken(url, "/bundle/info", token));
   if (!r.ok) throw new Error(`${new URL(url).origin} answered ${r.status}${r.status === 401 ? " (wrong token?)" : ""}`);
@@ -163,7 +186,7 @@ export async function applyUpdate(ch, restart) {
   const tmp = await tmpDir("update");
   try {
     const tgz = path.join(tmp, "bundle.tgz");
-    if (ch.path) await new Promise((res, rej) => { const o = fs.createWriteStream(tgz); tarStream(ch.path, BUNDLE_PATHS).pipe(o).on("finish", res).on("error", rej); });
+    if (ch.path) { const src = await folderSource(ch.path); await new Promise((res, rej) => { const o = fs.createWriteStream(tgz); tarStream(src.root, BUNDLE_PATHS).pipe(o).on("finish", res).on("error", rej); }); }
     else if (ch.github) await fsp.writeFile(tgz, Buffer.from(await (await releaseAsset(ch, await latestRelease(ch), "bundle.tgz")).arrayBuffer()));
     else await download(withToken(url, "/bundle.tgz", token), tgz);
     const x = path.join(tmp, "x"); await fsp.mkdir(x);

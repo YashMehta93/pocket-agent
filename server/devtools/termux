@@ -1,0 +1,42 @@
+#!/usr/bin/env node
+// termux — run a shell command in Termux from Pocket Agent's built-in Linux, and print its output.
+//   termux 'pkg list-installed | head'      termux termux-battery-status
+//   termux --cd ~/projects 'git status'     (--cd: working directory in Termux, default its home)
+// Goes through the Pocket Agent server to the app, which uses Termux's RUN_COMMAND service.
+// Needs Termux installed, "Termux commands" allowed in Pocket Agent's Settings, and
+// allow-external-apps = true in Termux (Settings → Termux shows how). Exit code is the command's.
+const fs = require("fs"), path = require("path");
+const args = process.argv.slice(2);
+let workdir = null;
+if (args[0] === "--cd") { workdir = args[1]; args.splice(0, 2); }
+if (!args.length || args[0] === "-h" || args[0] === "--help") {
+  console.log(fs.readFileSync(__filename, "utf8").split("\n").slice(1, 7).map(l => l.replace(/^\/\/ ?/, "")).join("\n"));
+  process.exit(args.length ? 0 : 2);
+}
+const TERMUX_HOME = "/data/data/com.termux/files/home";
+if (workdir) workdir = workdir.replace(/^~(?=\/|$)/, TERMUX_HOME);
+
+const data = process.env.PA_DATA || path.join(process.env.HOME || "/root", ".pocket-agent");
+const port = process.env.PA_PORT || "8790";
+let token;
+try { token = fs.readFileSync(path.join(data, "token"), "utf8").trim(); } catch { console.error("termux: Pocket Agent's server token isn't readable here"); process.exit(2); }
+// The server's own ws module: this runs from /usr/local/bin, outside the server folder.
+const roots = ["/opt/pocket-agent/server", path.resolve(__dirname, "..")];
+let WebSocket;
+for (const r of roots) { try { WebSocket = require(path.join(r, "node_modules/ws")); break; } catch {} }
+if (!WebSocket) { console.error("termux: can't find the Pocket Agent server"); process.exit(2); }
+
+const timeoutMs = +(process.env.TERMUX_TIMEOUT_MS || 10 * 60_000);
+const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${token}`);
+ws.on("error", e => { console.error("termux: Pocket Agent's server isn't reachable:", e.message); process.exit(2); });
+ws.on("open", () => ws.send(JSON.stringify({ t: "native.call", id: 1, method: "termux.exec",
+  params: { cmd: args.join(" "), workdir, timeoutMs }, timeoutMs: timeoutMs + 5000 })));
+ws.on("message", raw => {
+  const m = JSON.parse(raw);
+  if (m.t !== "reply" || m.id !== 1) return;
+  if (m.error) { console.error("termux:", m.error); process.exit(2); }
+  const r = m.result || {};
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
+  process.exit(typeof r.code === "number" && r.code >= 0 ? r.code : 1);
+});

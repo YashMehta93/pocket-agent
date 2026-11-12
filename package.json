@@ -14,7 +14,8 @@
     "test:tar": "bash tests/native/run-tar-test.sh",
     "test:transfer": "bash server/test/transfer.test.sh",
     "test:migrate": "bash server/test/migrate.test.sh",
-    "test:github": "bash server/test/github.test.sh"
+    "test:github": "bash server/test/github.test.sh",
+    "test:extras": "cd server && node test/extras.test.mjs"
   },
   "devDependencies": {
     "jsdom": "^25.0.1"

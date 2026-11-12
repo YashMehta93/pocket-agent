@@ -40,7 +40,8 @@ import java.util.Locale;
  */
 final class Rpc {
     /** Bump when methods are added; the server/UI can check it via "capabilities". */
-    static final int API_VERSION = 3;   // 2: runtime.* (built-in Linux) and mode.set; 3: runtime.exec {root} returns {code, output}
+    static final int API_VERSION = 4;   // 2: runtime.* (built-in Linux) and mode.set; 3: runtime.exec {root} returns {code, output}
+                                        // 4: termux.exec/termux.status, battery.request, "signer" in capabilities
 
     interface Done { void ok(Object result); void err(String message); }
 
@@ -50,7 +51,7 @@ final class Rpc {
     static final String[] METHODS = {
         "capabilities", "device.info", "notify", "notify.cancel", "toast", "vibrate", "clipboard.get", "clipboard.set",
         "share.text", "url.open", "intent.start", "app.list", "app.launch", "permissions.check", "permissions.request",
-        "settings.open", "location.get", "tts.speak", "update.install", "termux.run",
+        "settings.open", "location.get", "tts.speak", "update.install", "termux.run", "termux.exec", "termux.status", "battery.request",
         "a11y.status", "a11y.tree", "a11y.click", "a11y.long_click", "a11y.set_text", "a11y.scroll", "a11y.global", "a11y.gesture", "a11y.screenshot",
         "notifications.list", "notifications.dismiss",
         "runtime.status", "runtime.install", "runtime.auth", "runtime.login.start", "runtime.login.code", "runtime.logs",
@@ -69,7 +70,8 @@ final class Rpc {
             case "capabilities": {
                 JSONArray a = new JSONArray(); for (String s : METHODS) a.put(s);
                 d.ok(new JSONObject().put("api", API_VERSION).put("methods", a)
-                    .put("accessibility", A11yService.instance != null).put("notificationAccess", NotifListener.instance != null));
+                    .put("accessibility", A11yService.instance != null).put("notificationAccess", NotifListener.instance != null)
+                    .put("signer", signer(c)));
                 return;
             }
             case "device.info": {
@@ -121,6 +123,8 @@ final class Rpc {
                 r.put("notifications", c.getSystemService(NotificationManager.class).areNotificationsEnabled());
                 r.put("accessibility", A11yService.instance != null).put("notificationAccess", NotifListener.instance != null);
                 r.put("installPackages", c.getPackageManager().canRequestPackageInstalls());
+                r.put("battery", c.getSystemService(android.os.PowerManager.class).isIgnoringBatteryOptimizations(c.getPackageName()));
+                r.put("termux", Termux.installed(c) && Termux.hasPermission(c));
                 d.ok(r); return;
             }
             case "permissions.request": {
@@ -138,6 +142,13 @@ final class Rpc {
                 JSONArray a = p.optJSONArray("args"); String[] args = new String[a == null ? 0 : a.length()];
                 for (int k = 0; k < args.length; k++) args[k] = a.optString(k);
                 d.ok(Termux.run(c, p.optString("path"), args, p.optString("workdir", null), p.optBoolean("background", true))); return;
+            }
+            case "termux.exec": Termux.exec(c, p.optString("cmd"), p.optString("workdir", null), p.optLong("timeoutMs", 60_000), d); return;
+            case "termux.status": d.ok(new JSONObject().put("installed", Termux.installed(c)).put("permission", Termux.hasPermission(c))); return;
+            case "battery.request": {
+                // Lets the app (and so the built-in server and running chats) keep running in the background.
+                Intent bi = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + c.getPackageName()));
+                start(c, bi); d.ok(true); return;
             }
             case "notifications.list": { NotifListener l = NotifListener.instance; if (l == null) { d.err("Notification access is off"); return; } d.ok(l.list()); return; }
             case "notifications.dismiss": { NotifListener l = NotifListener.instance; if (l == null) { d.err("Notification access is off"); return; } l.dismiss(p.optString("key")); d.ok(true); return; }
@@ -214,6 +225,18 @@ final class Rpc {
     }
 
     /** { action, data, type, package, className, categories[], extras{}, flags } */
+    /** SHA-256 of the certificate this app is signed with: builds signed with another key can't update it. */
+    static String signer(Context c) {
+        try {
+            android.content.pm.Signature[] sigs;
+            if (Build.VERSION.SDK_INT >= 28) sigs = c.getPackageManager().getPackageInfo(c.getPackageName(), PackageManager.GET_SIGNING_CERTIFICATES).signingInfo.getApkContentsSigners();
+            else sigs = c.getPackageManager().getPackageInfo(c.getPackageName(), PackageManager.GET_SIGNATURES).signatures;
+            byte[] h = java.security.MessageDigest.getInstance("SHA-256").digest(sigs[0].toByteArray());
+            StringBuilder sb = new StringBuilder(); for (byte b : h) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) { return ""; }
+    }
+
     static Intent intentFrom(JSONObject p) throws Exception {
         Intent i = new Intent();
         if (p.has("action")) i.setAction(p.optString("action"));

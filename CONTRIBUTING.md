@@ -5,14 +5,24 @@ Read `docs/ARCHITECTURE.md` first (5 minutes). It explains the three parts and h
 ## Set up: develop inside the app (no computer, no Termux)
 
 1. Install Pocket Agent and finish its first-run setup (see README).
-2. Settings → **Build Pocket Agent yourself**. Enter the repo (`owner/pocket-agent`) and, for a private repo, a GitHub token (see README, "Updates"). It:
+2. Settings → **Build Pocket Agent yourself**. Enter the repo (`owner/pocket-agent`) and a GitHub token. To save and share your changes, the fine-grained token needs **Contents** and **Pull requests**: *Read and write*; read-only works if you only want to tinker locally. It:
    - installs Java 17, `aapt2`, `zipalign`, `d8` (Google's r8) and `apksigner` (our CLI on Google's apksig);
-   - clones the repo into `~/projects/pocket-agent`;
-   - downloads `android.jar` and runs `npm install`;
-   - builds once, and switches the app's updates to that folder.
-3. Ask Claude (in the app) to change Pocket Agent, or edit yourself. Run scripts with `bash`, e.g. `bash build.sh`.
+   - clones the repo into `~/projects/pocket-agent` and puts you on your own branch, `me/<github-name>` (docs/RELEASES.md);
+   - saves the token for git (in `~/.config/pocket-agent/github-token`, never in the repo);
+   - downloads `android.jar`, runs `npm install`, builds once, and switches the app's updates to that folder.
+3. Tap **Start improving Pocket Agent** (or later: Settings → **Improve Pocket Agent**). That opens a chat in your copy of the code, where Claude knows the rules from `CLAUDE.md`. Ask for any change; "share this with everyone" turns it into a pull request into `v1.x`.
 
-Your own builds are signed with your own `pocket-agent.keystore` (created on first build). Android only installs an update signed with the same key as the installed app. To switch between the official build and your own, uninstall first; that wipes the app's Linux and chats.
+### Your own version (and its signing key)
+
+Changes to the screens (`app/assets/ui`) and the server (`server/`) reach your app with **Settings → Check for updates**. That works on the official app too, so most changes need nothing else.
+
+Java changes need a new APK. Your builds are signed with **your own** `pocket-agent.keystore` (made on your first build, ignored by git), and Android only installs an update signed with the same key as the installed app. So while you're on the official app, the update banner says *"signed with a different key"* instead of installing. To switch to your own build, once:
+
+1. Settings → **Back up to phone storage** (chats, memory, settings, projects; never your sign-in or tokens).
+2. Uninstall Pocket Agent and install `Download/claude apps/pocket-agent.apk` (every build copies it there).
+3. Set it up and sign in, then Settings → **Restore a backup**, and run *Build Pocket Agent yourself* again (it reuses your code).
+
+From then on, your own builds update your app with one tap. Official releases then reach you through git: merge `origin/v1.x` into your branch. **Back up `pocket-agent.keystore`** (the backup includes it): without it, you're back to reinstalling.
 
 ### On a computer instead
 

@@ -2,7 +2,8 @@
 //   installBuildTools()  Java 17, aapt2/zipalign (Alpine), d8 (Google Maven r8), apksigner (our apksig CLI)
 //   runDevSetup()        "Build Pocket Agent yourself": tools + clone the repo + android.jar + npm deps,
 //                        then point updates at the local copy
-//   ensureDefaults()     first-start defaults every install gets (cs, session retention, keybindings)
+//   ensureDefaults()     first-start defaults every install gets (cs, termux, session retention, keybindings)
+//   phoneContext()       what Claude is told about this phone (appended to Claude Code's system prompt)
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -84,9 +85,12 @@ async function devSetup(repo, token) {
 
   emit({ step: "code" });
   const auth = token ? `-c http.extraHeader="Authorization: Basic ${Buffer.from("x-access-token:" + token).toString("base64")}"` : "";
+  const who = token ? await githubUser(token).catch(e => { line("  (couldn't read your GitHub account: " + e.message + ")"); return null; }) : null;
   if (exists(path.join(dest, ".git"))) { line(`Updating ${dest.replace(HOME, "~")}…`); await sh(`git -C "${dest}" ${auth} pull --ff-only`, line); }
   else { line(`Cloning ${url}…`); await fsp.mkdir(path.dirname(dest), { recursive: true }); await sh(`git ${auth} clone "${url}" "${dest}"`, line); }
   await sh(`git -C "${dest}" config core.hooksPath .githooks`);   // branch rules, docs/RELEASES.md
+  if (token) await saveGitToken(dest, token);
+  if (who) await personalBranch(dest, who, line).catch(e => line("  (couldn't switch to your own branch: " + e.message + ")"));
 
   emit({ step: "sdk" });
   if (!exists(path.join(dest, "sdk/android.jar"))) {
@@ -106,22 +110,75 @@ async function devSetup(repo, token) {
   emit({ step: "build" });
   line("Test build…");
   await sh(`cd "${dest}" && bash build.sh 2>&1 | tail -3`, line);
-  prefs.updateChannel = { path: dest }; savePrefs();
+  prefs.updateChannel = { path: dest }; prefs.devRepo = dest; savePrefs();
   line(`Updates now come from ${dest.replace(HOME, "~")}`);
   log("dev setup finished", dest);
   return { path: dest };
+}
+
+const q = s => "'" + String(s).replace(/'/g, "'\\''") + "'";
+/**
+ * Puts the clone on the person's own branch, me/<login> (docs/RELEASES.md): their existing one from GitHub
+ * if they have it, otherwise a new one from the newest shared line (v<N>.x). Commits go under their
+ * GitHub account's private noreply address.
+ */
+export async function personalBranch(dest, who, line = () => {}) {
+  const login = who.login.toLowerCase(), mine = `me/${login}`;
+  await sh(`git -C "${dest}" config user.name ${q(who.name || who.login)} && git -C "${dest}" config user.email ${q(`${who.id}+${who.login}@users.noreply.github.com`)}`);
+  await sh(`git -C "${dest}" config pocketagent.me ${q(login)}`);   // the pre-push hook keeps others off it
+  if ((await sh(`git -C "${dest}" branch --show-current`)).trim() === mine) return mine;
+  await sh(`git -C "${dest}" fetch -q origin`).catch(() => {});
+  const remote = (await sh(`git -C "${dest}" branch -r --list "origin/${mine}" "origin/v*.x"`)).split("\n").map(x => x.trim()).filter(Boolean);
+  const lines = remote.filter(r => /^origin\/v\d+\.x$/.test(r)).sort((a, b) => parseInt(a.slice(8)) - parseInt(b.slice(8)));
+  const base = remote.includes(`origin/${mine}`) ? `origin/${mine}` : lines.pop() || "HEAD";
+  if ((await sh(`git -C "${dest}" branch --list "${mine}"`)).trim()) await sh(`git -C "${dest}" checkout -q "${mine}"`);
+  else await sh(`git -C "${dest}" checkout -q -b "${mine}" ${base}`);
+  line(`Your branch: ${mine} (from ${base.replace("origin/", "")}). Your changes live here; see CLAUDE.md.`);
+  return mine;
+}
+async function githubUser(token) {
+  const r = await fetch((process.env.PA_GITHUB_API || "https://api.github.com") + "/user", { headers: { authorization: "Bearer " + token, "user-agent": "pocket-agent" } });
+  if (!r.ok) throw new Error("GitHub answered " + r.status);
+  return r.json();
+}
+/** Lets git (and so Claude) pull and push with the token, without writing it into the repo's config. */
+async function saveGitToken(dest, token) {
+  const dir = path.join(HOME, ".config/pocket-agent"); await fsp.mkdir(dir, { recursive: true });
+  await fsp.writeFile(path.join(dir, "github-token"), token.trim() + "\n", { mode: 0o600 });
+  await sh(`git -C "${dest}" config credential.https://github.com.helper ${q('!f() { echo username=x-access-token; printf "password=%s\\n" "$(cat ~/.config/pocket-agent/github-token)"; }; f')}`);
+}
+
+/** The person's own clone of Pocket Agent (set by developer setup, or the folder updates come from). */
+export function devRepo() {
+  for (const p of [prefs.devRepo, prefs.updateChannel?.path]) if (p && exists(path.join(p, "server/src/devtools.js"))) return p;
+  return null;
+}
+
+// ───── what Claude is told about this phone ─────
+export function phoneContext() {
+  const standalone = process.env.PA_MODE === "standalone";
+  const lines = [
+    "# Pocket Agent",
+    "You're running through Pocket Agent, an Android app; the user is on their phone, so keep replies compact and readable on a small screen.",
+    standalone ? "This shell is the app's built-in Alpine Linux (proot) with home /root. Phone storage is at /sdcard (Downloads: /sdcard/Download). `apk add` needs root, which this shell doesn't have: ask the user, or use `apk --usermode --root ~/sys`." : "",
+    "- `termux <command>` runs a shell command in Termux (if installed and allowed in the app's Settings) and prints its output: Termux packages, termux-api (`termux termux-battery-status`), etc.",
+    "- `cs` lists Claude Code sessions.",
+    devRepo() ? `- This app's own source code is at ${devRepo()}; it's the user's personal version. Read its CLAUDE.md before changing the app.` : "",
+  ];
+  return lines.filter(Boolean).join("\n");
 }
 
 // ───── defaults every install gets ─────
 /** What the original setup had, for everyone: `cs`, sessions kept for years, agents-view arrow keys. */
 export async function ensureDefaults() {
   try {
-    const cs = path.join(ROOT, "server/devtools/cs");
     const writable = d => { try { fs.accessSync(d, fs.constants.W_OK); return true; } catch { return false; } };
-    if (exists(cs) && writable("/usr/local/bin")) {
-      const want = await fsp.readFile(cs, "utf8");
-      const have = exists("/usr/local/bin/cs") ? await fsp.readFile("/usr/local/bin/cs", "utf8") : "";
-      if (want !== have) await fsp.writeFile("/usr/local/bin/cs", want, { mode: 0o755 });
+    for (const name of ["cs", "termux"]) {
+      const src = path.join(ROOT, "server/devtools", name), dst = path.join("/usr/local/bin", name);
+      if (!exists(src) || !writable("/usr/local/bin")) continue;
+      const want = await fsp.readFile(src, "utf8");
+      const have = exists(dst) ? await fsp.readFile(dst, "utf8") : "";
+      if (want !== have) await fsp.writeFile(dst, want, { mode: 0o755 });
     }
     await fsp.mkdir(CLAUDE_DIR, { recursive: true });
     const sf = path.join(CLAUDE_DIR, "settings.json");

@@ -3,13 +3,19 @@
 #   master        changes only by merging pull requests on GitHub
 #   v1.0, v2.0…   frozen stable lines: never change
 #   v1.x, v2.x…   release lines: change only by merging pull requests on GitHub
+#   me/<name>     a person's own version of the app: only they push it (git config pocketagent.me <name>)
 # Feature branches and release tags push normally. Emergency override (owner only):
 #   PA_ALLOW_PROTECTED_PUSH=1 git push …
 # Enabled per clone with: git config core.hooksPath .githooks   (dev setup does this)
 [ "${PA_ALLOW_PROTECTED_PUSH:-}" = 1 ] && exit 0
 status=0
+me=$(git config pocketagent.me || true)
 while read -r local_ref local_sha remote_ref remote_sha; do
   case "$remote_ref" in
+    refs/heads/me/*)
+      if [ "${remote_ref#refs/heads/me/}" != "$me" ]; then
+        echo "✋ ${remote_ref#refs/heads/} is someone else's version of the app. Yours is me/${me:-<your-github-name>} (git config pocketagent.me <name>)."; status=1
+      fi ;;
     refs/heads/master|refs/heads/main)
       echo "✋ $remote_ref only changes through a merged pull request on GitHub."; status=1 ;;
     refs/heads/v[0-9]*.0)

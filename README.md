@@ -11,6 +11,7 @@ You need a Claude account (Pro or Max) and an Android phone (Android 8+, 64-bit 
 3. Open it and install. Allow your browser or Files app to install apps if Android asks, and stay on the dialog until it finishes.
 4. Open Pocket Agent → **Set up Pocket Agent**. It downloads about 300 MB once (Alpine Linux, Node, git, Claude Code) and takes 3–8 minutes on Wi-Fi. Keep the app open.
 5. **Sign in to Claude**: open the sign-in page, approve, copy the code, paste it into the app.
+6. Tap **Allow** on the "keep running in the background" banner, so Android doesn't stop Claude mid-reply. On Vivo, Xiaomi, Oppo and similar phones, also set Pocket Agent's battery use to *Unrestricted* / *No restrictions* in its App info.
 
 ### Updates
 
@@ -33,14 +34,19 @@ Then **Check for updates** (or the banner) applies new versions: screen and serv
 - File browser for your projects. Phone storage is at `/sdcard`.
 - **Builds itself**: Settings → *Build Pocket Agent yourself* sets up Java and the Android build tools and clones this repo, so Claude can change and rebuild the app on the phone.
 - Optional phone control groundwork (accessibility, notification access), off until you enable it.
-- Coming from Termux? Settings → *Move everything from Termux* brings your projects, chats, memory and settings over.
+- **Back up and restore** chats, memory, settings and projects to phone storage (Settings → Updates & chats).
+- **Termux (optional)**: Settings → Termux → *Set up Termux* gives you one command to paste into Termux. Claude in the app can then run commands there (`termux <command>`), and you can run Claude in Termux instead of the built-in Linux. Coming from an older Termux setup? *Move everything from Termux* brings your projects, chats, memory and settings over.
+
+## Make it yours
+
+Pocket Agent improves itself. Settings → **Build Pocket Agent yourself** gets you your own copy of the code on your own branch. Then **Improve Pocket Agent** starts a chat in it: ask for any change, and your app updates in a minute. Your experiments stay on `me/<your-github-name>`. When something's good for everyone, ask Claude to "share this with everyone": it opens a pull request into the shared line, and once the owner merges it, the next release brings it to everyone. Details: [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/RELEASES.md](docs/RELEASES.md#personal-versions-megithub-name).
 
 ## Build it yourself
 
-- **On the phone**: Settings → **Build Pocket Agent yourself** (repo + token). Then `bash build.sh` in `~/projects/pocket-agent`, or ask Claude to.
+- **On the phone**: Settings → **Build Pocket Agent yourself** (repo + token), then **Improve Pocket Agent**.
 - **On a computer**: see [CONTRIBUTING.md](CONTRIBUTING.md#on-a-computer-instead).
 
-Your build is signed with your own key, so it can't update an install of the official build. Uninstall that first; this wipes the app's data.
+Your build is signed with your own key, so its APKs can't update the official app. Screen and server changes still apply without one; for Java changes, see [Your own version](CONTRIBUTING.md#your-own-version-and-its-signing-key).
 
 ## How it works
 
@@ -58,7 +64,8 @@ Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), then [CONTRIBUTING.md](CONTRI
 |---|---|
 | `app/` | Android app: Java (no Gradle, no AndroidX), `assets/ui/` chat UI, `jniLibs/` bundled proot |
 | `server/` | Bridge between the app and Claude Code (Agent SDK), developer tools |
-| `scripts/` | `release.sh` (publish a release), `fetch-android-jar.sh` |
+| `scripts/` | `release.sh` (publish a release), `open-pr.sh` (PR without `gh`), `fetch-android-jar.sh` |
+| `CLAUDE.md` | what Claude needs to know to change this app safely |
 | `tests/`, `server/test/` | headless UI tests (jsdom), protocol, update and migration tests |
 | `build.sh` | builds the APK on the phone or a computer |
 

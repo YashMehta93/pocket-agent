@@ -8,15 +8,35 @@
 | `v1.0`, `v2.0`, … | A frozen stable major version, exactly as it was released | **Never** |
 | `v1.x`, `v2.x`, … | The running line for that major version; minor and patch releases are cut from here | **Only** by merging pull requests on GitHub |
 | `feat/…`, `fix/…` | Day-to-day work, one topic per branch | Pushed freely; deleted after merging |
+| `me/<github-name>` | One person's own version of the app: their experiments and tweaks (see below) | Only by that person |
 
 GitHub can't lock branches on a free private repo, so the locks are enforced by `.githooks/pre-push` (enabled with `git config core.hooksPath .githooks`; *Build Pocket Agent yourself* does this) and by the rules below. Override for emergencies only: `PA_ALLOW_PROTECTED_PUSH=1 git push …`.
 
 ## Day-to-day flow
 
 1. `git switch v1.x && git pull --ff-only && git switch -c feat/short-name`
-2. Commit, push the branch, and open a pull request **into `v1.x`**: `gh pr create --base v1.x`.
+2. Commit, push the branch, and open a pull request **into `v1.x`**: `bash scripts/open-pr.sh "Title"` (or `gh pr create --base v1.x`).
 3. The owner reviews and merges it on GitHub. **Merging is the approval.**
 4. `git switch v1.x && git pull --ff-only`.
+
+## Personal versions: `me/<github-name>`
+
+Everyone who builds Pocket Agent on their phone (Settings → *Build Pocket Agent yourself*) gets their own branch, `me/<github-name>`, made from `v1.x`. Their app updates from their own copy of the code, so it runs exactly their version. The personal branches and the version line stay separate:
+
+```
+v1.x ──●────────●──────────●──────►   shared line: releases are cut from here
+        \        ▲ PR        \ merge
+me/ana   ●──●──●─┼──●─────────●──►    Ana's app: her tweaks, plus v1.x merged in when she wants
+                 │
+feat/voice-notes ●   one feature, cherry-picked from me/ana onto v1.x, opened as a PR
+```
+
+- **Experiment** on `me/<name>`: commit freely, push to back it up. Only its owner pushes it (`.githooks/pre-push`, from `git config pocketagent.me`).
+- **Get everyone's improvements**: merge `origin/v1.x` into `me/<name>` whenever you like.
+- **Share something**: put just that change on a `feat/…` branch from `v1.x` (cherry-pick it), push, `bash scripts/open-pr.sh "Title"`. The owner merges it, and it reaches everyone in the next release.
+- **Borrow from a friend**: `git fetch` and cherry-pick from `origin/me/<friend>`.
+
+In the app, Settings → **Improve Pocket Agent** starts a chat in your copy, and Claude follows these rules from `CLAUDE.md`. Ask it "share this with everyone" or "get the latest from everyone".
 
 ## Cutting a release (from `v1.x`)
 

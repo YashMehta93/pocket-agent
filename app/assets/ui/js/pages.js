@@ -147,8 +147,13 @@ function openSettings() {
       <div class="set-row"><div class="l">Get updates from<small id="u-src">${esc(state.updateChannel ? state.updateChannel + (state.updateKind === "github" && !state.githubToken ? " (no token)" : "") : "Not set: updates come with new app versions")}</small></div><button class="chip" id="u-set">${state.updateChannel ? "Change" : "Set"}</button></div>
       <div class="set-row"><div class="l">Check for updates<small id="u-status">New server code and app screens</small></div><button class="chip" id="u-check">Check</button></div>
       <div class="set-row"><div class="l">Import chats<small>Copy chats from another Pocket Agent server, like Termux</small></div><button class="chip" id="i-chats">Import</button></div>
-      ${standalone ? `<div class="set-row"><div class="l">Build Pocket Agent yourself<small>Get the code, Java and the Android build tools, so this app can rebuild itself</small></div><button class="chip" id="d-open">Open</button></div>` : ""}
+      <div class="set-row"><div class="l">Back up to phone storage<small>Chats, memory, settings and projects, to Download/Pocket Agent. Not your sign-in.</small></div><button class="chip" id="b-make">Back up</button></div>
+      <div class="set-row"><div class="l">Restore a backup<small>After reinstalling, or on a new phone</small></div><button class="chip" id="b-restore">Restore</button></div>
+      ${standalone ? `<h3>Make it yours</h3>
+      <div class="set-row"><div class="l">Improve Pocket Agent<small>${state.devRepo ? "Start a chat in your copy of the app's code: ask for any change" : "Set up building first (below)"}</small></div><button class="chip" id="d-improve" ${state.devRepo ? "" : "disabled"}>Start</button></div>
+      <div class="set-row"><div class="l">Build Pocket Agent yourself<small>Get the code, Java and the Android build tools, so this app can rebuild itself</small></div><button class="chip" id="d-open">${state.devRepo ? "Redo" : "Set up"}</button></div>` : ""}
       ${standalone ? `<div class="set-row"><div class="l">Move everything from Termux<small>Projects, chats, memory, skills, settings and build tools, into this app</small></div><button class="chip" id="m-open">Open</button></div>` : ""}
+      ${native ? `<h3>Termux</h3><div id="termux-box"><div class="set-row"><div class="l">Checking…</div></div></div>` : ""}
       ${native ? `<h3>Phone control</h3><div id="phone-ctl"><div class="set-row"><div class="l">Checking…</div></div></div>` : ""}
       <h3>Account</h3>
       <div class="set-row"><div class="l">${esc(state.account?.email || state.account?.organization || "Claude account")}<small>${esc(state.account?.subscriptionType || state.account?.apiKeySource || "Signed in through Claude Code")}</small></div></div>
@@ -172,6 +177,9 @@ function openSettings() {
     body.querySelector("#s-server").onclick = () => chooseServer();
     body.querySelector("#u-set").onclick = () => chooseUpdateSource();
     body.querySelector("#d-open")?.addEventListener("click", () => openDevSetup());
+    body.querySelector("#d-improve")?.addEventListener("click", () => startImprove());
+    body.querySelector("#b-make").onclick = () => makeBackup();
+    body.querySelector("#b-restore").onclick = () => chooseBackup();
     body.querySelector("#u-check").onclick = () => checkServerUpdate(true);
     body.querySelector("#m-open")?.addEventListener("click", () => openMigration());
     body.querySelector("#i-chats").onclick = async () => {
@@ -191,6 +199,7 @@ function openSettings() {
     if (standalone) nativeRpc("runtime.auth").then(a => { const el = body.querySelector("#s-auth"); if (el) el.textContent = a.loggedIn ? [a.email, a.subscriptionType].filter(Boolean).join(" · ") : "Not signed in"; }).catch(() => {});
     body.querySelector("#s-restart")?.addEventListener("click", () => { nativeCall("restartServer"); toast("Restarting server…"); });
     if (native) renderPhoneControl(body.querySelector("#phone-ctl"));
+    if (native) renderTermux(body.querySelector("#termux-box"));
   });
 }
 
@@ -201,14 +210,86 @@ async function renderPhoneControl(box) {
   try { p = await nativeRpc("permissions.check", { names: [] }); }
   catch { box.innerHTML = `<div class="set-row"><div class="l">Needs the latest app<small>Install pocket-agent.apk from Downloads/claude apps</small></div></div>`; return; }
   const rows = [
+    p.battery !== undefined && ["battery", "Keep running in the background", "So Android doesn't stop Claude in the middle of a reply", p.battery],
     ["accessibility", "Screen control", "Lets Claude read the screen, tap and type when you ask (Accessibility)", p.accessibility],
     ["notification_access", "Read notifications", "Lets Claude read your notifications when you ask", p.notificationAccess],
     ["notifications", "Pocket Agent notifications", "Approvals and progress", p.notifications],
     ["unknown_sources", "One-tap app updates", "Allow Pocket Agent to install its own updates", p.installPackages],
   ];
-  box.innerHTML = rows.map(([screen, title, sub, on]) =>
+  box.innerHTML = rows.filter(Boolean).map(([screen, title, sub, on]) =>
     `<div class="set-row"><div class="l">${esc(title)}<small>${esc(sub)}</small></div><button class="chip ${on ? "" : "warn"}" data-screen="${screen}">${on ? "On" : "Turn on"}</button></div>`).join("");
-  box.querySelectorAll("[data-screen]").forEach(b => b.onclick = () => nativeRpc("settings.open", { screen: b.dataset.screen }).catch(e => toast(e.message)));
+  box.querySelectorAll("[data-screen]").forEach(b => b.onclick = () => (b.dataset.screen === "battery" ? nativeRpc("battery.request") : nativeRpc("settings.open", { screen: b.dataset.screen })).catch(e => toast(e.message)));
+}
+
+// ───────────── Termux ─────────────
+const TERMUX_PERMISSION = "com.termux.permission.RUN_COMMAND";
+/** Termux is optional: Claude in the app can run commands there, or the whole server can run there. */
+async function renderTermux(box) {
+  if (!box) return;
+  let st;
+  try { st = await nativeRpc("termux.status"); }
+  catch { box.innerHTML = `<div class="set-row"><div class="l">Needs the latest app<small>Update Pocket Agent to use Termux</small></div></div>`; return; }
+  if (!st.installed) { box.innerHTML = `<div class="set-row"><div class="l">Termux isn't installed<small>Optional. With Termux (from F-Droid or GitHub), Claude can use its packages, and you can run Claude there instead.</small></div></div>`; return; }
+  box.innerHTML = `
+    <div class="set-row"><div class="l">Termux commands<small>Lets Claude run commands in Termux with <code>termux …</code></small></div><button class="chip ${st.permission ? "" : "warn"}" id="t-perm">${st.permission ? "Allowed" : "Allow"}</button></div>
+    <div class="set-row"><div class="l">Set up Termux<small>One command: Claude Code, the Pocket Agent server, and access for the app</small></div><button class="chip" id="t-setup">Open</button></div>
+    <div class="set-row"><div class="l">Test<small id="t-test-r">Runs <code>uname -a</code> in Termux</small></div><button class="chip" id="t-test">Run</button></div>`;
+  box.querySelector("#t-perm").onclick = async () => {
+    try { await nativeRpc("permissions.request", { names: [TERMUX_PERMISSION] }); } catch (e) { return toast(e.message); }
+    renderTermux(box);
+  };
+  box.querySelector("#t-setup").onclick = () => termuxSetupSheet();
+  box.querySelector("#t-test").onclick = async () => {
+    const out = box.querySelector("#t-test-r"); out.textContent = "Running…";
+    try { const r = await nativeRpc("termux.exec", { cmd: "uname -a", timeoutMs: 20000 }); out.textContent = (r.stdout || r.stderr || "exit " + r.code).trim(); }
+    catch (e) { out.textContent = e.message; }
+  };
+}
+async function termuxSetupSheet() {
+  let cmd;
+  try { cmd = (await conn.call("termux.installCommand")).command; } catch (e) { return toast(e.message, 5000); }
+  const b = sheet.open(`<h2>Set up Termux</h2>
+    <div class="sub">Paste this into Termux and press Enter. It installs Claude Code and the Pocket Agent server there, and lets this app run commands in Termux. About 5 minutes and 400 MB. The command works for 30 minutes.</div>
+    <pre style="font:12px/1.5 var(--mono);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px;white-space:pre-wrap;word-break:break-all">${esc(cmd)}</pre>
+    <div class="btns"><button class="btn" id="ts-copy">Copy</button><button class="btn primary" id="ts-open">Copy and open Termux</button></div>`);
+  const copy = () => nativeRpc("clipboard.set", { text: cmd }).catch(() => navigator.clipboard?.writeText(cmd)).then(() => toast("Copied"));
+  b.querySelector("#ts-copy").onclick = copy;
+  b.querySelector("#ts-open").onclick = async () => { await copy(); nativeRpc("app.launch", { package: "com.termux" }).catch(e => toast(e.message)); };
+}
+
+// ───────────── backups ─────────────
+async function makeBackup() {
+  if (native) await nativeRpc("permissions.request", { names: ["android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE"] }).catch(() => {});
+  showBanner("Backing up… this can take a minute.");
+  try {
+    const r = await conn.call("backup.create");
+    hideBanner(); toast(`Saved ${r.file.replace("/sdcard/", "")} (${(r.bytes / 1e6).toFixed(0)} MB)`, 6000);
+  } catch (e) { hideBanner(); toast(e.message, 6000); }
+}
+async function chooseBackup() {
+  if (native) await nativeRpc("permissions.request", { names: ["android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE"] }).catch(() => {});
+  let r; try { r = await conn.call("backup.list"); } catch (e) { return toast(e.message); }
+  const b = sheet.open(`<h2>Restore a backup</h2><div class="sub">From ${esc(r.dir.replace("/sdcard/", ""))}. Files in the backup replace the same files here; nothing else is deleted. Sign in to Claude stays as it is.</div><div id="bk"></div>`);
+  if (!r.backups.length) b.querySelector("#bk").innerHTML = `<div class="sub">No backups found there.</div>`;
+  for (const k of r.backups) {
+    const o = h(`<button class="opt">${icon("folder")}<div class="ot"><div>${esc(new Date(k.at).toLocaleString())}</div><div class="od">${esc(k.name)} · ${(k.bytes / 1e6).toFixed(0)} MB</div></div></button>`);
+    o.onclick = async () => {
+      sheet.close(true);
+      showBanner("Restoring… Pocket Agent restarts afterwards.");
+      try { await conn.call("backup.restore", { file: k.file }); state.updating = true; toast("Restored", 4000); refreshSessions(); }
+      catch (e) { hideBanner(); toast(e.message, 6000); }
+    };
+    b.querySelector("#bk").append(o);
+  }
+}
+
+// ───────────── improving the app itself ─────────────
+const IMPROVE_PROMPT = "I want to work on my own version of Pocket Agent, this app. Read CLAUDE.md first. Then tell me in a few lines where things stand: my branch, uncommitted work, and whether the shared v1.x line has changes I don't have yet. Then ask what I'd like to change.";
+function startImprove() {
+  if (!state.devRepo) return openDevSetup();
+  page.close(); sheet.close(true);
+  newChat(state.devRepo);
+  send(IMPROVE_PROMPT);
 }
 /** Where Claude runs: the app's built-in Linux, or another Pocket Agent server (Termux, a PC). */
 function chooseServer() {
@@ -327,10 +408,10 @@ const JOB_DEFS = {
     ask: async () => {
       const repo = await promptSheet({ title: "Repository", value: state.defaultRepo || "", placeholder: "owner/pocket-agent or https://…" });
       if (!repo) return null;
-      const token = await promptSheet({ title: "GitHub token (for private repos)", value: "", placeholder: "Leave empty for a public repo", ok: "Start" });
+      const token = await promptSheet({ title: "GitHub token", value: "", placeholder: "Contents: read and write, to save and share your changes", ok: "Start" });
       return token === null ? null : { repo: repo.trim(), token: token.trim() };
     },
-    done: j => `Ready. The code is in <b>${esc((j.summary?.path || "").replace(state.home, "~"))}</b>; run <code>bash build.sh</code> there (or ask Claude to). Updates now come from that folder.`,
+    done: j => `Ready. Your copy of the code is in <b>${esc((j.summary?.path || "").replace(state.home, "~"))}</b>, and the app now updates from it.<div class="btns"><button class="btn primary" data-act="improve">Start improving Pocket Agent</button></div>`,
   },
 };
 function openMigration() { openJob("migrate"); }
@@ -367,6 +448,7 @@ function renderJob(kind) {
   if (j.error) res.innerHTML = `<div class="note err">${esc(j.error)}</div>`;
   else if (j.done) {
     res.innerHTML = `<div class="note" style="font-family:var(--sans)">${def.done(j)}</div>${(j.summary?.warnings || []).map(x => `<div class="note err">${esc(x)}</div>`).join("")}`;
+    res.querySelector("[data-act=improve]")?.addEventListener("click", () => { state.devRepo = j.summary?.path || state.devRepo; startImprove(); });
     refreshSessions();
   }
 }

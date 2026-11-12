@@ -41,7 +41,8 @@ async function onConnected() {
   else updateHeader();
   updateComposer();
   if (window.__pendingIntent) { const i = window.__pendingIntent; window.__pendingIntent = null; handleIntent(i); }
-  Object.assign(state, { updateChannel: hello.updateChannel || null, updateKind: hello.updateKind || null, githubToken: !!hello.githubToken, defaultRepo: hello.defaultRepo || "" });
+  Object.assign(state, { updateChannel: hello.updateChannel || null, updateKind: hello.updateKind || null, githubToken: !!hello.githubToken, defaultRepo: hello.defaultRepo || "", devRepo: hello.devRepo || null });
+  askBatteryOnce();
   checkAppUpdate();
   if (state.updateChannel) checkServerUpdate(false);
 }
@@ -53,8 +54,30 @@ async function checkAppUpdate() {
     const u = await conn.call("app.update");
     const have = nativeCall("appVersionCode") || 0;
     if (!u.versionCode || u.versionCode <= have) return;
+    // Android installs an update only if it's signed with the same key as the installed app.
+    const mine = u.signer ? (await nativeRpc("capabilities").catch(() => ({}))).signer : null;
+    if (u.signer && mine && u.signer !== mine) {
+      showBanner(`v${u.versionName} is signed with a different key`, "Why", explainSigner);
+      return;
+    }
     showBanner(`App update available (v${u.versionName})`, "Update", () => installAppUpdate(u.url));
   } catch {}
+}
+/** Android stops background apps to save power, which cuts off Claude mid-reply. Ask once to be exempt. */
+async function askBatteryOnce() {
+  if (!native || settings.batteryAsked || nativeCall("isStandalone") !== true) return;
+  const p = await nativeRpc("permissions.check", { names: [] }).catch(() => null);
+  if (!p || p.battery !== false || !$("#banner").hidden) return;
+  showBanner("Let Pocket Agent keep running in the background, so Android doesn't stop Claude mid-reply.", "Allow", () => {
+    settings.batteryAsked = true; saveSettings(); hideBanner();
+    nativeRpc("battery.request").catch(e => toast(e.message));
+  });
+}
+function explainSigner() {
+  sheet.open(`<h3>This build can't update your app</h3>
+    <p>Android only installs an update signed with the same key as the app you have. Your update source built this APK with its own key, for example your own build of Pocket Agent while the app came from the official release.</p>
+    <p>Changes to the screens and the server still update instantly (Settings → Check for updates). Only changes to the Java code need the APK.</p>
+    <p>To switch to your own build: Settings → <b>Back up to phone storage</b>, uninstall Pocket Agent, install <code>build/pocket-agent.apk</code> (copied to Download/claude apps by every build), set it up, then Settings → <b>Restore a backup</b>. From then on your own builds update it in one tap. See CONTRIBUTING.md, "Your own version".</p>`);
 }
 async function installAppUpdate(url) {
   // Old apps (before v0.1.6) can't install updates themselves; point them to the file.

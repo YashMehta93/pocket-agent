@@ -29,7 +29,9 @@ Pocket Agent is a phone UI for **Claude Code**. The model runs on Anthropic's se
 | Mode | Linux environment | Server | How the app connects |
 |---|---|---|---|
 | **Standalone** (default) | built into the app: Alpine Linux via proot (`Linux.java`) | started and supervised by the app, port 8790 | automatically, with the app's own token |
-| **Server** | Termux on this phone, or a computer | `pocket-agent start` (port 8765) | Settings → "Claude runs on" → address + token |
+| **Server** | Termux on this phone (set up by `server/devtools/termux-install.sh`, from Settings → Termux), or a computer | `pocket-agent start` (port 8765) | Settings → "Claude runs on" → address + token |
+
+In standalone mode Claude can still use Termux: `termux <command>` (`server/devtools/termux`) goes through the server to the app, which runs it with Termux's `RUN_COMMAND` service and returns the output.
 
 Standalone setup (first run, `setup.html` + `Linux.java`): download the Alpine minirootfs (sha256-checked, resumable) → unpack in Java (`Tar.java`) → `apk add` Node, git, ripgrep, bash… (proot fake-root) → Claude Code's official installer (as a normal user: Claude refuses some flags as root) → copy the server + UI bundled in the APK (`assets/server`, `assets/ui`) to `/opt/pocket-agent` and `npm install` → sign in with `claude auth login` (URL out, pasted code in). Each step is recorded in `files/linux/state.json`, so a failed setup resumes. An app update re-copies the bundle when `assets/bundle.json` changed.
 

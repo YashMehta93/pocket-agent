@@ -10,6 +10,7 @@ import { CLAUDE, CLAUDE_DIR, HOME, BUFFER_MAX, IDLE_CLOSE_MS, prefs, cache, save
 import { broadcast, broadcastAll, notifyNative, clients } from "./hub.js";
 import { Inbox } from "./inbox.js";
 import { Activity, toolDetail } from "./activity.js";
+import { phoneContext } from "./devtools.js";
 
 /** sessionId -> LiveSession */
 export const live = new Map();
@@ -28,7 +29,7 @@ export class LiveSession {
       includePartialMessages: true,             // token-by-token streaming
       enableFileCheckpointing: true,            // lets "edit message" undo file changes
       settingSources: ["user", "project", "local"],  // same settings, CLAUDE.md, skills as the CLI
-      systemPrompt: { type: "preset", preset: "claude_code" },
+      systemPrompt: { type: "preset", preset: "claude_code", append: phoneContext() },   // devtools.js
       thinking: { type: "adaptive", display: prefs.defaults.thinkingDisplay || "summarized" },  // readable thinking instead of empty blocks
       agentProgressSummaries: true,             // periodic progress summaries from subagents
       forwardSubagentText: true,                // subagent text shows up nested under its card

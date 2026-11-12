@@ -7,6 +7,7 @@
 //   POST /native/result?token= result of a server → phone RPC call (hub.callNative)
 //   GET  /apk/download?token=  latest built APK, for in-app updates
 //   GET  /bundle/info, /bundle.tgz, /export/sessions.tgz (?token=)  for another server's update / chat import
+//   GET  /termux/install.sh, /termux/bundle.tgz (?code=)  Termux setup, with a 30-minute code (termux.js)
 import http from "node:http";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -20,6 +21,7 @@ import { toNative } from "./notify.js";
 import { toolDetail } from "./activity.js";
 import { live, getLive } from "./live-session.js";
 import { handlers } from "./handlers.js";
+import { validCode, installScript } from "./termux.js";
 
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".woff2": "font/woff2" };
@@ -30,6 +32,12 @@ export function createServer() {
     const url = new URL(req.url, "http://x");
     if (url.pathname === "/health") { res.setHeader("access-control-allow-origin", "*"); return json(res, 200, { ok: true, version: VERSION, live: live.size }); }
     if (url.pathname === "/" || url.pathname.startsWith("/ui/")) return serveUi(url.pathname, res);
+    if (url.pathname.startsWith("/termux/")) {
+      const code = url.searchParams.get("code");
+      if (!validCode(code)) { res.writeHead(403, { "content-type": "text/plain" }); return res.end("echo 'This setup command has expired. Get a new one in Pocket Agent: Settings → Termux.' >&2; exit 1\n"); }
+      if (url.pathname === "/termux/install.sh") { res.writeHead(200, { "content-type": "text/x-shellscript" }); return res.end(await installScript(code)); }
+      if (url.pathname === "/termux/bundle.tgz") { res.writeHead(200, { "content-type": "application/gzip" }); return bundleStream().pipe(res); }
+    }
     if (!safeEq(url.searchParams.get("token") || req.headers["x-token"], TOKEN)) return json(res, 401, { error: "bad token" });
     if (url.pathname === "/events") return sse(req, res, +(url.searchParams.get("v") || 1), +(url.searchParams.get("api") || 0));
     if (url.pathname === "/native/result" && req.method === "POST") {

@@ -70,7 +70,10 @@ apksigner sign --ks "$KS" --ks-pass pass:pocketagent --key-pass pass:pocketagent
   --out "$OUT/pocket-agent.apk" "$OUT/aligned.apk"
 
 # Version info for in-app updates (served by the server as app.update).
-printf '{"versionCode": %s, "versionName": "%s", "builtAt": %s}\n' "$VERSION_CODE" "$VERSION_NAME" "$(date +%s)000" > "$OUT/pocket-agent.json"
+# signer: SHA-256 of the signing certificate. The app compares it with its own, because Android only
+# installs an update signed with the same key (a friend's own build can't update the official app).
+SIGNER=$(keytool -exportcert -keystore "$KS" -alias pocket -storepass pocketagent 2>/dev/null | sha256sum | cut -c1-64)
+printf '{"versionCode": %s, "versionName": "%s", "builtAt": %s, "signer": "%s"}\n' "$VERSION_CODE" "$VERSION_NAME" "$(date +%s)000" "$SIGNER" > "$OUT/pocket-agent.json"
 rm -rf "$OUT/unsigned.apk" "$OUT/aligned.apk" "$OUT/apkroot"
 
 echo "[7/7] done: $OUT/pocket-agent.apk ($(du -h "$OUT/pocket-agent.apk" | cut -f1), v$VERSION_NAME, bundle $BUNDLE_HASH)"

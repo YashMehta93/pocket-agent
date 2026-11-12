@@ -9,8 +9,10 @@ import { broadcastAll, callNative } from "./hub.js";
 import { live, getLive, openSession, busyElsewhere, runClaude } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
 import { importSessions, checkUpdate, applyUpdate, sourceName, latestRelease, releaseAsset } from "./transfer.js";
-import { runDevSetup, devSetupStatus } from "./devtools.js";
+import { runDevSetup, devSetupStatus, devRepo } from "./devtools.js";
 import { runMigration, migrationStatus } from "./migrate.js";
+import { createBackup, listBackups, restoreBackup, BACKUP_DIR } from "./backup.js";
+import { installCommand } from "./termux.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
 
@@ -29,7 +31,7 @@ export const handlers = {
       defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account,
       updateChannel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null,
       updateKind: prefs.updateChannel ? (prefs.updateChannel.github ? "github" : prefs.updateChannel.path ? "path" : "server") : null,
-      githubToken: !!prefs.updateChannel?.token, defaultRepo: DEFAULT_REPO, mode: process.env.PA_MODE || "server",
+      githubToken: !!prefs.updateChannel?.token, defaultRepo: DEFAULT_REPO, mode: process.env.PA_MODE || "server", devRepo: devRepo(),
       live: [...live.values()].map(s => s.info()) };
   },
 
@@ -121,6 +123,17 @@ export const handlers = {
   /** "Build Pocket Agent yourself" (app built-in mode): progress arrives as { t: "devsetup", job } events. */
   async "dev.setup"({ repo, token }) { return { job: runDevSetup({ repo: repo || DEFAULT_REPO, token: token || prefs.updateChannel?.token || "" }) }; },
   async "dev.status"() { return { job: devSetupStatus() }; },
+  // ───── backups to phone storage (backup.js) ─────
+  async "backup.create"() { return await createBackup(); },
+  async "backup.list"() { return { dir: BACKUP_DIR, backups: await listBackups() }; },
+  async "backup.restore"({ file }) {
+    const r = await restoreBackup(file);
+    changed();
+    setTimeout(() => process.kill(process.pid, "SIGUSR2"), 500);   // reload restored preferences: restart when idle
+    return r;
+  },
+  // ───── Termux (termux.js) ─────
+  async "termux.installCommand"() { return installCommand(); },
 
   // ───── the app itself ─────
   /** Version of the newest built APK, so the app can offer a one-tap update. */
