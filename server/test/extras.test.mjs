@@ -91,6 +91,26 @@ try {
   const bare = path.join(T, "bare"); fs.mkdirSync(path.join(bare, "server"), { recursive: true });
   ok("without the file, the built-in keys are trusted", trustedKeys(bare).length === DEFAULT_TRUSTED_KEYS.keys.length && trustedKeys(bare).length > 0);
   ok("a missing keys file is restored byte for byte", ensureTrustedKeys(bare) === true && fs.readFileSync(path.join(bare, "server/trusted-keys.json"), "utf8") === keyFile && ensureTrustedKeys(bare) === false);
+  // VERSION after an APK install: copied up only when the APK was the last install
+  const { syncVersionFile } = await import("../src/transfer.js");
+  const inst = (top, apk, appliedAtMs, markerMs) => {
+    const d = fs.mkdtempSync(path.join(T, "inst-")); fs.mkdirSync(path.join(d, "server"));
+    if (top) fs.writeFileSync(path.join(d, "VERSION"), top);
+    if (apk) fs.writeFileSync(path.join(d, "server/VERSION"), apk);
+    if (markerMs) { fs.writeFileSync(path.join(d, "bundle.json"), "{}"); fs.utimesSync(path.join(d, "bundle.json"), markerMs / 1000, markerMs / 1000); }
+    if (appliedAtMs) fs.writeFileSync(path.join(d, "applied.json"), JSON.stringify({ at: new Date(appliedAtMs).toISOString() }));
+    return d;
+  };
+  const top = d => { try { return fs.readFileSync(path.join(d, "VERSION"), "utf8"); } catch { return null; } };
+  const now = Date.now();
+  let d = inst(null, "1.1.2\n", 0, now);
+  ok("fresh APK install: VERSION copied to the top", syncVersionFile(d) === true && top(d) === "1.1.2\n");
+  d = inst("1.1.0\n", "1.1.2\n", now - 3600e3, now);
+  ok("APK installed after a code update: the APK's VERSION wins", syncVersionFile(d) === true && top(d) === "1.1.2\n");
+  d = inst("1.2.0\n", "1.1.2\n", now, now - 3600e3);
+  ok("code update after the APK: its VERSION stays", syncVersionFile(d) === false && top(d) === "1.2.0\n");
+  d = inst("1.0.0\n", null, 0, 0);
+  ok("not installed from an APK (Termux, a computer): untouched", syncVersionFile(d) === false && top(d) === "1.0.0\n");
   const { githubRepo } = await import("../src/config.js");
   ok("any way of writing a GitHub repo becomes owner/repo", ["me/pa", "github.com/me/pa", "https://github.com/me/pa.git", "https://www.github.com/me/pa/", "git@github.com:me/pa.git", " me/pa.git "].every(x => githubRepo(x) === "me/pa"));
 

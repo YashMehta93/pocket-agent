@@ -378,7 +378,7 @@ async function switchVersion(rel) {
 /** Checks the update source; offers to apply. quiet=false also reports "up to date" and errors. */
 async function checkServerUpdate(loud) {
   try {
-    const r = await conn.call("update.check");
+    const r = await conn.call("update.check", loud ? { fresh: true } : {});   // the button skips the 2-minute cache
     if (!r.channel) { if (loud) toast("Set where updates come from first"); return; }
     if (r.older) { if (loud) toast(`${r.channel} has older code (build ${r.remote.build}) than this app (build ${r.local.build}). Not updating.`, 6000); return; }
     if (!r.available) { if (loud) toast("Up to date"); return; }
