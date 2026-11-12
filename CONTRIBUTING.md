@@ -85,6 +85,7 @@ npm run test:native      # server ↔ phone channel with a fake phone (fast, no 
 npm run test:setup       # first-run setup screen with a fake native bridge
 npm run test:tar         # the app's tar extractor vs GNU tar on the real Alpine archive
 npm run test:github      # updating from GitHub releases, against a fake GitHub API
+npm run test:upgrade     # an install on v1.0.0 updates to this code and is then up to date
 npm run test:migrate     # Move from Termux, into a throwaway home (needs a Termux server)
 npm run test:transfer    # chat import + update channel between servers (needs a Termux server)
 ```

@@ -127,7 +127,10 @@ async function folderSource(dir) {
   if (!fs.existsSync(path.join(dir, ".git"))) return { root: dir, build };
   try {
     const sha = (await run("git", ["-C", dir, "rev-parse", "HEAD"])).trim();
-    const base = path.join(DATA, "snapshots"), snap = path.join(base, sha);
+    // Keyed by commit and by which paths this code ships: another version's snapshot of the same commit
+    // can lack files this one needs (1.0.0's had no trusted-keys.json).
+    const which = crypto.createHash("sha1").update(BUNDLE_PATHS.join("\n")).digest("hex").slice(0, 8);
+    const base = path.join(DATA, "snapshots"), snap = path.join(base, `${sha}-${which}`);
     if (!fs.existsSync(path.join(snap, ".done"))) {
       await fsp.rm(base, { recursive: true, force: true });
       await fsp.mkdir(snap, { recursive: true });
