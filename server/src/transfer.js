@@ -127,7 +127,10 @@ async function folderSource(dir) {
   if (!fs.existsSync(path.join(dir, ".git"))) return { root: dir, build };
   try {
     const sha = (await run("git", ["-C", dir, "rev-parse", "HEAD"])).trim();
-    const base = path.join(DATA, "snapshots"), snap = path.join(base, sha);
+    // Keyed by commit and by which paths this code ships: another version's snapshot of the same commit
+    // can lack files this one needs (1.0.0's had no trusted-keys.json).
+    const which = crypto.createHash("sha1").update(BUNDLE_PATHS.join("\n")).digest("hex").slice(0, 8);
+    const base = path.join(DATA, "snapshots"), snap = path.join(base, `${sha}-${which}`);
     if (!fs.existsSync(path.join(snap, ".done"))) {
       await fsp.rm(base, { recursive: true, force: true });
       await fsp.mkdir(snap, { recursive: true });
@@ -232,7 +235,10 @@ export async function applyUpdate(ch, restart) {
     if (!fs.existsSync(path.join(x, "server/src/index.js"))) throw new Error("The update was incomplete");
     const depsOf = dir => ["server/package.json", "server/package-lock.json"].map(f => { try { return fs.readFileSync(path.join(dir, f), "utf8"); } catch { return ""; } }).join("");
     const depsChanged = depsOf(x) !== depsOf(ROOT);
-    for (const p of BUNDLE_PATHS) {
+    // Everything the new code brings, including server files this version doesn't know about yet
+    // (1.0.0 copied only its own list, and dropped 1.1.0's trusted-keys.json).
+    const extra = fs.existsSync(path.join(x, "server")) ? fs.readdirSync(path.join(x, "server")).map(n => "server/" + n).filter(p => !BUNDLE_PATHS.includes(p) && !p.endsWith("node_modules")) : [];
+    for (const p of [...BUNDLE_PATHS, ...extra]) {
       if (!fs.existsSync(path.join(x, p))) continue;
       await fsp.rm(path.join(ROOT, p), { recursive: true, force: true });
       await fsp.mkdir(path.dirname(path.join(ROOT, p)), { recursive: true });
