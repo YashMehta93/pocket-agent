@@ -60,6 +60,23 @@ ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("s
 ev(`document.querySelector("#chip-model").click()`); ok("model sheet opens", ev("sheet.isOpen")); ev("sheet.close(true)");
 ev(`document.querySelector("#btn-more").click()`); ok("overflow menu opens", $$("#sheet .menu-item").length > 3); ev("sheet.close(true)");
 
+// machines: the saved servers this app can switch between (the drawer's foot, and Settings)
+ev(`settings.servers = [{ name: "Mac", url: "http://100.64.0.1:8765", token: "t" }]; renderConnFoot(); chooseServer()`);
+ok("the sheet lists saved machines and Add a machine", /Mac/.test($("#srv-opts").textContent) && /100\.64\.0\.1:8765/.test($("#srv-opts").textContent) && /Add a machine/.test($("#srv-opts").textContent));
+ok("the drawer's foot offers to switch", /Switch/.test($("#conn-foot").textContent));
+ev("window.reachable = async () => false");
+const before = ev("settings.server");
+$$("#srv-opts .opt").find(x => /Mac/.test(x.textContent)).click();
+await until(() => /Can't reach Mac/.test($("#sheet-body").textContent), 5000, "unreachable warning");
+ok("an unreachable machine asks before switching", ev("settings.server") === before);
+$('#sheet-body [data-r="0"]').click(); await sleep(350);
+ev("chooseServer()");
+$("#srv-opts .srv-more").click(); await sleep(350);
+ok("a saved machine can be renamed, re-tokened or removed", /Rename/.test($("#sheet-body").textContent) && /Change token/.test($("#sheet-body").textContent) && /Remove/.test($("#sheet-body").textContent));
+$$("#sheet-body .menu-item").find(x => /Remove/.test(x.textContent)).click(); await sleep(350);
+ok("removing it empties the list and leaves the connection alone", ev("settings.servers.length") === 0 && ev("settings.server") === before && ev("conn.ok"));
+ev("sheet.close(true)");
+
 if (LIVE) {
   const cwd = process.env.PREFIX + "/tmp/pa-ui"; fs.rmSync(cwd, { recursive: true, force: true }); fs.mkdirSync(cwd, { recursive: true });
   ev(`newChat(${JSON.stringify(cwd)})`);

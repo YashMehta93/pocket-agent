@@ -107,6 +107,8 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 @keyframes pulse { 50% { opacity: .3; } }
 .drawer-foot { padding: 10px 18px calc(12px + var(--safe-b)); font: 11.5px/1.4 var(--mono); color: var(--faint); border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
 .drawer-foot svg { width: 14px; height: 14px; }
+.drawer-foot { cursor: pointer; } .drawer-foot .foot-switch { margin-left: auto; color: var(--muted); }
+div.opt { cursor: pointer; align-items: center; } .opt .srv-more { margin: -6px -6px -6px 0; }
 
 /* ───── main ───── */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; padding-top: var(--safe-t); position: relative; }

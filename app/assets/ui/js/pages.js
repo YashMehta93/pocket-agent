@@ -139,7 +139,7 @@ function openSettings() {
       <div class="set-row"><div class="l">Effort</div></div><div class="seg" id="d-effort">${["", ...EFFORTS].map(e => `<button data-v="${e}" class="${(d.effort || "") === e ? "on" : ""}">${e || "auto"}</button>`).join("")}</div>
       <div class="set-row"><div class="l">Permission mode</div></div><div class="seg" id="d-mode">${MODES.slice(0, 4).map(m => `<button data-v="${m.id}" class="${(d.permissionMode || "default") === m.id ? "on" : ""}">${m.short}</button>`).join("")}</div>
       <h3>Connection</h3>
-      <div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server || (native ? "This phone (built-in)" : location.host))}</small></div><button class="chip" id="s-server">Change</button></div>
+      <div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server ? serverLabel() + " · " + hostLabel(settings.server) : native ? "This phone (built-in)" : location.host)}</small></div><button class="chip" id="s-server">Change</button></div>
       ${native ? `<div class="set-row"><div class="l">Restart Claude's server<small>Stops any reply in progress</small></div><button class="chip" id="s-restart">Restart</button></div>` : ""}
       ${standalone ? `<div class="set-row"><div class="l">Claude sign-in<small id="s-auth">Checking…</small></div><button class="chip" id="s-login">Sign in again</button></div>
       <div class="set-row"><div class="l">Server log<small>For troubleshooting</small></div><button class="chip" id="s-log">View</button></div>` : ""}
@@ -177,7 +177,7 @@ function openSettings() {
         b.querySelector("#dm").append(o);
       }
     };
-    body.querySelector("#s-server").onclick = () => chooseServer();
+    body.querySelector("#s-server").onclick = () => chooseServer(true);
     body.querySelector("#u-set").onclick = () => chooseUpdateSource();
     body.querySelector("#d-open")?.addEventListener("click", () => openDevSetup());
     body.querySelector("#d-improve")?.addEventListener("click", () => startImprove());
@@ -297,31 +297,74 @@ function startImprove() {
   send(IMPROVE_PROMPT);
 }
 /** Where Claude runs: the app's built-in Linux, or another Pocket Agent server (Termux, a PC). */
-function chooseServer() {
-  const b = sheet.open(`<h2>Where Claude runs</h2><div class="sub">Chats live with the server they were made on.</div><div id="srv-opts"></div>`);
-  const opts = [
-    native && { id: "", title: "This phone (built-in)", sub: "Pocket Agent's own Linux; works offline from Termux" },
-    { id: "custom", title: "Another server…", sub: "Pocket Agent server in Termux or on a computer" },
-  ].filter(Boolean);
-  for (const o of opts) {
-    const on = (o.id === "" && !settings.server) || (o.id === "custom" && settings.server);
-    const el = h(`<button class="opt ${on ? "on" : ""}">${icon(on ? "ccheck" : "circle")}<div class="ot"><div>${esc(o.title)}</div><div class="od">${esc(o.sub)}</div></div></button>`);
-    el.onclick = async () => {
-      sheet.close(true);
-      let server = "", token = "";
-      if (o.id === "custom") {
-        server = await promptSheet({ title: "Server address", value: settings.server || "http://127.0.0.1:8765", placeholder: "http://host:8765" });
-        if (!server) return;
-        token = await promptSheet({ title: "Server token", value: settings.token, placeholder: "Run \`pocket-agent token\` on the server" });
-        if (token === null) return;
-      }
-      settings.server = server.replace(/\/$/, ""); settings.token = token.trim(); saveSettings();
-      toast("Switching…");
-      if (native) nativeRpc("mode.set", { server: settings.server, token: settings.token }).catch(e => toast(e.message));
-      else { conn.ws?.close(); openSettingsRefresh(); }
-    };
-    b.querySelector("#srv-opts").append(el);
-  }
+// ───────────── machines: where Claude runs ─────────────
+// settings.servers = [{ name, url, token }] saved on this device; settings.server is the one in use ("" = this phone).
+const hostLabel = url => String(url || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
+const cleanUrl = v => { v = String(v || "").trim().replace(/\/+$/, ""); return v && !/^https?:\/\//i.test(v) ? "http://" + v : v; };
+function savedServers() {
+  if (!Array.isArray(settings.servers)) settings.servers = [];
+  // A server that was set before machines could be saved joins the list.
+  if (settings.server && !settings.servers.some(x => x.url === settings.server)) settings.servers.push({ name: hostLabel(settings.server), url: settings.server, token: settings.token || "" });
+  return settings.servers;
+}
+/** Name of the machine in use, for the drawer's foot. */
+function serverLabel() {
+  if (!settings.server) return native ? "This phone" : location.host;
+  return savedServers().find(x => x.url === settings.server)?.name || hostLabel(settings.server);
+}
+async function reachable(url) {
+  try { return (await fetch(url + "/health", { cache: "no-store", signal: AbortSignal.timeout(4000) })).ok; } catch { return false; }
+}
+function switchServer(server, token, fromSettings) {
+  settings.server = server; settings.token = token; saveSettings();
+  renderConnFoot();
+  toast("Switching…");
+  if (native) nativeRpc("mode.set", { server, token }).catch(e => toast(e.message));
+  else { conn.ws?.close(); if (fromSettings) openSettingsRefresh(); }
+}
+async function useServer(m, fromSettings) {
+  if (m.url === settings.server && m.token === settings.token) return;
+  if (!await reachable(m.url) && !await confirmSheet({ title: `Can't reach ${m.name}`, text: "It may be asleep, or the network between you (like Tailscale) is off. Switch anyway? You can switch back from Settings.", ok: "Switch anyway" })) return;
+  switchServer(m.url, m.token, fromSettings);
+}
+async function addServer(fromSettings) {
+  const name = await promptSheet({ title: "Name this machine", placeholder: "Mac", ok: "Next" });
+  if (!name) return;
+  const url = cleanUrl(await promptSheet({ title: `Address of ${name.trim()}`, value: "http://", placeholder: "http://host:8765", ok: "Next" }));
+  if (!url || url === "http://") return;
+  const token = await promptSheet({ title: `Token of ${name.trim()}`, placeholder: "On that machine: pocket-agent token" });
+  if (token === null) return;
+  const list = savedServers(), m = { name: name.trim(), url, token: token.trim() };
+  const at = list.findIndex(x => x.url === url);
+  if (at >= 0) list[at] = m; else list.push(m);
+  saveSettings();
+  useServer(m, fromSettings);
+}
+function serverMenu(m, fromSettings) {
+  const inUse = m.url === settings.server;
+  menuSheet(m.name, [
+    { label: "Rename", icon: "pencil", run: async () => { const n = await promptSheet({ title: "Name this machine", value: m.name }); if (n) { m.name = n.trim(); saveSettings(); renderConnFoot(); } chooseServer(fromSettings); } },
+    { label: "Change token", icon: "key", run: async () => {
+      const t = await promptSheet({ title: `Token of ${m.name}`, value: m.token, placeholder: "On that machine: pocket-agent token" });
+      if (t !== null) { m.token = t.trim(); saveSettings(); if (inUse) return switchServer(m.url, m.token, fromSettings); }
+      chooseServer(fromSettings);
+    } },
+    !inUse && { label: "Remove", icon: "trash", danger: true, run: () => { settings.servers = savedServers().filter(x => x !== m); saveSettings(); chooseServer(fromSettings); } },
+  ]);
+}
+function chooseServer(fromSettings) {
+  const b = sheet.open(`<h2>Where Claude runs</h2><div class="sub">Chats live with the machine they were made on: switching shows that machine's chats.</div><div id="srv-opts"></div>`);
+  const box = b.querySelector("#srv-opts");
+  const row = (on, title, sub, run, more) => {
+    const el = h(`<div class="opt ${on ? "on" : ""}" role="button" tabindex="0">${icon(on ? "ccheck" : "circle")}<div class="ot"><div></div><div class="od"></div></div>${more ? `<button class="icon-btn srv-more" aria-label="Rename or remove" data-icon="dots"></button>` : ""}</div>`);
+    el.querySelector(".ot div").textContent = title; el.querySelector(".od").textContent = sub;
+    el.onclick = () => { sheet.close(true); run(); };
+    if (more) el.querySelector(".srv-more").onclick = e => { e.stopPropagation(); sheet.close(true); more(); };
+    box.append(el);
+  };
+  if (native) row(!settings.server, "This phone", "Pocket Agent's own Linux, built into the app", () => { if (settings.server) switchServer("", "", fromSettings); });
+  for (const m of savedServers()) row(m.url === settings.server, m.name, hostLabel(m.url), () => useServer(m, fromSettings), () => serverMenu(m, fromSettings));
+  row(false, "Add a machine…", "A Pocket Agent server on a computer, or in Termux", () => addServer(fromSettings));
 }
 /** Address + token of another Pocket Agent server (defaults to Termux on this phone); remembered for next time. */
 async function askOtherServer(title, text) {

@@ -16,6 +16,13 @@ conn.on("retrying", async n => {
   else if (standalone) showBanner(state.updating ? "Installing the update… back in a few seconds." : "Restarting Pocket Agent's server…");
   else showBanner(native ?"Starting the Claude server in Termux… If this takes long, open Termux and run: pocket-agent start" : "Can't reach the server.", native ? "Open Termux" : null, () => nativeCall("openTermux"));
 });
+/** The drawer's foot: which machine Claude runs on; tap to switch. Filled before connecting too, so it always works. */
+function renderConnFoot(hello) {
+  const where = hello && !settings.server && hello.mode !== "standalone" ? hello.host : serverLabel();
+  $("#conn-foot").innerHTML = `${icon("wifi")}<span>${esc(where)} · ${hello ? "server " + esc(hello.version) : "connecting…"}</span><span class="foot-switch">Switch</span>`;
+}
+$("#conn-foot").onclick = () => { closeDrawer(); chooseServer(); };
+renderConnFoot();
 async function pairServer() {
   const tok = await promptSheet({ title: "Pair with the server", placeholder: "Paste the token here", ok: "Pair",
     value: "" });
@@ -34,8 +41,7 @@ async function onConnected() {
     commands: hello.commands || [], models: hello.models || [], account: hello.account });
   for (const i of hello.live || []) { state.liveInfo[i.sessionId] = i; if (i.activity) state.activity[i.sessionId] = i.activity; }
   state.pending = (hello.live || []).flatMap(i => i.pending || []);
-  const where = hello.mode === "standalone" ? "This phone" : settings.server ? settings.server.replace(/^https?:\/\//, "") : hello.host;
-  $("#conn-foot").innerHTML = `${icon("wifi")}<span>${esc(where)} · server ${esc(hello.version)}</span>`;
+  renderConnFoot(hello);
   await refreshSessions();
   const cur = state.current;
   if (cur && !cur.isNew) await openSession(cur.sessionId, { keepScroll: true });
