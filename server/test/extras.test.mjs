@@ -109,7 +109,7 @@ try {
     const cmd = await new Promise(res => { ws.on("message", raw => { const m = JSON.parse(raw); if (m.t === "reply" && m.id === 1) res(m.command); }); ws.send(JSON.stringify({ t: "termux.installCommand", id: 1 })); });
     ws.close();
     const url = cmd.match(/'(http[^']+)'/)[1], code = new URL(url).searchParams.get("code");
-    ok("install command is a one-liner with a code, not the token", /^curl -fsSL '.+' \| bash$/.test(cmd) && !cmd.includes(token));
+    ok("install command upgrades Termux, then runs the script with a code, not the token", /^apt-get update && apt-get -y .* full-upgrade && curl -fsSL '.+' \| bash$/.test(cmd) && !cmd.includes(token));
     const script = await (await fetch(url)).text();
     ok("installer script has this server and the code filled in", script.includes(`APP="\${PA_APP:-http://127.0.0.1:8769}"`) && script.includes(code));
     fs.writeFileSync(path.join(T, "install.sh"), script);
