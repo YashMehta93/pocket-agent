@@ -294,7 +294,8 @@ final class Linux {
                 int b;
                 while ((b = in.read()) != -1) {
                     synchronized (out) { out.append((char) b); }
-                    Matcher m = Pattern.compile("(https://\\S+oauth/authorize\\S+)").matcher(out);
+                    // Match only once the URL is complete (followed by whitespace): output arrives byte by byte.
+                    Matcher m = Pattern.compile("(https://\\S+oauth/authorize\\S+)\\s").matcher(out);
                     if (url[0] == null && m.find()) { synchronized (url) { url[0] = m.group(1); url.notifyAll(); } }
                 }
             } catch (IOException ignored) {}

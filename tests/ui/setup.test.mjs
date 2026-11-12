@@ -34,7 +34,8 @@ async function boot({ installed = false, loggedIn = false, hash = "" } = {}) {
                 .forEach(([step, pct, detail], i) => setTimeout(() => { if (step === "done") st.installed = true; w.paNative.emit("runtime", JSON.stringify({ step, pct, detail, label: step })); }, 40 * (i + 1)));
               return;
             case "runtime.auth": return reply(id, { loggedIn: st.loggedIn });
-            case "runtime.login.start": return reply(id, { url: "https://claude.com/cai/oauth/authorize?code=true" });
+            case "runtime.login.start": return reply(id, { url: "https://claude.com/cai/oauth/authorize?code=true&client_id=x" });
+            case "clipboard.set": return reply(id, true);
             case "url.open": return reply(id, true);
             case "runtime.login.code": st.loggedIn = true; return reply(id, { loggedIn: true, email: "me@example.com" });
             case "runtime.start": case "runtime.restart": return reply(id, true);

@@ -186,7 +186,14 @@ async function afterInstall() {
 let loginUrl = null;
 $("#open-login").onclick = async () => {
   $("#open-login").disabled = true; $("#open-login").textContent = "Opening…";
-  try { const r = await rpc("runtime.login.start"); loginUrl = r.url; await rpc("url.open", { url: loginUrl }); $("#open-login").textContent = "Open sign-in page again"; }
+  try {
+    const r = await rpc("runtime.login.start"); loginUrl = r.url;
+    await rpc("url.open", { url: loginUrl }).catch(() => {});
+    $("#open-login").textContent = "Open sign-in page again";
+    // fallback if the browser didn't open (or to use another browser)
+    $("#l-msg").innerHTML = `<div class="sub" style="margin-top:12px">Page didn't open? <button class="linkbtn" id="copy-link" style="padding:0">Copy the link</button> and open it in your browser.</div>`;
+    $("#copy-link").onclick = () => rpc("clipboard.set", { text: loginUrl }).then(() => toast("Link copied")).catch(e => toast(e.message));
+  }
   catch (e) { $("#l-msg").innerHTML = `<div class="err-box">${esc(e.message)}</div>`; $("#open-login").textContent = "Open sign-in page"; }
   $("#open-login").disabled = false;
 };
