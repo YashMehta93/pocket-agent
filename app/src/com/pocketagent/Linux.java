@@ -139,10 +139,12 @@ final class Linux {
         return p.exitValue();
     }
     /** Runs a command and returns its output (for small commands). */
-    static String capture(Context c, String cmd, long timeoutMs) throws Exception {
+    static String capture(Context c, String cmd, long timeoutMs) throws Exception { return capture(c, cmd, timeoutMs, false).optString("output"); }
+    /** Runs a command; returns { code, output }. fakeRoot only for package management (apk). */
+    static JSONObject capture(Context c, String cmd, long timeoutMs, boolean fakeRoot) throws Exception {
         StringBuilder sb = new StringBuilder();
-        run(c, cmd, false, s -> sb.append(s).append('\n'), timeoutMs);
-        return sb.toString();
+        int code = run(c, cmd, fakeRoot, s -> { synchronized (sb) { sb.append(s).append('\n'); } }, timeoutMs);
+        return new JSONObject().put("code", code).put("output", sb.toString());
     }
     private static void pump(InputStream in, LineSink sink) {
         try (InputStream i = in) {

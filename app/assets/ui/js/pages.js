@@ -147,6 +147,7 @@ function openSettings() {
       <div class="set-row"><div class="l">Get updates from<small id="u-src">${esc(state.updateChannel || "Not set: updates come with new app versions")}</small></div><button class="chip" id="u-set">${state.updateChannel ? "Change" : "Set"}</button></div>
       <div class="set-row"><div class="l">Check for updates<small id="u-status">New server code and app screens</small></div><button class="chip" id="u-check">Check</button></div>
       <div class="set-row"><div class="l">Import chats<small>Copy chats from another Pocket Agent server, like Termux</small></div><button class="chip" id="i-chats">Import</button></div>
+      ${standalone ? `<div class="set-row"><div class="l">Move everything from Termux<small>Projects, chats, memory, skills, settings and build tools, into this app</small></div><button class="chip" id="m-open">Open</button></div>` : ""}
       ${native ? `<h3>Phone control</h3><div id="phone-ctl"><div class="set-row"><div class="l">Checking…</div></div></div>` : ""}
       <h3>Account</h3>
       <div class="set-row"><div class="l">${esc(state.account?.email || state.account?.organization || "Claude account")}<small>${esc(state.account?.subscriptionType || state.account?.apiKeySource || "Signed in through Claude Code")}</small></div></div>
@@ -174,6 +175,7 @@ function openSettings() {
       try { await conn.call("update.channel", src); state.updateChannel = src.url; toast("Update source saved"); openSettingsRefresh(); } catch (e) { toast(e.message); }
     };
     body.querySelector("#u-check").onclick = () => checkServerUpdate(true);
+    body.querySelector("#m-open")?.addEventListener("click", () => openMigration());
     body.querySelector("#i-chats").onclick = async () => {
       const src = await askOtherServer("Import chats from", "Copies that server's chats here. Nothing is deleted on either side; their project folders are created here empty.");
       if (!src) return;
@@ -260,6 +262,49 @@ async function applyServerUpdate() {
   showBanner("Updating… Pocket Agent restarts when no reply is in progress.");
   try { await conn.call("update.apply"); } catch (e) { hideBanner(); toast(e.message, 5000); }
 }
+// ───── move from Termux ─────
+let migrationJob = null;
+conn.on("migrate", m => { migrationJob = m.job; renderMigration(); });
+const MIGRATION_STEPS = [["download", "Download from Termux"], ["files", "Projects, chats, memory, skills, settings"], ["paths", "Map old Termux paths to your home folder"],
+  ["tools", "Java and Android build tools"], ["deps", "Project dependencies"], ["done", "Done"]];
+function openMigration() {
+  page.open("Move from Termux", async body => {
+    body.innerHTML = `<div class="settings" id="mig">
+      <p style="color:var(--muted);margin:14px 0">Copies your Termux home into this app: <b>~/projects</b>, the reminder app, Claude's chats, memory, skills, plugins and settings, and SSH keys. Then it installs Java and the Android build tools so the app can build itself. Nothing in Termux is changed or deleted.</p>
+      <p style="color:var(--muted);margin:0 0 14px">Termux needs to be running its server for this (<code>pocket-agent start</code>). Takes 5 to 15 minutes; keep the app open.</p>
+      <div id="mig-steps"></div><pre class="log" id="mig-log" style="font:11px/1.5 var(--mono);color:var(--muted);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px;max-height:40vh;overflow:auto;white-space:pre-wrap" hidden></pre>
+      <div id="mig-result"></div>
+      <div class="btns"><button class="btn primary" id="mig-start">Start the move</button></div></div>`;
+    body.querySelector("#mig-start").onclick = async () => {
+      const src = await askOtherServer("Move from", "The Termux server on this phone.");
+      if (!src) return;
+      try { migrationJob = (await conn.call("migrate.run", src)).job; renderMigration(); } catch (e) { toast(e.message, 6000); }
+    };
+    try { migrationJob = (await conn.call("migrate.status")).job; } catch {}
+    renderMigration();
+  });
+}
+function renderMigration() {
+  const box = document.getElementById("mig"); if (!box || !migrationJob) return;
+  const j = migrationJob, idx = MIGRATION_STEPS.findIndex(x => x[0] === j.step);
+  const started = j.running || j.done || j.error;
+  box.querySelector("#mig-steps").innerHTML = started ? MIGRATION_STEPS.map(([id, name], i) => {
+    const st = j.done || i < idx ? "done" : i === idx ? (j.error ? "err" : "run") : "wait";
+    return `<div class="set-row"><div class="l" style="${st === "wait" ? "color:var(--faint)" : ""}">${esc(name)}</div><span>${st === "run" ? '<span class="spark"></span>' : st === "done" ? icon("check") : st === "err" ? icon("x") : ""}</span></div>`;
+  }).join("") : "";
+  const log = box.querySelector("#mig-log");
+  if (started) { log.hidden = false; log.textContent = (j.lines || []).join("\n"); log.scrollTop = log.scrollHeight; }
+  const btn = box.querySelector("#mig-start");
+  btn.hidden = !!j.running || !!j.done; btn.textContent = j.error ? "Try again" : "Start the move";
+  const res = box.querySelector("#mig-result");
+  if (j.error) res.innerHTML = `<div class="note err">${esc(j.error)}</div>`;
+  else if (j.done) {
+    const w = j.summary?.warnings || [];
+    res.innerHTML = `<div class="note" style="font-family:var(--sans)">Moved. Your projects are in <b>~/projects</b>, chats are in the list, and old Termux paths point here.${j.summary?.tools ? " The app can now build itself (<code>./build.sh</code>)." : ""}</div>${w.map(x => `<div class="note err">${esc(x)}</div>`).join("")}`;
+    refreshSessions();
+  }
+}
+
 function openSettingsRefresh() { page.close(); openSettings(); }
 function seg(root, sel, fn) { root.querySelectorAll(sel + " button").forEach(b => b.onclick = () => { root.querySelectorAll(sel + " button").forEach(x => x.classList.remove("on")); b.classList.add("on"); fn(b.dataset.v); }); }
 async function setDefaults(patch) {

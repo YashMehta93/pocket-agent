@@ -37,9 +37,11 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 | `update.channel` | `url, token` (empty url = none) | `channel` |
 | `update.check` | (`url, token`, default: the saved channel) | `available, remote, local, channel` |
 | `update.apply` | (same) | `updated, depsChanged`; the server then restarts when idle |
+| `migrate.run` | `url, token` of the Termux server | `job`; progress arrives as `{ t: "migrate", job }` events (built-in mode only) |
+| `migrate.status` | | `job` |
 | `native.call` | `method, params, timeoutMs?` | `result` from the phone (server → phone RPC, see below) |
 
-Token-protected HTTP routes another server pulls from (see `server/src/transfer.js`): `GET /bundle/info`, `GET /bundle.tgz` (server + UI code), `GET /export/sessions.tgz` (chats), `GET /apk/info`, `GET /apk/download`.
+Token-protected HTTP routes another server pulls from (see `server/src/transfer.js`): `GET /bundle/info`, `GET /bundle.tgz` (server + UI code), `GET /export/sessions.tgz` (chats), `GET /export/migration.tgz` (the whole home, for Move from Termux), `GET /apk/info`, `GET /apk/download`.
 
 ## Events
 

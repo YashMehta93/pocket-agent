@@ -81,20 +81,24 @@ export async function importSessions({ url, token }) {
 
 // ───── update channel ─────
 /** Content hash of the server + UI code (same file set on every server). */
-export async function bundleInfo() {
+export async function bundleInfo(root = ROOT) {
   const h = crypto.createHash("sha256");
   const files = [];
   for (const p of BUNDLE_PATHS) {
-    const full = path.join(ROOT, p);
+    const full = path.join(root, p);
     try { if ((await fsp.stat(full)).isDirectory()) for (const f of await walk(full)) files.push(path.join(p, f)); else files.push(p); } catch {}
   }
-  for (const f of files.filter(f => !f.includes("node_modules")).sort()) { h.update(f + "\0"); h.update(await fsp.readFile(path.join(ROOT, f))); }
-  let version = ""; try { version = JSON.parse(await fsp.readFile(path.join(ROOT, "server/package.json"), "utf8")).version; } catch {}
+  for (const f of files.filter(f => !f.includes("node_modules")).sort()) { h.update(f + "\0"); h.update(await fsp.readFile(path.join(root, f))); }
+  let version = ""; try { version = JSON.parse(await fsp.readFile(path.join(root, "server/package.json"), "utf8")).version; } catch {}
   return { hash: h.digest("hex").slice(0, 16), version, uiVersion: undefined };
 }
 export const bundleStream = () => tarStream(ROOT, BUNDLE_PATHS);
 
-export async function checkUpdate({ url, token }) {
+/** Source label for messages: a server URL or a local folder. */
+export const sourceName = ch => ch.path || ch.url;
+export async function checkUpdate(ch) {
+  if (ch.path) { const remote = await bundleInfo(ch.path), local = await bundleInfo(); return { available: remote.hash !== local.hash, remote, local }; }
+  const { url, token } = ch;
   const r = await fetch(withToken(url, "/bundle/info", token));
   if (!r.ok) throw new Error(`${new URL(url).origin} answered ${r.status}${r.status === 401 ? " (wrong token?)" : ""}`);
   const remote = await r.json(), local = await bundleInfo();
@@ -102,11 +106,13 @@ export async function checkUpdate({ url, token }) {
 }
 
 /** Replaces server + UI code with the other server's, installs changed dependencies, then restarts. */
-export async function applyUpdate({ url, token }, restart) {
+export async function applyUpdate(ch, restart) {
+  const { url, token } = ch;
   const tmp = await tmpDir("update");
   try {
     const tgz = path.join(tmp, "bundle.tgz");
-    await download(withToken(url, "/bundle.tgz", token), tgz);
+    if (ch.path) await new Promise((res, rej) => { const o = fs.createWriteStream(tgz); tarStream(ch.path, BUNDLE_PATHS).pipe(o).on("finish", res).on("error", rej); });
+    else await download(withToken(url, "/bundle.tgz", token), tgz);
     const x = path.join(tmp, "x"); await fsp.mkdir(x);
     await run("tar", ["xzf", tgz, "-C", x]);
     if (!fs.existsSync(path.join(x, "server/src/index.js"))) throw new Error("The update was incomplete");
@@ -123,7 +129,7 @@ export async function applyUpdate({ url, token }, restart) {
       // same marker format as the app's installer (Linux.java), so it won't redo this
       await fsp.writeFile(path.join(ROOT, "server/.deps-installed"), depsOf(ROOT)).catch(() => {});
     }
-    log("updated from", url, depsChanged ? "(dependencies changed)" : "");
+    log("updated from", sourceName(ch), depsChanged ? "(dependencies changed)" : "");
     setTimeout(restart, 600);
     return { updated: true, depsChanged };
   } finally { fsp.rm(tmp, { recursive: true, force: true }).catch(() => {}); }

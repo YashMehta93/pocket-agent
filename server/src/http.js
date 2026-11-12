@@ -12,8 +12,9 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { WebSocketServer } from "ws";
-import { VERSION, TOKEN, UI_DIR, APK_PATH, APK_INFO, CLAUDE_DIR, safeEq, log } from "./config.js";
+import { VERSION, TOKEN, UI_DIR, APK_PATH, APK_INFO, CLAUDE_DIR, prefs, safeEq, log } from "./config.js";
 import { bundleInfo, bundleStream, tarStream } from "./transfer.js";
+import { migrationStream } from "./migrate.js";
 import { clients, sseClients, nativeResult } from "./hub.js";
 import { toNative } from "./notify.js";
 import { toolDetail } from "./activity.js";
@@ -39,12 +40,15 @@ export function createServer() {
     if (url.pathname === "/bundle/info") return json(res, 200, await bundleInfo());
     if (url.pathname === "/apk/info") { try { return json(res, 200, JSON.parse(await fsp.readFile(APK_INFO, "utf8"))); } catch { return json(res, 200, { versionCode: 0 }); } }
     if (url.pathname === "/bundle.tgz") { res.writeHead(200, { "content-type": "application/gzip" }); return bundleStream().pipe(res); }
+    if (url.pathname === "/export/migration.tgz") { res.writeHead(200, { "content-type": "application/gzip" }); return (await migrationStream()).pipe(res); }
     if (url.pathname === "/export/sessions.tgz") { res.writeHead(200, { "content-type": "application/gzip" }); return tarStream(CLAUDE_DIR, ["projects"]).pipe(res); }
     if (url.pathname === "/apk/download") {
       try {
-        const st = await fsp.stat(APK_PATH);
+        // the APK built in a local update folder (app's built-in server) or next to this server (Termux)
+        const apk = prefs.updateChannel?.path ? path.join(prefs.updateChannel.path, "build/pocket-agent.apk") : APK_PATH;
+        const st = await fsp.stat(apk);
         res.writeHead(200, { "content-type": "application/vnd.android.package-archive", "content-length": st.size });
-        return fs.createReadStream(APK_PATH).pipe(res);
+        return fs.createReadStream(apk).pipe(res);
       } catch { return json(res, 404, { error: "no APK built" }); }
     }
     if (url.pathname === "/permission" && req.method === "POST") {

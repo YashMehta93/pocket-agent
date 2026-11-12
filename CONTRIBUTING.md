@@ -2,6 +2,10 @@
 
 Read `docs/ARCHITECTURE.md` first (5 minutes). It explains the three parts and how a message flows.
 
+## Where to work
+
+Pocket Agent can develop itself. After Settings → *Move everything from Termux*, the app's built-in Linux has the repo at `~/projects/pocket-agent`, plus Node, git, Java and the Android build tools. Run scripts with `bash` (`bash build.sh`), because their shebangs still point at Termux. The update source is the local repo: server and UI edits ship with *Check for updates*, new APKs with the update banner.
+
 ## Setup (Termux on Android)
 
 ```bash
@@ -55,6 +59,7 @@ npm run test:server      # protocol end-to-end, includes a real Claude turn
 npm run test:native      # server ↔ phone channel with a fake phone (fast, no Claude)
 npm run test:setup       # first-run setup screen with a fake native bridge
 npm run test:tar         # the app's tar extractor vs GNU tar on the real Alpine archive
+npm run test:migrate     # Move from Termux end to end, into a throwaway home (needs the Termux server)
 npm run test:transfer    # chat import + update channel between two servers (needs the Termux server running)
 ```
 

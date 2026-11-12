@@ -40,7 +40,7 @@ import java.util.Locale;
  */
 final class Rpc {
     /** Bump when methods are added; the server/UI can check it via "capabilities". */
-    static final int API_VERSION = 2;   // 2: runtime.* (built-in Linux) and mode.set
+    static final int API_VERSION = 3;   // 2: runtime.* (built-in Linux) and mode.set; 3: runtime.exec {root} returns {code, output}
 
     interface Done { void ok(Object result); void err(String message); }
 
@@ -198,7 +198,8 @@ final class Rpc {
                     case "runtime.auth": d.ok(Linux.authStatus(c)); return;
                     case "runtime.login.start": d.ok(new JSONObject().put("url", Linux.loginStart(c))); return;
                     case "runtime.login.code": d.ok(Linux.loginCode(c, p.optString("code"))); return;
-                    case "runtime.exec": d.ok(Linux.capture(c, p.optString("cmd"), p.optLong("timeoutMs", 60_000))); return;
+                    // { cmd, timeoutMs, root }: root runs under proot fake-root (needed by apk); returns { code, output }
+                    case "runtime.exec": d.ok(Linux.capture(c, p.optString("cmd"), p.optLong("timeoutMs", 60_000), p.optBoolean("root", false))); return;
                     default: d.err("Unknown method " + m);
                 }
             } catch (Exception e) { d.err(String.valueOf(e.getMessage())); }

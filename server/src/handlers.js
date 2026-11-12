@@ -8,7 +8,8 @@ import { VERSION, HOME, UI_DIR, APK_INFO, prefs, savePrefs, cache } from "./conf
 import { broadcastAll, callNative } from "./hub.js";
 import { live, getLive, openSession, busyElsewhere, runClaude } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
-import { importSessions, checkUpdate, applyUpdate } from "./transfer.js";
+import { importSessions, checkUpdate, applyUpdate, sourceName } from "./transfer.js";
+import { runMigration, migrationStatus } from "./migrate.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
 
@@ -25,7 +26,7 @@ export const handlers = {
   async hello() {
     return { version: VERSION, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
       defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account,
-      updateChannel: prefs.updateChannel?.url || null, mode: process.env.PA_MODE || "server",
+      updateChannel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null, mode: process.env.PA_MODE || "server",
       live: [...live.values()].map(s => s.info()) };
   },
 
@@ -99,10 +100,18 @@ export const handlers = {
   /** Copy chats from another Pocket Agent server (e.g. Termux) into this one. */
   async "sessions.import"({ url, token }) { const r = await importSessions({ url, token }); changed(); return r; },
   /** Where this server gets code/UI updates from ({url, token}, or null to stop). */
-  async "update.channel"({ url, token }) { prefs.updateChannel = url ? { url: url.replace(/\/$/, ""), token } : null; savePrefs(); return { channel: prefs.updateChannel?.url || null }; },
-  async "update.check"(m) { const ch = m.url ? m : prefs.updateChannel; if (!ch) return { available: false, channel: null }; return { ...(await checkUpdate(ch)), channel: ch.url }; },
+  /** { url, token } of a server, { path } of a local Pocket Agent folder, or nothing to clear. */
+  async "update.channel"({ url, token, path: p }) {
+    prefs.updateChannel = p ? { path: p } : url ? { url: url.replace(/\/$/, ""), token } : null; savePrefs();
+    return { channel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null };
+  },
+  async "update.check"(m) { const ch = m.url || m.path ? m : prefs.updateChannel; if (!ch) return { available: false, channel: null }; return { ...(await checkUpdate(ch)), channel: sourceName(ch) }; },
   /** Pulls the update, then restarts once no chat is mid-reply (SIGUSR2, see index.js). */
-  async "update.apply"(m) { const ch = m.url ? m : prefs.updateChannel; if (!ch) throw new Error("No update source set"); return await applyUpdate(ch, () => process.kill(process.pid, "SIGUSR2")); },
+  async "update.apply"(m) { const ch = m.url || m.path ? m : prefs.updateChannel; if (!ch) throw new Error("No update source set"); return await applyUpdate(ch, () => process.kill(process.pid, "SIGUSR2")); },
+
+  /** "Move from Termux": runs in the background; progress arrives as { t: "migrate", job } events. */
+  async "migrate.run"({ url, token }) { return { job: runMigration({ url, token }) }; },
+  async "migrate.status"() { return { job: migrationStatus() }; },
 
   // ───── the app itself ─────
   /** Version of the newest built APK, so the app can offer a one-tap update. */
@@ -111,7 +120,8 @@ export const handlers = {
     catch {}
     // No APK built here (the app's built-in server): ask the update source, and download from it directly.
     const ch = prefs.updateChannel;
-    if (ch) try {
+    if (ch?.path) try { const info = JSON.parse(fs.readFileSync(path.join(ch.path, "build/pocket-agent.json"), "utf8")); return { ...info, url: "/apk/download" }; } catch {}
+    if (ch?.url) try {
       const r = await fetch(`${ch.url}/apk/info?token=${encodeURIComponent(ch.token || "")}`);
       if (r.ok) { const info = await r.json(); if (info.versionCode) return { ...info, url: `${ch.url}/apk/download?token=${encodeURIComponent(ch.token || "")}` }; }
     } catch {}
