@@ -52,6 +52,7 @@ final class Linux {
     private static volatile boolean installing = false;
     private static volatile Process server;
     private static volatile boolean serverWanted = false;
+    private static Thread supervisor;   // at most one; guarded by Linux.class
     private static volatile Process login;
 
     private Linux() {}
@@ -260,9 +261,11 @@ final class Linux {
     // ───── server supervision ─────
     static synchronized void startServer(Context c) {
         serverWanted = true;
-        if (server != null && server.isAlive()) return;
+        // One supervisor only: a second one would fail to bind the port, retry forever, and overwrite
+        // `server` with its dead process, so restartServer() and serverAlive() would stop working.
+        if (supervisor != null && supervisor.isAlive()) return;
         if (!installed(c)) return;
-        new Thread(() -> {
+        supervisor = new Thread(() -> {
             long backoff = 1000;
             while (serverWanted) {
                 try {
@@ -271,6 +274,7 @@ final class Linux {
                         + " --host 127.0.0.1 --claude /root/.local/bin/claude --token " + Prefs.token(c), false,
                         "PA_SUPERVISED=1", "PA_DATA=/root/.pocket-agent", "PA_MODE=standalone");
                     pb.redirectOutput(ProcessBuilder.Redirect.appendTo(serverLog(c)));
+                    killStrays(c);
                     long t0 = System.currentTimeMillis();
                     Process p = pb.start();
                     server = p;
@@ -283,8 +287,34 @@ final class Linux {
                 try { Thread.sleep(backoff); } catch (InterruptedException ie) { break; }
                 backoff = Math.min(backoff * 2, 30_000);
             }
-        }, "pa-server").start();
+        }, "pa-server");
+        supervisor.start();
     }
+
+    /**
+     * Stops servers this supervisor doesn't own: left from an earlier run of the app (Android killed the app
+     * but not yet its children), they'd hold the port so ours can't start. Same app user, so we may kill them.
+     */
+    private static void killStrays(Context c) {
+        String mark = "exec node src/index.js --port " + PORT + " ";
+        List<Integer> pids = new ArrayList<>();
+        File[] procs = new File("/proc").listFiles();
+        if (procs != null) for (File d : procs) {
+            int pid; try { pid = Integer.parseInt(d.getName()); } catch (NumberFormatException e) { continue; }
+            if (pid == android.os.Process.myPid()) continue;
+            try (FileInputStream in = new FileInputStream(new File(d, "cmdline"))) {
+                byte[] b = new byte[8192]; int n = in.read(b);
+                String cmd = n > 0 ? new String(b, 0, n, StandardCharsets.UTF_8).replace('\0', ' ') : "";
+                if (cmd.contains("libproot.so") && cmd.contains(mark)) pids.add(pid);
+            } catch (IOException ignored) {}
+        }
+        if (pids.isEmpty()) return;
+        log(c, "server: stopping a leftover server " + pids);
+        for (int pid : pids) try { Os.kill(pid, android.system.OsConstants.SIGTERM); } catch (Exception ignored) {}
+        for (int i = 0; i < 50 && anyAlive(pids); i++) try { Thread.sleep(100); } catch (InterruptedException e) { return; }
+        for (int pid : pids) try { Os.kill(pid, android.system.OsConstants.SIGKILL); } catch (Exception ignored) {}
+    }
+    private static boolean anyAlive(List<Integer> pids) { for (int p : pids) if (new File("/proc/" + p).exists()) return true; return false; }
     static void stopServer() { serverWanted = false; Process p = server; if (p != null) p.destroy(); }
     static void restartServer() { Process p = server; if (p != null) p.destroy(); }   // the supervisor restarts it
     static boolean serverAlive() { Process p = server; return p != null && p.isAlive(); }
