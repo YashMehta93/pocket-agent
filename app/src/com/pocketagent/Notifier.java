@@ -17,6 +17,7 @@ import org.json.JSONObject;
  *   id                 string; "status" updates the persistent service notification
  *   channel            "status" | "approval" | "done" | any id; or { id, name, importance: min|low|default|high }
  *   title, text, subText, bigText
+ *   group              notification group (default: one per id, so Android never bundles them)
  *   ongoing, onlyAlertOnce, silent, autoCancel (default: !ongoing)
  *   chronometerStart   ms timestamp: shows a running timer from then
  *   onlyWhenBackground skip while the app is open on screen
@@ -32,8 +33,10 @@ final class Notifier {
 
     static Notification build(Context c, JSONObject s) {
         String channel = ensureChannel(c, s.opt("channel"));
-        Notification.Builder b = new Notification.Builder(c, channel).setSmallIcon(R.drawable.ic_notif);
-        if (s.has("title")) b.setContentTitle(s.optString("title"));
+        Notification.Builder b = new Notification.Builder(c, channel).setSmallIcon(R.drawable.ic_notif)
+            // A group of its own: otherwise Android bundles the app's notifications together, and a bundled
+            // approval hides its Allow/Deny buttons until the bundle is expanded.
+            .setGroup(s.optString("group", "pa:" + s.optString("id", "")));        if (s.has("title")) b.setContentTitle(s.optString("title"));
         if (s.has("text")) b.setContentText(s.optString("text"));
         if (s.has("subText")) b.setSubText(s.optString("subText"));
         String big = s.optString("bigText", s.optString("text", ""));

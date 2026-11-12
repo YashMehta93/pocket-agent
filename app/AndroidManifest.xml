@@ -68,12 +68,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <!-- Share text, links, images and files to Claude from any app -->
-            <intent-filter android:label="Ask Claude">
+            <intent-filter android:label="Pocket Agent">
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
             </intent-filter>
-            <intent-filter android:label="Ask Claude">
+            <intent-filter android:label="Pocket Agent">
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />

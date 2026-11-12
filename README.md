@@ -29,7 +29,7 @@ Then **Check for updates** (or the banner) applies new versions: screen and serv
 - **Approvals**: allow or deny commands and edits in the app or straight from the notification; answer Claude's questions; approve plans.
 - **Every session in one place**: search, pin, rename, fork, edit and retry from any message, and continue a chat anywhere.
 - Models, effort, and permission modes (ask, auto-accept edits, plan, auto, bypass).
-- Attach photos and files, voice input, share from any app to "Ask Claude", and home-screen shortcuts.
+- Attach photos and files, voice input, share from any app to Pocket Agent, and home-screen shortcuts.
 - File browser for your projects. Phone storage is at `/sdcard`.
 - **Builds itself**: Settings → *Build Pocket Agent yourself* sets up Java and the Android build tools and clones this repo, so Claude can change and rebuild the app on the phone.
 - Optional phone control groundwork (accessibility, notification access), off until you enable it.
