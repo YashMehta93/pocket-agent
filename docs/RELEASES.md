@@ -19,6 +19,17 @@ GitHub enforces these: `master` and `v1.x` accept changes only through pull requ
 3. The owner reviews and merges it on GitHub. **Merging is the approval.**
 4. `git switch v1.x && git pull --ff-only`.
 
+## Who can release
+
+Only the owner approves code into `v1.x` and `master`, and only the owner cuts releases. Four layers make sure of it:
+
+1. **Approval**: `v1.x` and `master` need a pull request approved by the owner (`.github/CODEOWNERS`), and pushing new commits after an approval needs approving again. The owner merges their own PRs with the admin bypass.
+2. **Release tags**: only the owner can create, move or delete `v*` tags (a GitHub ruleset), so nobody else can publish a release.
+3. **Immutable releases**: a published release's files can't be changed afterwards.
+4. **Signed code** (the one that protects phones even if GitHub is compromised): `release.sh` signs `bundle.tgz` with `release-key.pem` and uploads `bundle.sig`. Apps install release code only if it's signed, for that exact tag, by a key in `server/trusted-keys.json`. That file ships with the app, and changing it needs the owner's approval like any other code. APKs are already protected the same way by Android: an update must be signed with `pocket-agent.keystore`.
+
+To trust another person's releases later: they run `node scripts/release-key.mjs new <github-name>` on their phone and open a PR with the changed `server/trusted-keys.json`; the owner merges it. To stop trusting a key, remove it the same way.
+
 ## Personal versions: `me/<github-name>`
 
 Everyone who builds Pocket Agent on their phone (Settings → *Build Pocket Agent yourself*) gets their own branch, `me/<github-name>`, made from `v1.x`. Their app updates from their own copy of the code, so it runs exactly their version. The personal branches and the version line stay separate:
@@ -71,4 +82,6 @@ When `2.0.0` is ready on `master` (merged from feature PRs):
 
 ## Keys
 
-Every release is signed with `pocket-agent.keystore`. It's ignored by git; keep it backed up and private. Without it, existing installs can never be updated.
+Two private files, both ignored by git, sign every release; keep both backed up somewhere private (a password manager, not phone storage):
+- `pocket-agent.keystore` signs the APK. Without it, existing installs can never be updated.
+- `release-key.pem` (from `node scripts/release-key.mjs new <name>`) signs the code. Without it, apps refuse new releases until an APK update brings a new trusted key. The app's phone-storage backups never include it.

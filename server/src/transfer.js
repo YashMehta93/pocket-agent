@@ -9,10 +9,11 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { CLAUDE_DIR, UI_DIR, DATA, prefs, log } from "./config.js";
+import { SIG_NAME, trustedKeys, verifyBundle } from "./signing.js";
 
 /** Repo / install root: ~/projects/pocket-agent in Termux, /opt/pocket-agent in the app. */
 export const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
-const BUNDLE_PATHS = ["VERSION", "server/src", "server/bin", "server/devtools", "server/package.json", "server/package-lock.json", "app/assets/ui"];
+const BUNDLE_PATHS = ["VERSION", "server/src", "server/bin", "server/devtools", "server/package.json", "server/package-lock.json", "server/trusted-keys.json", "app/assets/ui"];
 
 // ───── helpers ─────
 function run(cmd, args, opts = {}) {
@@ -214,7 +215,17 @@ export async function applyUpdate(ch, restart) {
   try {
     const tgz = path.join(tmp, "bundle.tgz");
     if (ch.path) { const src = await folderSource(ch.path); await new Promise((res, rej) => { const o = fs.createWriteStream(tgz); tarStream(src.root, BUNDLE_PATHS).pipe(o).on("finish", res).on("error", rej); }); }
-    else if (ch.github) await fsp.writeFile(tgz, Buffer.from(await (await releaseAsset(ch, await pickRelease(ch), "bundle.tgz")).arrayBuffer()));
+    else if (ch.github) {
+      // Release code is installed only if signed by a key this app trusts (signing.js): the keys come
+      // from the code already installed, so nobody can swap in their own through a release.
+      const rel = await pickRelease(ch);
+      const code = Buffer.from(await (await releaseAsset(ch, rel, "bundle.tgz")).arrayBuffer());
+      let sig = null;
+      try { sig = await (await releaseAsset(ch, rel, SIG_NAME)).json(); } catch {}
+      const key = verifyBundle(code, rel.tag_name, sig, trustedKeys(ROOT));
+      log("release", rel.tag_name, "signed by", key.id);
+      await fsp.writeFile(tgz, code);
+    }
     else await download(withToken(url, "/bundle.tgz", token), tgz);
     const x = path.join(tmp, "x"); await fsp.mkdir(x);
     await run("tar", ["xzf", tgz, "-C", x]);

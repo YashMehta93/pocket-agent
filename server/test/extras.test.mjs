@@ -28,6 +28,7 @@ try {
   write(path.join(HOME, ".claude/settings.json"), "{}");
   write(path.join(HOME, "projects/app/main.js"), "console.log(1)\n");
   write(path.join(HOME, "projects/app/pocket-agent.keystore"), "key");
+  write(path.join(HOME, "projects/app/release-key.pem"), "-----BEGIN PRIVATE KEY-----");
   write(path.join(HOME, "projects/app/node_modules/big/index.js"), "x");
   write(path.join(HOME, ".config/pocket-agent/github-token"), "ghp_secret");
   write(path.join(process.env.PA_DATA, "prefs.json"), "{\"pinned\":[]}");
@@ -39,7 +40,7 @@ try {
   const names = sh(`tar tzf '${b.file}'`).split("\n");
   ok("backup written to phone storage", fs.existsSync(b.file) && b.bytes > 0, b.file.replace(T, ""));
   ok("backup has chats, memory, projects, keystore, prefs", [".claude/projects/-root/chat1.jsonl", ".claude/projects/-root/memory/MEMORY.md", "projects/app/main.js", "projects/app/pocket-agent.keystore", ".pocket-agent/prefs.json"].every(n => names.includes(n)));
-  ok("backup has no sign-in, tokens or node_modules", !names.some(n => /credentials|github-token|node_modules/.test(n)));
+  ok("backup has no sign-in, tokens, release-signing key or node_modules", !names.some(n => /credentials|github-token|node_modules|release-key/.test(n)));
   ok("backup is listed", (await listBackups()).some(x => x.file === b.file));
   fs.rmSync(path.join(HOME, ".claude/projects"), { recursive: true });
   await restoreBackup(b.file);

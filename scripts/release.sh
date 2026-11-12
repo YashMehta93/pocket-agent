@@ -10,6 +10,8 @@
 #   pocket-agent.json   { versionCode, versionName } of the APK
 #   bundle.tgz          server + UI code, for in-app "Check for updates"
 #   bundle.json         { hash } of that code
+#   bundle.sig          ed25519 signature of bundle.tgz with ./release-key.pem: apps refuse release code
+#                       not signed by a key in server/trusted-keys.json (server/src/signing.js)
 #
 # Needs a GitHub token with "Contents: read and write" on the repo, from $GITHUB_TOKEN or
 # ~/.config/pocket-agent/github-token (or `gh auth token` if the GitHub CLI is logged in).
@@ -44,8 +46,11 @@ echo "== build $TAG"
 PA_RELEASE=1 bash build.sh >/dev/null
 OUT=build/release; rm -rf "$OUT"; mkdir -p "$OUT"
 cp build/pocket-agent.apk build/pocket-agent.json "$OUT/"
-tar czf "$OUT/bundle.tgz" VERSION server/src server/bin server/devtools server/package.json server/package-lock.json app/assets/ui
+tar czf "$OUT/bundle.tgz" VERSION server/src server/bin server/devtools server/package.json server/package-lock.json server/trusted-keys.json app/assets/ui
 node --input-type=module -e 'import { bundleInfo } from "./server/src/transfer.js"; console.log(JSON.stringify(await bundleInfo(process.cwd())))' > "$OUT/bundle.json"
+# sign (a dry run without the key still packages, unsigned, for tests)
+if [ -f "${PA_RELEASE_KEY:-release-key.pem}" ]; then node scripts/release-key.mjs sign "$OUT/bundle.tgz" "$TAG" > "$OUT/bundle.sig"
+elif ! $DRY; then echo "No release-signing key (release-key.pem): apps would refuse this release. See docs/RELEASES.md."; exit 1; fi
 echo "   $TAG: $(ls "$OUT" | tr '\n' ' ')"
 $DRY && { echo "dry run: files in $OUT"; exit 0; }
 
@@ -62,7 +67,8 @@ git -c http.extraHeader="$AUTH" push -q origin "refs/tags/$TAG"   # only the tag
 echo "== release"
 NOTES=$(git log --pretty='- %s' ${PREV:+$PREV..}HEAD | head -40)
 # A version with a dash (1.1.0-beta.1) is a pre-release: only apps on the Beta track get it.
-BODY=$(node -e 'const v = process.argv[2]; console.log(JSON.stringify({ tag_name: process.argv[1], name: "Pocket Agent " + v, body: process.argv[3], prerelease: v.includes("-") }))' "$TAG" "$VERSION" "$NOTES")
+# Created as a draft, filled, then published (below).
+BODY=$(node -e 'const v = process.argv[2]; console.log(JSON.stringify({ tag_name: process.argv[1], name: "Pocket Agent " + v, body: process.argv[3], prerelease: v.includes("-"), draft: true }))' "$TAG" "$VERSION" "$NOTES")
 REL=$(api -X POST "https://api.github.com/repos/$REPO/releases" -d "$BODY")
 ID=$(echo "$REL" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).id))')
 for f in "$OUT"/*; do
@@ -71,6 +77,9 @@ for f in "$OUT"/*; do
   api -X POST -H "Content-Type: $ct" --data-binary "@$f" "https://uploads.github.com/repos/$REPO/releases/$ID/assets?name=$n" >/dev/null
   echo "   uploaded $n"
 done
+# Publish only once every file is there: apps never see a half-uploaded release, and with immutable
+# releases on, a published release can't be changed anymore.
+api -X PATCH "https://api.github.com/repos/$REPO/releases/$ID" -d '{"draft":false}' >/dev/null
 echo "done: https://github.com/$REPO/releases/tag/$TAG"
 
 # Bring master up to date with the release, through a pull request for the owner to merge.
