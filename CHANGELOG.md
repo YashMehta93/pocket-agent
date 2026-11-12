@@ -8,6 +8,7 @@ Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 - The repo is public: apps follow releases with no GitHub token, and new installs need no invite.
 - A notification when a new release is out, even with the app closed (checked every 6 hours, once per release).
 - Release tracks in Settings → Updates & chats: **Stable**, **Beta** (pre-releases, for testers) or **Pinned** to one version. **Versions** lists every release with its notes; pick any, older ones too (screens and server go back; the app stays newer).
+- **Signed releases**: apps install release code only if it's signed by a trusted key (`server/trusted-keys.json`), for that exact version. Releases are published only once all their files are uploaded.
 - `release.sh` publishes versions with a dash (`1.2.0-beta.1`) as pre-releases, and works from `v1.x` again (it compared `1.0.0` with `v1`).
 
 **Fixes**

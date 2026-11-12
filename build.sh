@@ -32,7 +32,7 @@ rm -rf "$OUT"; mkdir -p "$OUT/gen" "$OUT/classes" "$OUT/dex" "$OUT/assets" "$OUT
 echo "[1/7] bundle"
 cp -r "$APP/assets/." "$OUT/assets/"
 mkdir -p "$OUT/assets/server"
-cp -r server/src server/bin server/devtools server/package.json "$OUT/assets/server/"
+cp -r server/src server/bin server/devtools server/package.json server/trusted-keys.json "$OUT/assets/server/"
 cp VERSION "$OUT/assets/server/VERSION"
 [ -f server/package-lock.json ] && cp server/package-lock.json "$OUT/assets/server/"
 BUNDLE_HASH=$( (cd "$OUT/assets" && find server ui -type f | sort | xargs cat) | sha256sum | cut -c1-16)
