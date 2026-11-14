@@ -20,6 +20,7 @@
     <div class="search"><span data-icon="search"></span><input id="session-search" type="search" placeholder="Search chats" autocomplete="off"></div>
     <div class="filters" id="project-filters"></div>
     <div id="session-list" class="session-list"></div>
+    <button class="usage-meter" id="usage-meter" aria-label="Usage limits" hidden></button>
     <div class="drawer-foot" id="conn-foot"></div>
   </aside>
   <div id="scrim"></div>
@@ -32,6 +33,7 @@
         <div id="chat-title">New chat</div>
         <div id="chat-sub"></div>
       </div>
+      <button class="icon-btn usage-ring" id="btn-usage" aria-label="Usage" hidden></button>
       <button class="icon-btn" id="btn-files" aria-label="Files" data-icon="folder"></button>
       <button class="icon-btn" id="btn-more" aria-label="More" data-icon="dots"></button>
     </header>
@@ -50,6 +52,8 @@
 
     <footer id="composer">
       <div id="status-line" hidden></div>
+      <button id="usage-note" hidden></button>
+      <button id="agents-line" hidden></button>
       <button id="activity" class="activity" hidden aria-live="polite"></button>
       <div id="popup" hidden></div>
       <div id="attachments" hidden></div>
@@ -70,9 +74,9 @@
 
   <!-- Bottom sheet (approvals, pickers, menus) -->
   <div id="sheet-scrim"></div>
-  <section id="sheet" role="dialog" aria-modal="true"><div class="grip"></div><div id="sheet-body"></div></section>
+  <section id="sheet" role="dialog" aria-modal="true"><div class="grip"></div><button class="icon-btn sheet-x" id="sheet-x" aria-label="Close" data-icon="x"></button><div id="sheet-body"></div></section>
   <!-- Full-screen pages (settings, files, viewer) -->
-  <section id="page" hidden><header><button class="icon-btn" id="page-back" data-icon="back" aria-label="Back"></button><div id="page-title"></div><div id="page-actions"></div></header><div id="page-body"></div></section>
+  <section id="page" hidden><header><button class="icon-btn" id="page-back" data-icon="back" aria-label="Back"></button><div id="page-title"></div><div id="page-actions"></div></header><div id="page-body"></div><button class="page-back2" id="page-back2" aria-label="Back" data-icon="back"></button></section>
   <div id="toast"></div>
 </div>
 <script src="lib/marked.min.js"></script>
@@ -80,12 +84,15 @@
 <script src="lib/highlight.min.js"></script>
 <script src="js/core.js"></script>
 <script src="js/render.js"></script>
+<script src="js/steps.js"></script>
 <script src="js/base.js"></script>
 <script src="js/activity.js"></script>
 <script src="js/sessions.js"></script>
 <script src="js/composer.js"></script>
 <script src="js/approvals.js"></script>
 <script src="js/pages.js"></script>
+<script src="js/usage.js"></script>
+<script src="js/agents.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

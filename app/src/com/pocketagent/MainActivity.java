@@ -5,6 +5,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
@@ -68,10 +69,26 @@ public class MainActivity extends Activity {
     private String pendingIntentJson;
     private String loadedFrom = "";
 
+    /** The app's own pages: the bundled setup screen, the built-in server, or the server chosen in Settings (exact origin). */
+    private boolean isAppPage(Uri u) {
+        String scheme = u.getScheme() == null ? "" : u.getScheme();
+        if (scheme.equals("file")) return u.getPath() != null && u.getPath().startsWith("/android_asset/");
+        if (!scheme.equals("http") && !scheme.equals("https")) return false;
+        String origin = origin(u);
+        if (origin.equals("http://127.0.0.1:" + Linux.PORT)) return true;
+        String server = Prefs.server(this);
+        return server != null && !server.isEmpty() && origin.equals(origin(Uri.parse(server)));
+    }
+    private static String origin(Uri u) {
+        int port = u.getPort() > 0 ? u.getPort() : ("https".equals(u.getScheme()) ? 443 : 80);
+        return u.getScheme() + "://" + u.getHost() + ":" + port;
+    }
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        WebView.setWebContentsDebuggingEnabled(true);
+        // Remote debugging lets anything with USB debugging access drive the app (and its bridge): debug builds only.
+        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) WebView.setWebContentsDebuggingEnabled(true);
         web = new WebView(this);
         web.setBackgroundColor(Color.parseColor("#1f1e1c"));
         WebSettings s = web.getSettings();
@@ -86,8 +103,9 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
                 Uri u = r.getUrl();
-                String host = u.getHost() == null ? "" : u.getHost();
-                if (host.equals("127.0.0.1") || u.getScheme().equals("file") || Prefs.server(MainActivity.this).contains(host)) return false;
+                // Only the app's own pages load here (this WebView carries the PA bridge); every other link,
+                // including other local servers such as a dev server, opens in the browser, where Back works.
+                if (isAppPage(u)) return false;
                 try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception ignored) {}
                 return true;
             }
@@ -359,7 +377,8 @@ public class MainActivity extends Activity {
                     ContentValues v = new ContentValues();
                     v.put(MediaStore.Images.Media.DISPLAY_NAME, "pocket-agent-" + System.currentTimeMillis() + ".jpg");
                     v.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-                    v.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Pocket Agent");
+                    // RELATIVE_PATH is an Android 10+ column; older versions reject the insert ("Camera not available").
+                    if (Build.VERSION.SDK_INT >= 29) v.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Pocket Agent");
                     photoUri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v);
                     startActivityForResult(new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT, photoUri), REQ_PHOTO);
                 } catch (Exception e) { toast("Camera not available"); }
@@ -372,10 +391,20 @@ public class MainActivity extends Activity {
                     getWindow().setStatusBarColor(color);
                     getWindow().setNavigationBarColor(color);
                     web.setBackgroundColor(color);
-                    WindowInsetsController c = getWindow().getInsetsController();
-                    if (c != null) {
-                        int light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
-                        c.setSystemBarsAppearance("light".equals(mode) ? light : 0, light);
+                    boolean lightBars = "light".equals(mode);
+                    if (Build.VERSION.SDK_INT >= 30) {
+                        WindowInsetsController c = getWindow().getInsetsController();
+                        if (c != null) {
+                            int light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                            c.setSystemBarsAppearance(lightBars ? light : 0, light);
+                        }
+                    } else {
+                        // Android 8–10 has no WindowInsetsController: calling it there is a NoSuchMethodError,
+                        // which the catch below doesn't cover, so the app died as soon as the UI set its theme.
+                        View decor = getWindow().getDecorView();
+                        int light = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                        int flags = decor.getSystemUiVisibility();
+                        decor.setSystemUiVisibility(lightBars ? flags | light : flags & ~light);
                     }
                 } catch (Exception ignored) {}
             });

@@ -1,0 +1,14 @@
+name: Feature
+description: A new capability or a change in behaviour
+labels: ["type: feature", "status: needs-triage"]
+body:
+  - type: textarea
+    id: need
+    attributes: { label: What do you want to do?, description: "The situation and the outcome you want, not the solution." }
+    validations: { required: true }
+  - type: textarea
+    id: idea
+    attributes: { label: Ideas for how, description: Optional. }
+  - type: textarea
+    id: done
+    attributes: { label: Done when, description: "How we'll know it works (on a phone)." }

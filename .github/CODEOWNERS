@@ -1,2 +1,3 @@
-# Every change to v1.x and master needs the owner's approval (docs/RELEASES.md, "Who can release").
-*  @YashMehta93
+# Approvers: a review from any one of them satisfies "code owner approval" on v1.x and master.
+# The same people approve releases (.github/release-policy.json → approvers). Keep the two lists in step.
+*  @YashMehta93 @bhavyadhoru @JetErorr

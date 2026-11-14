@@ -9,7 +9,7 @@ $("#btn-more").onclick = () => {
   menuSheet(null, [
     !cur.isNew && { label: "Rename", icon: "edit", run: () => renameSession(cur.sessionId, cur.title) },
     !cur.isNew && { label: state.pinned.includes(cur.sessionId) ? "Unpin" : "Pin", icon: "pin", run: async () => { const r = await conn.call("session.pin", { sessionId: cur.sessionId, pinned: !state.pinned.includes(cur.sessionId) }); state.pinned = r.pinned; renderSessions(); } },
-    live && { label: "Context usage", icon: "chart", run: showContext },
+    { label: "Usage and context", icon: "chart", run: openUsage },
     { label: "Commands & skills", icon: "bolt", run: showCommands },
     !cur.isNew && { label: "Fork this chat", icon: "fork", run: () => forkSession(cur.sessionId) },
     !cur.isNew && { label: "Export / share chat", icon: "share", run: () => shareText(`# ${cur.title}\n\n${chat.toMarkdown()}`, cur.title) },
@@ -19,17 +19,6 @@ $("#btn-more").onclick = () => {
   ]);
 };
 $("#title-wrap").onclick = () => { if (!state.current.isNew) renameSession(state.current.sessionId, state.current.title); };
-async function showContext() {
-  try {
-    const { usage: u } = await conn.call("session.context", { sessionId: state.current.sessionId });
-    const cats = (u.categories || []).filter(c => c.tokens > 0);
-    const b = sheet.open(`<h2>Context: ${Math.round(u.percentage)}% used</h2><div class="sub">${fmtTok(u.totalTokens)} of ${fmtTok(u.maxTokens)} tokens · ${esc(u.model || "")}</div>
-      <div class="ctx-bar">${cats.filter(c => c.kind !== "free").map(c => `<i style="width:${(c.tokens / u.maxTokens * 100).toFixed(2)}%;background:${esc(c.color)}"></i>`).join("")}</div>
-      ${cats.map(c => `<div class="ctx-row"><span><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span><span>${fmtTok(c.tokens)}</span></div>`).join("")}
-      <div class="btns"><button class="btn" id="ctx-compact">Compact conversation now</button></div>`);
-    b.querySelector("#ctx-compact").onclick = () => { sheet.close(true); send("/compact"); };
-  } catch (e) { toast(e.message); }
-}
 function showCommands() {
   page.open("Commands & skills", body => {
     const list = state.commands.slice().sort((a, b) => a.name.localeCompare(b.name));
@@ -117,95 +106,159 @@ function browseFolder(dir, resolve) {
 }
 
 // ───────────── settings ─────────────
-function openSettings() {
+// Settings home: a search box and a short list of categories, each showing its current state and opening a
+// short page of its own. Searching shows every matching setting from all categories, usable in place.
+const FONT_LABEL = { 14: "Small", 15.5: "Default", 17: "Large", 19: "Huge" };
+const item = (html, keys = "") => `<div class="set-item" data-keys="${esc(keys)}">${html}</div>`;
+const sw = k => `<button class="switch ${settings[k] ? "on" : ""}" data-k="${k}" role="switch" aria-checked="${!!settings[k]}"></button>`;
+function settingsSections() {
+  const d = state.defaults;
+  const standalone = native && nativeCall("isStandalone") === true;
+  const mode = MODES.find(m => m.id === (d.permissionMode || "default"));
+  return [
+    { id: "look", title: "Appearance", icon: "image",
+      summary: `${settings.theme === "system" ? "Follows the phone" : settings.theme === "dark" ? "Dark" : "Light"} · ${FONT_LABEL[settings.fontSize] || "Default"} text`,
+      html: () => item(`<div class="set-row"><div class="l">Theme</div></div><div class="seg" id="s-theme">${["system", "light", "dark"].map(t => `<button data-v="${t}" class="${settings.theme === t ? "on" : ""}">${t}</button>`).join("")}</div>`, "dark light mode colour")
+        + item(`<div class="set-row"><div class="l">Text size</div></div><div class="seg" id="s-font">${[14, 15.5, 17, 19].map(t => `<button data-v="${t}" class="${settings.fontSize == t ? "on" : ""}">${FONT_LABEL[t]}</button>`).join("")}</div>`, "font zoom bigger smaller")
+        + item(`<div class="set-row"><div class="l">Show thinking while Claude works</div>${sw("showThinking")}</div>`, "reasoning")
+        + item(`<div class="set-row"><div class="l">Group each reply's steps into one line<small>Tap the line for every step. Off: one card per step</small></div>${sw("groupSteps")}</div>`, "tools steps cards timeline progress")
+        + item(`<div class="set-row"><div class="l">Expand tool details by default</div>${sw("autoExpandTools")}</div>`, "commands output") },
+    { id: "typing", title: "Typing", icon: "pencil",
+      summary: `Enter ${settings.enterToSend ? "sends" : "adds a line"} · haptics ${settings.haptics ? "on" : "off"}`,
+      html: () => item(`<div class="set-row"><div class="l">Enter sends message<small>Off: Enter adds a new line, tap the arrow to send</small></div>${sw("enterToSend")}</div>`, "keyboard return")
+        + item(`<div class="set-row"><div class="l">Haptic feedback</div>${sw("haptics")}</div>`, "vibration vibrate") },
+    { id: "notify", title: "Notifications", icon: "bolt",
+      summary: [settings.notifyApproval && "approvals", settings.notifyDone && "finished"].filter(Boolean).join(" and ") || "Off",
+      html: () => item(`<div class="set-row"><div class="l">When Claude needs approval<small>With Allow / Deny buttons</small></div>${sw("notifyApproval")}</div>`, "permission allow deny")
+        + item(`<div class="set-row"><div class="l">When Claude finishes</div>${sw("notifyDone")}</div>`, "done complete") },
+    { id: "newchat", title: "New chats", icon: "plan",
+      summary: `${shortPath(d.cwd) || "~"} · ${modelLabel(d.model)} · ${mode?.short || "Ask"}`,
+      html: () => item(`<div class="set-row"><div class="l">Folder<small id="d-cwd">${esc(shortPath(d.cwd) || "~ (home)")}</small></div><button class="chip" id="d-cwd-btn">Change</button></div>`, "directory project cwd default")
+        + item(`<div class="set-row"><div class="l">Model<small>${esc(modelLabel(d.model))}</small></div><button class="chip" id="d-model">Change</button></div>`, "opus sonnet haiku default")
+        + item(`<div class="set-row"><div class="l">Effort</div></div><div class="seg" id="d-effort">${["", ...EFFORTS].map(e => `<button data-v="${e}" class="${(d.effort || "") === e ? "on" : ""}">${e || "auto"}</button>`).join("")}</div>`, "thinking reasoning default")
+        + item(`<div class="set-row"><div class="l">Permission mode</div></div><div class="seg" id="d-mode">${MODES.slice(0, 4).map(m => `<button data-v="${m.id}" class="${(d.permissionMode || "default") === m.id ? "on" : ""}">${m.short}</button>`).join("")}</div>`, "ask auto bypass plan approvals default") },
+    { id: "claude", title: "Claude and connection", icon: "globe",
+      summary: `${settings.server ? settings.server.replace(/^https?:\/\//, "") : native ? "Runs on this phone" : location.host}${state.account?.email ? " · " + state.account.email : ""}`,
+      html: () => item(`<div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server || (native ? "This phone (built-in)" : location.host))}</small></div><button class="chip" id="s-server">Change</button></div>`, "server termux computer pc remote connection")
+        + (standalone ? item(`<div class="set-row"><div class="l">Claude sign-in<small id="s-auth">Checking…</small></div><button class="chip" id="s-login">Sign in again</button></div>`, "login account logout") : "")
+        + item(`<div class="set-row"><div class="l">${esc(state.account?.email || state.account?.organization || "Claude account")}<small>${esc(state.account?.subscriptionType || state.account?.apiKeySource || "Signed in through Claude Code")}</small></div></div>`, "account plan subscription")
+        + item(`<div class="set-row"><div class="l">Usage limits<small>${esc(usageSummary())}</small></div><button class="chip" id="s-usage">Show</button></div>`, "usage limits quota 5-hour weekly plan")
+        + (native ? item(`<div class="set-row"><div class="l">Restart Claude's server<small>Stops any reply in progress</small></div><button class="chip" id="s-restart">Restart</button></div>`, "reload stuck") : "")
+        + (standalone ? item(`<div class="set-row"><div class="l">Server log<small>For troubleshooting</small></div><button class="chip" id="s-log">View</button></div>`, "debug errors logs") : "") },
+    { id: "updates", title: "Updates", icon: "retry",
+      summary: state.updateChannel ? `${state.updateChannel}${state.updateKind === "github" ? " · " + (state.updateTrack?.track === "pin" ? "pinned to " + state.updateTrack.tag : state.updateTrack?.track === "beta" ? "Beta" : "Stable") : ""}` : "Not set",
+      html: () => item(`<div class="set-row"><div class="l">Get updates from<small id="u-src">${esc(state.updateChannel ? state.updateChannel + (state.updateKind === "github" && !state.githubToken ? " (no token)" : "") : "Not set: updates come with new app versions")}</small></div><button class="chip" id="u-set">${state.updateChannel ? "Change" : "Set"}</button></div>`, "source github folder")
+        + item(`<div class="set-row"><div class="l">Check for updates<small id="u-status">New server code and app screens</small></div><button class="chip" id="u-check">Check</button></div>`, "upgrade new version")
+        + (state.updateKind === "github" ? item(`<div class="set-row"><div class="l">Release track<small>${esc(trackLabel(state.updateTrack))}</small></div></div>
+          <div class="seg" id="u-track">${[["stable", "Stable"], ["beta", "Beta"], ["pin", "Pinned"]].map(([v, l]) => `<button data-v="${v}" class="${(state.updateTrack?.track || "stable") === v ? "on" : ""}">${l}</button>`).join("")}</div>`, "stable beta pinned channel")
+          + item(`<div class="set-row"><div class="l">Versions<small>Every release, with what changed: switch to any of them</small></div><button class="chip" id="u-versions">Open</button></div>`, "releases changelog older") : "") },
+    { id: "data", title: "Chats and backups", icon: "folder", summary: "Import, back up, restore",
+      html: () => item(`<div class="set-row"><div class="l">Import chats<small>Copy chats from another Pocket Agent server, like Termux</small></div><button class="chip" id="i-chats">Import</button></div>`, "sessions copy termux")
+        + item(`<div class="set-row"><div class="l">Back up to phone storage<small>Chats, memory, settings and projects, to Download/Pocket Agent. Not your sign-in.</small></div><button class="chip" id="b-make">Back up</button></div>`, "export save")
+        + item(`<div class="set-row"><div class="l">Restore a backup<small>After reinstalling, or on a new phone</small></div><button class="chip" id="b-restore">Restore</button></div>`, "import reinstall") },
+    native && { id: "phone", title: "Phone control", icon: "chart", summary: "Permissions and background running",
+      html: () => `<div id="phone-ctl">${item(`<div class="set-row"><div class="l">Checking…</div></div>`)}</div>`
+        + item(`<div class="set-row"><div class="l">Keep Claude working when you swipe the app away<small>Lock Pocket Agent in recent apps: on vivo, pull its card down; on OnePlus, tap ⋮ on its card, then Lock. If Android still stops it, replies continue when the app comes back.</small></div></div>`, "swipe recents lock killed background keep running") },
+    native && { id: "termux", title: "Termux", icon: "terminal", summary: "Optional: commands and setup",
+      html: () => `<div id="termux-box">${item(`<div class="set-row"><div class="l">Checking…</div></div>`)}</div>` },
+    standalone && { id: "dev", title: "Make it yours", icon: "brain", summary: state.devRepo ? "Improve Pocket Agent" : "Build Pocket Agent yourself",
+      html: () => item(`<div class="set-row"><div class="l">Improve Pocket Agent<small>${state.devRepo ? "Start a chat in your copy of the app's code: ask for any change" : "Set up building first (below)"}</small></div><button class="chip" id="d-improve" ${state.devRepo ? "" : "disabled"}>Start</button></div>`, "develop code customise")
+        + item(`<div class="set-row"><div class="l">Build Pocket Agent yourself<small>Get the code, Java and the Android build tools, so this app can rebuild itself</small></div><button class="chip" id="d-open">${state.devRepo ? "Redo" : "Set up"}</button></div>`, "developer setup github")
+        + item(`<div class="set-row"><div class="l">Move everything from Termux<small>Projects, chats, memory, skills, settings and build tools, into this app</small></div><button class="chip" id="m-open">Open</button></div>`, "migrate") },
+    { id: "about", title: "About", icon: "circle", summary: `Pocket Agent ${nativeCall("appVersion") || "web"}`,
+      html: () => item(`<div class="set-row"><div class="l">Pocket Agent ${esc(nativeCall("appVersion") || "web")}<small>${standalone ? "Runs Claude Code on this phone" : "Connected to " + esc(settings.server || location.host)}</small></div></div>`, "version") },
+  ].filter(Boolean);
+}
+function openSettings(sectionId) {
   page.open("Settings", body => {
-    const d = state.defaults;
-    const standalone = native && nativeCall("isStandalone") === true;
+    const secs = settingsSections();
     body.innerHTML = `<div class="settings">
-      <h3>Appearance</h3>
-      <div class="set-row"><div class="l">Theme</div></div><div class="seg" id="s-theme">${["system", "light", "dark"].map(t => `<button data-v="${t}" class="${settings.theme === t ? "on" : ""}">${t}</button>`).join("")}</div>
-      <div class="set-row"><div class="l">Text size</div></div><div class="seg" id="s-font">${[14, 15.5, 17, 19].map(t => `<button data-v="${t}" class="${settings.fontSize == t ? "on" : ""}">${t === 14 ? "Small" : t === 15.5 ? "Default" : t === 17 ? "Large" : "Huge"}</button>`).join("")}</div>
-      <div class="set-row"><div class="l">Show thinking while Claude works</div><button class="switch ${settings.showThinking ? "on" : ""}" data-k="showThinking"></button></div>
-      <div class="set-row"><div class="l">Expand tool details by default</div><button class="switch ${settings.autoExpandTools ? "on" : ""}" data-k="autoExpandTools"></button></div>
-      <h3>Input</h3>
-      <div class="set-row"><div class="l">Enter sends message<small>Off: Enter adds a new line, tap the arrow to send</small></div><button class="switch ${settings.enterToSend ? "on" : ""}" data-k="enterToSend"></button></div>
-      <div class="set-row"><div class="l">Haptic feedback</div><button class="switch ${settings.haptics ? "on" : ""}" data-k="haptics"></button></div>
-      <h3>Notifications</h3>
-      <div class="set-row"><div class="l">When Claude needs approval<small>With Allow / Deny buttons</small></div><button class="switch ${settings.notifyApproval ? "on" : ""}" data-k="notifyApproval"></button></div>
-      <div class="set-row"><div class="l">When Claude finishes</div><button class="switch ${settings.notifyDone ? "on" : ""}" data-k="notifyDone"></button></div>
-      <h3>New chat defaults</h3>
-      <div class="set-row"><div class="l">Folder<small id="d-cwd">${esc(shortPath(d.cwd) || "~ (home)")}</small></div><button class="chip" id="d-cwd-btn">Change</button></div>
-      <div class="set-row"><div class="l">Model<small>${esc(modelLabel(d.model))}</small></div><button class="chip" id="d-model">Change</button></div>
-      <div class="set-row"><div class="l">Effort</div></div><div class="seg" id="d-effort">${["", ...EFFORTS].map(e => `<button data-v="${e}" class="${(d.effort || "") === e ? "on" : ""}">${e || "auto"}</button>`).join("")}</div>
-      <div class="set-row"><div class="l">Permission mode</div></div><div class="seg" id="d-mode">${MODES.slice(0, 4).map(m => `<button data-v="${m.id}" class="${(d.permissionMode || "default") === m.id ? "on" : ""}">${m.short}</button>`).join("")}</div>
-      <h3>Connection</h3>
-      <div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server || (native ? "This phone (built-in)" : location.host))}</small></div><button class="chip" id="s-server">Change</button></div>
-      ${native ? `<div class="set-row"><div class="l">Restart Claude's server<small>Stops any reply in progress</small></div><button class="chip" id="s-restart">Restart</button></div>` : ""}
-      ${standalone ? `<div class="set-row"><div class="l">Claude sign-in<small id="s-auth">Checking…</small></div><button class="chip" id="s-login">Sign in again</button></div>
-      <div class="set-row"><div class="l">Server log<small>For troubleshooting</small></div><button class="chip" id="s-log">View</button></div>` : ""}
-      <h3>Updates &amp; chats</h3>
-      <div class="set-row"><div class="l">Get updates from<small id="u-src">${esc(state.updateChannel ? state.updateChannel + (state.updateKind === "github" && !state.githubToken ? " (no token)" : "") : "Not set: updates come with new app versions")}</small></div><button class="chip" id="u-set">${state.updateChannel ? "Change" : "Set"}</button></div>
-      <div class="set-row"><div class="l">Check for updates<small id="u-status">New server code and app screens</small></div><button class="chip" id="u-check">Check</button></div>
-      ${state.updateKind === "github" ? `<div class="set-row"><div class="l">Release track<small>${esc(trackLabel(state.updateTrack))}</small></div></div>
-      <div class="seg" id="u-track">${[["stable", "Stable"], ["beta", "Beta"], ["pin", "Pinned"]].map(([v, l]) => `<button data-v="${v}" class="${(state.updateTrack?.track || "stable") === v ? "on" : ""}">${l}</button>`).join("")}</div>
-      <div class="set-row"><div class="l">Versions<small>Every release, with what changed: switch to any of them</small></div><button class="chip" id="u-versions">Open</button></div>` : ""}
-      <div class="set-row"><div class="l">Import chats<small>Copy chats from another Pocket Agent server, like Termux</small></div><button class="chip" id="i-chats">Import</button></div>
-      <div class="set-row"><div class="l">Back up to phone storage<small>Chats, memory, settings and projects, to Download/Pocket Agent. Not your sign-in.</small></div><button class="chip" id="b-make">Back up</button></div>
-      <div class="set-row"><div class="l">Restore a backup<small>After reinstalling, or on a new phone</small></div><button class="chip" id="b-restore">Restore</button></div>
-      ${standalone ? `<h3>Make it yours</h3>
-      <div class="set-row"><div class="l">Improve Pocket Agent<small>${state.devRepo ? "Start a chat in your copy of the app's code: ask for any change" : "Set up building first (below)"}</small></div><button class="chip" id="d-improve" ${state.devRepo ? "" : "disabled"}>Start</button></div>
-      <div class="set-row"><div class="l">Build Pocket Agent yourself<small>Get the code, Java and the Android build tools, so this app can rebuild itself</small></div><button class="chip" id="d-open">${state.devRepo ? "Redo" : "Set up"}</button></div>` : ""}
-      ${standalone ? `<div class="set-row"><div class="l">Move everything from Termux<small>Projects, chats, memory, skills, settings and build tools, into this app</small></div><button class="chip" id="m-open">Open</button></div>` : ""}
-      ${native ? `<h3>Termux</h3><div id="termux-box"><div class="set-row"><div class="l">Checking…</div></div></div>` : ""}
-      ${native ? `<h3>Phone control</h3><div id="phone-ctl"><div class="set-row"><div class="l">Checking…</div></div></div>` : ""}
-      <h3>Account</h3>
-      <div class="set-row"><div class="l">${esc(state.account?.email || state.account?.organization || "Claude account")}<small>${esc(state.account?.subscriptionType || state.account?.apiKeySource || "Signed in through Claude Code")}</small></div></div>
-      <h3>About</h3>
-      <div class="set-row"><div class="l">Pocket Agent ${esc(nativeCall("appVersion") || "web")}<small>${standalone ? "Runs Claude Code on this phone" : "Connected to " + esc(settings.server || location.host)}</small></div></div>
-    </div>`;
-    body.querySelectorAll(".switch[data-k]").forEach(sw => sw.onclick = () => { settings[sw.dataset.k] = !settings[sw.dataset.k]; sw.classList.toggle("on"); saveSettings(); });
-    seg(body, "#s-theme", v => { settings.theme = v; saveSettings(); });
-    seg(body, "#s-font", v => { settings.fontSize = +v; saveSettings(); });
-    seg(body, "#d-effort", v => setDefaults({ effort: v || null }));
-    seg(body, "#d-mode", v => setDefaults({ permissionMode: v }));
-    body.querySelector("#d-cwd-btn").onclick = async () => { const p = await pickFolder(d.cwd); if (p) { await setDefaults({ cwd: p }); body.querySelector("#d-cwd").textContent = shortPath(p); } };
-    body.querySelector("#d-model").onclick = () => {
-      const b = sheet.open(`<h2>Default model</h2><div id="dm"></div>`);
-      for (const m of [{ value: null, displayName: "Claude Code default", description: "Whatever your Claude Code settings use" }, ...state.models]) {
-        const o = h(`<button class="opt">${icon("circle")}<div class="ot"><div>${esc(m.displayName)}</div><div class="od">${esc(m.description || "")}</div></div></button>`);
-        o.onclick = () => { sheet.close(true); setDefaults({ model: m.value }).then(openSettingsRefresh); };
-        b.querySelector("#dm").append(o);
+      <input type="search" id="set-q" class="set-search" placeholder="Search settings" aria-label="Search settings" autocomplete="off">
+      <nav id="set-home" class="set-cats" aria-label="Settings categories">${secs.map(c => `<button class="set-cat" data-sec="${c.id}">
+        <span class="ic" aria-hidden="true">${icon(c.icon)}</span><span class="t">${esc(c.title)}<small>${esc(c.summary)}</small></span><span class="go" aria-hidden="true">›</span></button>`).join("")}</nav>
+      <div id="set-results" hidden></div></div>`;
+    body.querySelectorAll("[data-sec]").forEach(b => b.onclick = () => openSettingsSection(b.dataset.sec));
+    const q = body.querySelector("#set-q"), home = body.querySelector("#set-home"), res = body.querySelector("#set-results");
+    q.oninput = () => {
+      const t = q.value.trim().toLowerCase();
+      home.hidden = !!t; res.hidden = !t;
+      if (!t) { res.innerHTML = ""; return; }
+      res.innerHTML = secs.map(c => `<section data-sec="${c.id}"><h3>${esc(c.title)}</h3>${c.html()}</section>`).join("");
+      wireSettings(res);
+      for (const sec of res.querySelectorAll("section")) {
+        let any = false;
+        for (const it of sec.querySelectorAll(".set-item")) {
+          const hit = (it.textContent + " " + it.dataset.keys).toLowerCase().includes(t);
+          it.hidden = !hit; any ||= hit;
+        }
+        // Termux and phone-control rows load asynchronously: match those sections by name instead
+        if (!sec.querySelector(".set-item:not([hidden])") && sec.querySelector("#phone-ctl, #termux-box")) any = sec.querySelector("h3").textContent.toLowerCase().includes(t);
+        sec.hidden = !any;
       }
+      if (![...res.querySelectorAll("section")].some(x => !x.hidden)) res.innerHTML = `<p class="set-none">No setting matches "${esc(q.value.trim())}".</p>`;
     };
-    body.querySelector("#s-server").onclick = () => chooseServer();
-    body.querySelector("#u-set").onclick = () => chooseUpdateSource();
-    body.querySelector("#d-open")?.addEventListener("click", () => openDevSetup());
-    body.querySelector("#d-improve")?.addEventListener("click", () => startImprove());
-    body.querySelector("#b-make").onclick = () => makeBackup();
-    body.querySelector("#b-restore").onclick = () => chooseBackup();
-    body.querySelector("#u-check").onclick = () => checkServerUpdate(true);
-    body.querySelector("#u-versions")?.addEventListener("click", () => openVersions());
-    body.querySelectorAll("#u-track button").forEach(b => b.onclick = () => b.dataset.v === "pin" ? openVersions() : setTrack({ track: b.dataset.v }));
-    body.querySelector("#m-open")?.addEventListener("click", () => openMigration());
-    body.querySelector("#i-chats").onclick = async () => {
-      const src = await askOtherServer("Import chats from", "Copies that server's chats here. Nothing is deleted on either side; their project folders are created here empty.");
-      if (!src) return;
-      toast("Importing chats…", 8000);
-      try {
-        const r = await conn.call("sessions.import", src);
-        toast(`Imported ${r.added} new chat${r.added === 1 ? "" : "s"}${r.updated ? `, updated ${r.updated}` : ""}`, 4000);
-        refreshSessions();
-      } catch (e) { toast(e.message, 5000); }
-    };
-    body.querySelector("#s-login")?.addEventListener("click", () => nativeCall("openSetup", "#login"));
-    body.querySelector("#s-log")?.addEventListener("click", () => page.open("Server log", async b => {
-      b.className = "viewer"; b.append(codeBlock(await nativeRpc("runtime.logs", { which: "server", bytes: 40000 }).catch(e => e.message) || "(empty)"));
-    }));
-    if (standalone) nativeRpc("runtime.auth").then(a => { const el = body.querySelector("#s-auth"); if (el) el.textContent = a.loggedIn ? [a.email, a.subscriptionType].filter(Boolean).join(" · ") : "Not signed in"; }).catch(() => {});
-    body.querySelector("#s-restart")?.addEventListener("click", () => { nativeCall("restartServer"); toast("Restarting server…"); });
-    if (native) renderPhoneControl(body.querySelector("#phone-ctl"));
-    if (native) renderTermux(body.querySelector("#termux-box"));
   });
+  if (sectionId) openSettingsSection(sectionId);
+}
+function openSettingsSection(id) {
+  const c = settingsSections().find(x => x.id === id);
+  if (!c) return;
+  page.open(c.title, body => { body.innerHTML = `<div class="settings">${c.html()}</div>`; wireSettings(body); });
+}
+/** Hooks up whatever settings controls are inside root (a category page or search results). */
+function wireSettings(root) {
+  const d = state.defaults;
+  const standalone = native && nativeCall("isStandalone") === true;
+  const on = (sel, fn) => root.querySelector(sel)?.addEventListener("click", fn);
+  root.querySelectorAll(".switch[data-k]").forEach(b => b.onclick = () => { settings[b.dataset.k] = !settings[b.dataset.k]; b.classList.toggle("on"); b.setAttribute("aria-checked", !!settings[b.dataset.k]); saveSettings(); });
+  seg(root, "#s-theme", v => { settings.theme = v; saveSettings(); });
+  seg(root, "#s-font", v => { settings.fontSize = +v; saveSettings(); });
+  seg(root, "#d-effort", v => setDefaults({ effort: v || null }));
+  seg(root, "#d-mode", v => setDefaults({ permissionMode: v }));
+  on("#d-cwd-btn", async () => { const p = await pickFolder(d.cwd); if (p) { await setDefaults({ cwd: p }); const el = root.querySelector("#d-cwd"); if (el) el.textContent = shortPath(p); } });
+  on("#d-model", () => {
+    const b = sheet.open(`<h2>Default model</h2><div id="dm"></div>`);
+    for (const m of [{ value: null, displayName: "Claude Code default", description: "Whatever your Claude Code settings use" }, ...state.models]) {
+      const o = h(`<button class="opt">${icon("circle")}<div class="ot"><div>${esc(m.displayName)}</div><div class="od">${esc(m.description || "")}</div></div></button>`);
+      o.onclick = () => { sheet.close(true); setDefaults({ model: m.value }).then(openSettingsRefresh); };
+      b.querySelector("#dm").append(o);
+    }
+  });
+  on("#s-server", () => chooseServer());
+  on("#u-set", () => chooseUpdateSource());
+  on("#d-open", () => openDevSetup());
+  on("#d-improve", () => startImprove());
+  on("#b-make", () => makeBackup());
+  on("#b-restore", () => chooseBackup());
+  on("#u-check", () => checkServerUpdate(true));
+  on("#u-versions", () => openVersions());
+  root.querySelectorAll("#u-track button").forEach(b => b.onclick = () => b.dataset.v === "pin" ? openVersions() : setTrack({ track: b.dataset.v }));
+  on("#m-open", () => openMigration());
+  on("#i-chats", async () => {
+    const src = await askOtherServer("Import chats from", "Copies that server's chats here. Nothing is deleted on either side; their project folders are created here empty.");
+    if (!src) return;
+    toast("Importing chats…", 8000);
+    try {
+      const r = await conn.call("sessions.import", src);
+      toast(`Imported ${r.added} new chat${r.added === 1 ? "" : "s"}${r.updated ? `, updated ${r.updated}` : ""}`, 4000);
+      refreshSessions();
+    } catch (e) { toast(e.message, 5000); }
+  });
+  on("#s-login", () => nativeCall("openSetup", "#login"));
+  on("#s-usage", () => openUsage());
+  on("#s-log", () => page.open("Server log", async b => {
+    b.className = "viewer"; b.append(codeBlock(await nativeRpc("runtime.logs", { which: "server", bytes: 40000 }).catch(e => e.message) || "(empty)"));
+  }));
+  if (standalone && root.querySelector("#s-auth")) nativeRpc("runtime.auth").then(a => { const el = root.querySelector("#s-auth"); if (el) el.textContent = a.loggedIn ? [a.email, a.subscriptionType].filter(Boolean).join(" · ") : "Not signed in"; }).catch(() => {});
+  on("#s-restart", async () => { try { await conn.call("working.clear"); } catch {} nativeCall("restartServer"); toast("Restarting server…"); });
+  if (native && root.querySelector("#phone-ctl")) renderPhoneControl(root.querySelector("#phone-ctl"));
+  if (native && root.querySelector("#termux-box")) renderTermux(root.querySelector("#termux-box"));
+}
+/** Re-renders the settings page on screen (home or a category) so it shows changed values. */
+function openSettingsRefresh() {
+  const top = page.stack[page.stack.length - 1];
+  if (!top || $("#page").hidden) return openSettings();
+  const body = $("#page-body"); body.innerHTML = ""; top.render(body);
 }
 
 /** What Claude may do on this phone; each row opens the matching Android setting. */
@@ -378,7 +431,7 @@ async function switchVersion(rel) {
 /** Checks the update source; offers to apply. quiet=false also reports "up to date" and errors. */
 async function checkServerUpdate(loud) {
   try {
-    const r = await conn.call("update.check");
+    const r = await conn.call("update.check", loud ? { fresh: true } : {});   // the button skips the 2-minute cache
     if (!r.channel) { if (loud) toast("Set where updates come from first"); return; }
     if (r.older) { if (loud) toast(`${r.channel} has older code (build ${r.remote.build}) than this app (build ${r.local.build}). Not updating.`, 6000); return; }
     if (!r.available) { if (loud) toast("Up to date"); return; }
@@ -501,7 +554,6 @@ function renderJob(kind) {
   }
 }
 
-function openSettingsRefresh() { page.close(); openSettings(); }
 function seg(root, sel, fn) { root.querySelectorAll(sel + " button").forEach(b => b.onclick = () => { root.querySelectorAll(sel + " button").forEach(x => x.classList.remove("on")); b.classList.add("on"); fn(b.dataset.v); }); }
 async function setDefaults(patch) {
   try { const r = await conn.call("defaults.set", { defaults: patch }); state.defaults = r.defaults; if (state.current?.isNew) { Object.assign(state.current, patch); updateComposer(); } } catch (e) { toast(e.message); }

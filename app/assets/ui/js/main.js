@@ -31,7 +31,10 @@ async function onConnected() {
   if (window.__uiVersion && hello.uiVersion && hello.uiVersion !== window.__uiVersion && !Object.values(hello.live || {}).some(i => i.state === "running")) { location.reload(); return; }
   window.__uiVersion = hello.uiVersion;
   Object.assign(state, { home: hello.home, hostName: hello.host, defaults: hello.defaults || {}, pinned: hello.pinned || [],
-    commands: hello.commands || [], models: hello.models || [], account: hello.account });
+    commands: hello.commands || [], models: hello.models || [], account: hello.account, usage: hello.usage || null });
+  renderUsage();
+  // the server may have restarted: only the chats it reports are live now (stale ones kept a Stop button that did nothing)
+  for (const id of Object.keys(state.liveInfo)) if (!(hello.live || []).some(i => i.sessionId === id)) { delete state.liveInfo[id]; delete state.activity[id]; }
   for (const i of hello.live || []) { state.liveInfo[i.sessionId] = i; if (i.activity) state.activity[i.sessionId] = i.activity; }
   state.pending = (hello.live || []).flatMap(i => i.pending || []);
   const where = hello.mode === "standalone" ? "This phone" : settings.server ? settings.server.replace(/^https?:\/\//, "") : hello.host;
@@ -128,6 +131,8 @@ conn.on("activity", m => {
   state.activity[m.sessionId] = m.activity;
   if (state.current?.sessionId === m.sessionId) renderActivity();
 });
+conn.on("tasks", m => { (state.liveInfo[m.sessionId] ||= { sessionId: m.sessionId }).tasks = m.tasks; if (m.sessionId === state.current?.sessionId) renderAgentsLine(); });
+conn.on("usage", m => { state.usage = m.usage; renderUsage(); });
 conn.on("meta", m => { state.commands = m.commands || state.commands; state.models = m.models || state.models; state.account = m.account || state.account; updateComposer(); });
 conn.on("sessions.changed", () => debouncedRefresh());
 const debouncedRefresh = debounce(refreshSessions, 400);

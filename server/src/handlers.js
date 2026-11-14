@@ -4,15 +4,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, deleteSession, forkSession } from "@anthropic-ai/claude-agent-sdk";
-import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache, githubRepo } from "./config.js";
+import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache, saveCache, githubRepo } from "./config.js";
 import { broadcastAll, callNative } from "./hub.js";
-import { live, getLive, openSession, busyElsewhere, runClaude } from "./live-session.js";
+import { live, getLive, openSession, busyElsewhere, runClaude, chatSettings, rememberChatSettings, clearWorking, taskTranscript, restartContinuing } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
-import { importSessions, checkUpdate, applyUpdate, sourceName, pickRelease, listReleases, releaseAsset, bundleInfo } from "./transfer.js";
+import { importSessions, checkUpdate, applyUpdate, sourceName, pickRelease, listReleases, releaseAsset, bundleInfo, clearReleaseCache } from "./transfer.js";
 import { runDevSetup, devSetupStatus, devRepo } from "./devtools.js";
 import { runMigration, migrationStatus } from "./migrate.js";
 import { createBackup, listBackups, restoreBackup, BACKUP_DIR } from "./backup.js";
 import { installCommand } from "./termux.js";
+import { listServices, addService, removeService, setServiceEnabled, restartService, serviceLogs } from "./services.js";
+import { getUsage, refreshUsage } from "./usage.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
 
@@ -28,7 +30,7 @@ export const handlers = {
   // ───── connection ─────
   async hello() {
     return { version: VERSION, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
-      defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account,
+      defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account, usage: getUsage(),
       updateChannel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null,
       updateKind: prefs.updateChannel ? (prefs.updateChannel.github ? "github" : prefs.updateChannel.path ? "path" : "server") : null,
       githubToken: !!prefs.updateChannel?.token, defaultRepo: DEFAULT_REPO, mode: process.env.PA_MODE || "server", devRepo: devRepo(), updateTrack: prefs.updateTrack || { track: "stable" },
@@ -51,12 +53,23 @@ export const handlers = {
     return { sessionId, messages, info };
   },
 
+  /** Before a restart on purpose: replies it stops shouldn't continue afterwards. */
+  async "working.clear"() { clearWorking(); return {}; },
+  /** Inside the app only (it restarts us): restart now; replies in progress continue afterwards. */
+  async "server.restartContinuing"() { if (!process.env.PA_SUPERVISED) throw new Error("Only inside the app"); restartContinuing(); return {}; },
+
+  // ───── usage limits ─────
+  async "usage.get"({ refresh } = {}) {
+    const s = [...live.values()].find(x => x.q && x.state !== "closed");
+    return { usage: refresh ? await refreshUsage(s?.q, { asked: true }) : getUsage(), live: !!s };
+  },
+
   // ───── live sessions ─────
   async "session.open"(m, ws) { const s = await openSession(m); ws.subs.add(s.sessionId); return { sessionId: s.sessionId, info: s.info() }; },
   async subscribe({ sessionId, after = 0 }, ws) {
     ws.subs.add(sessionId);
     const s = live.get(sessionId);
-    return { sessionId, info: s ? s.info() : null, events: s ? s.buffer.filter(e => e.seq > after) : [] };
+    return { sessionId, info: s ? s.info() : null, events: s ? s.buffer.filter(e => e.seq > after) : [], settings: chatSettings(sessionId) };
   },
   async unsubscribe({ sessionId }, ws) { ws.subs.delete(sessionId); return {}; },
   async send(m, ws) {
@@ -67,10 +80,19 @@ export const handlers = {
   async interrupt({ sessionId }) { await getLive(sessionId).q.interrupt(); return {}; },
   async "session.close"({ sessionId }) { live.get(sessionId)?.close(); return {}; },
   async "permission.reply"(m) { return { ok: getLive(m.sessionId).answer(m) }; },
-  async set(m) { const s = live.get(m.sessionId); if (s) await s.set(m); return { info: s?.info() }; },
+  async set(m) { const s = live.get(m.sessionId); if (s) await s.set(m); else rememberChatSettings(m.sessionId, m); return { info: s?.info(), settings: chatSettings(m.sessionId) }; },
   async "session.rewindFiles"({ sessionId, userMessageId, dryRun }) { return { result: await getLive(sessionId).q.rewindFiles(userMessageId, { dryRun: !!dryRun }) }; },
-  async "session.context"({ sessionId }) { return { usage: await getLive(sessionId).q.getContextUsage() }; },
+  async "session.context"({ sessionId }) {
+    const s = live.get(sessionId);
+    if (s) {
+      const usage = await s.q.getContextUsage();
+      if (usage?.model && usage.maxTokens && cache.contextMax?.[usage.model] !== usage.maxTokens) { cache.contextMax = { ...cache.contextMax, [usage.model]: usage.maxTokens }; saveCache(); }
+      return { usage };
+    }
+    return { usage: await estimateContext(sessionId) };
+  },
   async "session.stopTask"({ sessionId, taskId }) { await getLive(sessionId).q.stopTask(taskId); return {}; },
+  async "task.transcript"({ sessionId, taskId }) { return { messages: taskTranscript(sessionId, taskId) }; },
 
   // ───── session management ─────
   async "session.rename"({ sessionId, title }) { await renameSession(sessionId, title); const s = live.get(sessionId); if (s) s.title = title; changed(); return {}; },
@@ -109,10 +131,10 @@ export const handlers = {
   async "update.channel"({ url, token, path: p, github }) {
     prefs.updateChannel = github ? { github: githubRepo(github), token: token || "" }
       : p ? { path: p } : url ? { url: url.replace(/\/$/, ""), token } : null;
-    savePrefs();
+    savePrefs(); clearReleaseCache();
     return { channel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null };
   },
-  async "update.check"(m) { const ch = m.url || m.path || m.github ? m : prefs.updateChannel; if (!ch) return { available: false, channel: null }; return { ...(await checkUpdate(ch)), channel: sourceName(ch) }; },
+  async "update.check"(m) { if (m.fresh) clearReleaseCache(); const ch = m.url || m.path || m.github ? m : prefs.updateChannel; if (!ch) return { available: false, channel: null }; return { ...(await checkUpdate(ch)), channel: sourceName(ch) }; },
   // ───── release tracks (GitHub releases): stable, beta, or one pinned version ─────
   async "releases.list"() {
     const ch = prefs.updateChannel;
@@ -127,7 +149,7 @@ export const handlers = {
     if (track === "pin" && !tag) throw new Error("Pick a version to pin");
     prefs.updateTrack = track === "pin" ? { track, tag } : { track };
     delete prefs.notifiedRelease;   // tell about the new track's newest release again
-    savePrefs();
+    savePrefs(); clearReleaseCache();
     return { track: prefs.updateTrack };
   },
   /** Pulls the update, then restarts once no chat is mid-reply (SIGUSR2, see index.js). */
@@ -149,6 +171,13 @@ export const handlers = {
     setTimeout(() => process.kill(process.pid, "SIGUSR2"), 500);   // reload restored preferences: restart when idle
     return r;
   },
+  // ───── background services kept running across app restarts (services.js) ─────
+  async "services.list"() { return { services: listServices() }; },
+  async "services.add"(m) { return { service: addService(m) }; },
+  async "services.remove"(m) { return removeService(m); },
+  async "services.enable"(m) { return setServiceEnabled(m); },
+  async "services.restart"(m) { return restartService(m); },
+  async "services.logs"(m) { return serviceLogs(m); },
   // ───── Termux (termux.js) ─────
   async "termux.installCommand"() { return installCommand(); },
 
@@ -180,3 +209,17 @@ export const handlers = {
   async "fs.mkdir"({ path: p }) { await fs.promises.mkdir(p, { recursive: true }); return { path: p }; },
   async upload({ cwd, name, data }) { return { path: await saveUpload(cwd, name, data) }; },
 };
+
+/** A closed chat's context window, estimated from its last reply's token counts (Claude Code reports it only for open chats). */
+async function estimateContext(sessionId) {
+  const messages = await getSessionMessages(sessionId);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i], u = m.type === "assistant" && !m.parent_tool_use_id && m.message?.usage;
+    if (!u) continue;
+    const total = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.output_tokens || 0);
+    const model = m.message.model || "";
+    const max = cache.contextMax?.[model] || (total > 200000 || /\[1m\]/.test(model) ? 1000000 : 200000);
+    return { estimated: true, model, totalTokens: total, maxTokens: max, percentage: Math.min(100, total / max * 100), categories: [] };
+  }
+  return null;
+}

@@ -41,6 +41,7 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 | `update.apply` | (same) | `updated, depsChanged`; the server then restarts when idle |
 | `migrate.run` | `url, token` of the Termux server | `job`; progress arrives as `{ t: "migrate", job }` events (built-in mode only) |
 | `backup.create` / `backup.list` / `backup.restore` | — / — / `file` | `file, bytes` / `dir, backups[{file,name,bytes,at}]` / `restored` (then the server restarts when idle). Backups go to `/sdcard/Download/Pocket Agent`, without credentials or tokens |
+| `services.list` / `services.add` / `services.remove` / `services.enable` / `services.restart` / `services.logs` | — / `name, cmd, cwd?` / `name` / `name, enabled` / `name` / `name, lines?` | background services kept running across app restarts (`server/src/services.js`, CLI `pa-service`): `services[{name, cmd, cwd, enabled, state, pid, since, restarts, log}]` / `service` / … / `text` |
 | `termux.installCommand` | | `command` (paste into Termux), `expiresIn`: fetches `/termux/install.sh?code=` with a 30-minute code |
 | `migrate.status` | | `job` |
 | `native.call` | `method, params, timeoutMs?` | `result` from the phone (server → phone RPC, see below) |

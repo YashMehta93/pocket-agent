@@ -135,6 +135,7 @@ class ChatView {
     this.finishGhosts();
     for (const card of this.tools.values()) if (card.status === "run") this.setStatus(card, "unknown");
     this.loadingHistory = false;
+    this.fresh = false;
   }
   systemHistory(m) {
     const msg = m.message || {};
@@ -171,12 +172,14 @@ class ChatView {
     if (e.type === "content_block_start") {
       const b = e.content_block;
       if (b.type === "text" || b.type === "thinking") {
-        const parent = this.container(this.curParent);
-        let el;
-        if (b.type === "text") { el = h(`<div class="md ghost caret"></div>`); }
-        else { el = h(`<details class="thinking ghost" ${settings.showThinking ? "open" : ""}><summary>${icon("brain")}<span>Thinking…</span></summary><div class="md"></div></details>`); }
-        parent.append(el);
-        this.ghosts.set(key, { el, kind: b.type, text: "" });
+        if (b.type === "text") {
+          const el = h(`<div class="md ghost caret"></div>`);
+          this.container(this.curParent).append(el);
+          this.ghosts.set(key, { el, kind: "text", text: "" });
+        } else {
+          const md = this.thoughtSlot(this.curParent, true);
+          this.ghosts.set(key, { el: md.closest(".thinking"), md, kind: "thinking", text: "" });
+        }
         scrollIfPinned();
       } else if (b.type === "tool_use") {
         if (!this.tools.has(b.id)) this.toolCard(b.id, b.name, {}, this.curParent, true);
@@ -205,9 +208,9 @@ class ChatView {
   scheduleGhost(g) { if (g.t) return; g.t = setTimeout(() => { g.t = null; this.paintGhost(g); scrollIfPinned(); }, 70); }
   paintGhost(g) {
     if (g.kind === "text") setMd(g.el, g.text);
-    else setMd(g.el.querySelector(".md"), g.text || "…");
+    else setMd(g.md, g.text || "…");
   }
-  finishGhosts() { for (const g of this.ghosts.values()) { clearTimeout(g.t); g.el.classList.remove("caret"); } this.ghosts.clear(); }
+  finishGhosts() { for (const g of this.ghosts.values()) { clearTimeout(g.t); g.el.classList.remove("caret"); if (g.kind === "thinking") this.endThought(g.el); } this.ghosts.clear(); }
   takeGhost(kind, parentId) {
     for (const [k, g] of this.ghosts) if (g.kind === kind) { clearTimeout(g.t); this.ghosts.delete(k); return g; }
     return null;
@@ -221,6 +224,7 @@ class ChatView {
       const bkey = `${msg.id}:${b.type}:${b.id || i}:${(b.text || b.thinking || "").length}`;
       if (this.renderedBlocks.has(bkey)) return;
       this.renderedBlocks.add(bkey);
+      this.fresh = true;
       if (b.type === "text") {
         if (!b.text?.trim()) return;
         const g = !history && this.takeGhost("text");
@@ -233,11 +237,9 @@ class ChatView {
         const g = !history && this.takeGhost("thinking");
         const text = b.thinking || "";
         if (!text && !g) return;
-        const el = g ? g.el : h(`<details class="thinking"><summary>${icon("brain")}<span>Thought</span></summary><div class="md"></div></details>`);
-        el.classList.remove("ghost"); el.open = false;
-        el.querySelector("summary span").textContent = "Thought";
-        if (text) setMd(el.querySelector(".md"), text);
-        if (!g) parent.append(el);
+        const md = g ? g.md : this.thoughtSlot(parentId, false);
+        if (text) setMd(md, text);
+        this.endThought(md.closest(".thinking"));
       } else if (b.type === "tool_use" || b.type === "server_tool_use") {
         const card = this.tools.get(b.id);
         if (card) { card.input = b.input || {}; this.fillToolInput(card); }
@@ -276,6 +278,7 @@ class ChatView {
   userBubble(text, images = [], uuid, isCmd) {
     if (uuid && this.rendered.has(uuid)) return;
     if (uuid) { this.rendered.add(uuid); this.userTexts.set(uuid, text); }
+    this.fresh = true;
     const wrap = h(`<div class="user-msg-wrap"><div class="user-msg"><div><div class="imgs"></div><div class="bubble ${isCmd ? "cmd-chip" : ""}"></div></div></div>
       <div class="msg-actions" hidden><button class="icon-btn sm" data-a="copy" data-icon="copy" aria-label="Copy"></button>${uuid ? `<button class="icon-btn sm" data-a="edit" data-icon="edit" aria-label="Edit"></button>` : ""}</div></div>`);
     wrap.querySelector(".bubble").textContent = text;
@@ -292,7 +295,6 @@ class ChatView {
 
   // ───── tool cards ─────
   toolCard(id, name, input, parentId, live) {
-    const parent = this.container(parentId);
     const el = h(`<details class="tool"><summary><span class="ti">${icon(TOOL_ICON[name] || (name.startsWith("mcp__") ? "bolt" : "terminal"))}</span>
       <span class="tn"></span><span class="ts"></span><span class="st ${live ? "spin" : ""}"></span></summary><div class="tb"></div></details>`);
     el.querySelector(".tn").textContent = prettyToolName(name);
@@ -300,13 +302,15 @@ class ChatView {
     const card = { id, name, input, el, body: el.querySelector(".tb"), summaryEl: el.querySelector(".ts"), stEl: el.querySelector(".st"), status: live ? "run" : "done" };
     if (settings.autoExpandTools || name === "TodoWrite" || name === "Task" || name === "Agent" || name === "ExitPlanMode") el.open = name !== "Task" && name !== "Agent" ? true : false;
     this.tools.set(id, card);
+    el._card = card;
     this.fillToolInput(card);
-    parent.append(el);
+    if (name === "AskUserQuestion" || name === "ExitPlanMode") this.container(parentId).append(el); else this.place(el, parentId);
     return card;
   }
   fillToolInput(card) {
     const { name, input } = card, body = card.body;
     card.summaryEl.textContent = toolSummary(name, input);
+    if (card.el.isConnected) this.updateGroup(card.el.closest(".steps"));   // the line names what's running once its input arrives
     body.querySelector(".tin")?.remove();
     const box = document.createElement("div"); box.className = "tin";
     if (name === "Bash") { box.append(codeBlock("$ " + (input.command || ""), "bash", true)); }
@@ -350,11 +354,66 @@ class ChatView {
     card.status = s;
     card.stEl.className = "st " + (s === "ok" ? "ok" : s === "err" ? "err" : "");
     card.stEl.innerHTML = s === "ok" ? icon("check") : s === "err" ? icon("x") : "";
+    this.updateGroup(card.el.closest(".steps"));
+  }
+
+  // ───── thoughts: back-to-back thoughts share one collapsible block ─────
+  thoughtSlot(parentId, live) {
+    const parent = this.container(parentId);
+    let head = parent.lastElementChild;
+    if (!head?.classList.contains("thinking")) {
+      head = h(`<details class="thinking"><summary>${icon("brain")}<span>Thought</span></summary><div class="th-body"></div></details>`);
+      head.querySelector("summary").addEventListener("click", () => delete head.dataset.auto);   // the person's choice sticks
+      parent.append(head);
+    }
+    const md = document.createElement("div"); md.className = "md";
+    head.querySelector(".th-body").append(md);
+    if (live) {
+      head.classList.add("ghost");
+      head.querySelector("summary span").textContent = "Thinking…";
+      if (settings.showThinking && !head.open) { head.open = true; head.dataset.auto = "1"; }
+    }
+    return md;
+  }
+  endThought(head) {
+    if (!head) return;
+    head.classList.remove("ghost");
+    if (head.dataset.auto) { head.open = false; delete head.dataset.auto; }
+    const n = head.querySelectorAll(".th-body > .md").length;
+    head.querySelector("summary span").textContent = n > 1 ? `Thought · ${n} times` : "Thought";
+  }
+
+  // ───── grouped steps (steps.js): a run of top-level tool calls shares one line; thoughts stay in the chat ─────
+  place(el, parentId) {
+    if (parentId) return this.container(parentId).append(el);
+    let g = this.root.lastElementChild;
+    while (g?.classList.contains("thinking")) g = g.previousElementSibling;   // the run goes on past Claude's thoughts
+    if (!g?.classList.contains("steps")) {
+      g = h(`<div class="steps"><button class="steps-line"><span class="spark"></span><span class="sl-t"></span><span class="sl-err"></span><span class="chev">›</span></button><div class="steps-list"></div></div>`);
+      g.querySelector(".steps-line").onclick = () => openSteps(g);
+      this.root.append(g);
+    }
+    g.querySelector(".steps-list").append(el);
+    this.updateGroup(g);
+  }
+  updateGroup(g) {
+    if (!g) return;
+    const cards = [...g.querySelector(".steps-list").children].map(e => e._card).filter(Boolean);
+    const err = cards.filter(c => c.status === "err").length;
+    g.classList.toggle("has-tools", cards.length > 0);
+    g.classList.toggle("running", cards.some(c => c.status === "run"));
+    g.querySelector(".sl-t").textContent = stepsSummary(cards);
+    g.querySelector(".sl-err").textContent = err ? ` · ${err} failed` : "";
+    if (sheet.key === "steps" && sheet.group === g) drawSteps(g);
   }
 
   // ───── misc ─────
   resultLine(ev) {
     for (const c of this.tools.values()) if (c.status === "run") this.setStatus(c, "unknown");
+    // a turn that showed nothing (e.g. Claude Code noting that background tasks stopped) gets no line
+    const quiet = !this.fresh && (!ev.subtype || ev.subtype === "success") && !ev.permission_denials?.length;
+    this.fresh = false;
+    if (quiet) return;
     const bits = [];
     if (ev.duration_ms) bits.push(fmtDur(ev.duration_ms));
     if (ev.usage) { const out = ev.usage.output_tokens || 0; if (out) bits.push(fmtTok(out) + " out"); }
