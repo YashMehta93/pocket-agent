@@ -1,8 +1,8 @@
 // Pocket Agent's own MCP tools, put in every top-level chat: hand a task to the other engine as a linked worker chat.
 // Claude chats get deepseek_task, DeepSeek chats get claude_task (docs: SPEC §4.9 and §6 in the DeepSeek notes).
-// Each call asks on the phone first, except in a chat that runs in Bypass (the owner's rule). The worker is a normal
-// chat the person can open, approve and stop; it runs in the calling chat's permission mode, and its report (status,
-// time, cost, changed files, its last message) goes back to the calling chat as the tool's result.
+// Each call asks on the phone first, unless the chat runs in Bypass (the owner's rule) or the person chose "always" for
+// it in that chat. The worker is a normal chat the person can open, approve and stop; it runs in the calling chat's
+// permission mode, and its report (status, time, cost, changed files, its last message) goes back as the tool's result.
 // Workers get no tools of their own (depth 1), so they can't start chains of workers.
 import fs from "node:fs";
 import path from "node:path";
@@ -57,7 +57,7 @@ export function toolsFor(s) {
     const server = createSdkMcpServer({ name: "pocket", version: VERSION, alwaysLoad: true, timeout: 6 * 3600e3,
       instructions: s.engine === "deepseek" ? DEEPSEEK_SIDE : CLAUDE_SIDE, tools });
     // always_ask: Claude Code asks our canUseTool before every call, even where an allow rule or Auto mode would let it
-    // through. live-session.js answers it for a chat in Bypass; every other mode asks the phone.
+    // through. live-session.js allows it at once in Bypass or after "always" in this chat; otherwise the phone is asked.
     return { pocket: { ...server, tools: tools.map(t => ({ name: t.name, permission_policy: "always_ask" })) } };
   } catch (e) {
     log("pocket tools failed", e?.message);   // the chat still opens, just without them
@@ -89,6 +89,9 @@ function workerMode(parent, engine) {
 
 async function run(parent, engine, args, extra) {
   const toolName = engine === "deepseek" ? DS_TOOL : CLAUDE_TOOL, who = NAME[engine];
+  // A chat keeps the tools it started with; a direction turned off since then is still off.
+  if (engine === "deepseek" ? dsSettings().toDeepseek === false : dsSettings().toClaude === false)
+    return fail(engine === "deepseek" ? "Sending work to DeepSeek is turned off (Settings → DeepSeek)." : "Asking Claude is turned off (Settings → DeepSeek).");
   const meta = extra?._meta?.["claudecode/toolUseId"], callId = typeof meta === "string" ? meta : null;
   const approved = takeApprovalFor(parent, toolName, callId);
   // Defence in depth: Claude Code only runs this after canUseTool allowed it. Without a recorded OK, only a chat in Bypass may go on.
@@ -116,6 +119,10 @@ async function run(parent, engine, args, extra) {
   log("worker", worker.sessionId.slice(0, 8), "for", parent.sessionId.slice(0, 8), engine, mode);
 
   const before = await gitStatus(worker.cwd), usd0 = chatSpend(worker.sessionId)?.usd || 0, t0 = Date.now(), text0 = worker.lastText;
+  if (extra?.signal?.aborted) {   // the calling chat was stopped before the worker got its task: don't send it
+    if (!args.continue_chat) worker.close();
+    return fail("Stopped before the worker began.");
+  }
   const turn = worker.waitTurn();
   worker.send({ text: args.continue_chat ? `[Pocket Agent] A follow-up from "${oneLine(parent.title) || "the calling chat"}":\n\n${args.task}`
     : brief({ who, other: NAME[parent.engine === "deepseek" ? "deepseek" : "claude"], parent, cwd: worker.cwd, task: args.task, approved: !!approved }) });
@@ -148,14 +155,14 @@ export function brief({ who, other, parent, cwd, task, approved }) {
     + `When you finish, end with a short report: what you changed (files), how you checked it, and anything left open.\n\n${task}`;
 }
 
-/** The tool's result. Stable: the app reads the first line and the "Chat:" line. */
+/** The tool's result. Stable: the app reads the first line and the "Chat:" line. `text` defaults to the result's own text. */
 export function report({ who, worker, r, before, after, ms, usd, parentStopped, text }) {
   const sub = r?.subtype || "closed";
   const status = parentStopped || sub === "error_during_execution" ? "stopped"
     : sub !== "success" ? `failed (${sub})` : r.is_error ? "failed (error)" : "done";
   const model = String(worker.model || "default").replace(/\[1m\]$/i, "");
   const cost = usd == null ? "" : usd < 0.001 ? " · under $0.001" : ` · about $${usd.toFixed(usd < 1 ? 3 : 2)}`;
-  let body = String(text || "").trim() || "(no reply)";
+  let body = String((text ?? r?.result) || "").trim() || "(no reply)";
   if (body.length > REPORT_MAX) body = body.slice(0, REPORT_MAX) + "\n…(cut; the full text is in the worker's chat)";
   const lines = [`${who} worker: ${status}`, `Chat: ${worker.sessionId}`, `Title: ${oneLine(worker.title)}`,
     `Folder: ${worker.cwd}`, `Model: ${model} · ${duration(ms)}${cost}`, changed(before, after), "---", body];

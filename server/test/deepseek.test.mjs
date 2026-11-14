@@ -4,6 +4,7 @@
 // No key, no Claude account, no network: a throwaway HOME / PA_DATA; test-mode Claude chats talk to the fake too, and
 // anything Claude Code aims at another host goes to the fake's refusing proxy and fails the test.
 //   npm run test:deepseek     On the phone, one Claude Code test at a time: flock /tmp/pa-claude-test.lock npm run test:deepseek
+//   npm run test:deepseek -- --unit     the unit part only
 // Ports: 8771 (the test server), 8772 (the fake DeepSeek).
 import fs from "node:fs";
 import os from "node:os";
@@ -15,8 +16,11 @@ import { startMock, parseDirectives } from "./mock-deepseek.mjs";
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
 const SERVER_PORT = 8771, MOCK_PORT = 8772;
 const KEY = "sk-test-deepseek";                 // the "real" DeepSeek key: only the server and the fake may ever see it
-const CLAUDE_KEY = "sk-test-claude-engine";     // what test-mode Claude chats send to the fake (PA_TEST_ANTHROPIC_KEY)
+// What test-mode Claude chats send to the fake (PA_TEST_ANTHROPIC_KEY). Not the DeepSeek key, as the spec had it: DeepSeek
+// chats inherit PA_TEST_ANTHROPIC_KEY, and their environment must be free of the DeepSeek key for the check below to mean anything.
+const CLAUDE_KEY = "sk-test-claude-engine";
 const DS_TOOL = "mcp__pocket__deepseek_task", CLAUDE_TOOL = "mcp__pocket__claude_task";
+const UNIT_ONLY = process.argv.includes("--unit");
 const CLAUDE_BIN = findClaude();                // before HOME changes: Claude Code lives in the real home
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "pa-deepseek-"));
 // Nothing from the shell that runs us may reach the servers or Claude Code: inside Pocket Agent that's the app's own
@@ -24,7 +28,7 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), "pa-deepseek-"));
 const CLEAN = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE|ANTHROPIC|PA_|MCP_|HTTPS?_PROXY$|NO_PROXY$)/i.test(k)));
 
 let fails = 0;
-const ok = (name, cond, extra = "") => { console.log(cond ? "PASS" : "FAIL", name, extra ? `(${String(extra).slice(0, 400)})` : ""); if (!cond) fails++; return !!cond; };
+const ok = (name, cond, extra = "") => { console.log(cond ? "PASS" : "FAIL", name, extra ? `(${String(extra).replace(/\n/g, "\\n").slice(0, 400)})` : ""); if (!cond) fails++; return !!cond; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const write = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); };
 const textOf = c => typeof c === "string" ? c : Array.isArray(c) ? c.map(x => x?.text || "").join("\n") : "";
@@ -52,19 +56,7 @@ const hardStop = setTimeout(async () => { console.log("FAIL the whole test took 
 hardStop.unref();
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, async () => { await stopServer(); process.exit(1); });
 
-try {
-  mock = await startMock({ port: MOCK_PORT, key: KEY, alsoAccept: [CLAUDE_KEY] });
-  await unitTests();
-  if (!CLAUDE_BIN) console.log("SKIP e2e: no Claude Code binary");
-  else await e2eTests();
-} catch (e) { ok("the test ran to the end", false, e?.stack || e); }
-finally {
-  await stopServer();
-  await mock?.close();
-  fs.rmSync(T, { recursive: true, force: true });
-}
-console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
-process.exit(fails ? 1 : 0);
+// (the run itself is at the end of the file, once every class and binding below exists)
 
 async function unitTests() {
   // ───── the fake itself ─────
@@ -83,6 +75,13 @@ async function unitTests() {
     ok("fake: a worker's directives stay inside the caller's tool call", d.tools.length === 1 && d.tools[0].input.task === task && d.think && d.slow === 0);
     const bal = await (await fetch(`http://127.0.0.1:${MOCK_PORT}/user/balance`, { headers: { authorization: `Bearer ${KEY}` } })).json();
     ok("fake: the balance answers like DeepSeek's", bal.is_available === true && bal.balance_infos?.[0]?.total_balance === "4.20");
+    const thought = { type: "thinking", thinking: "t", signature: "s" };
+    const after = await (await post({ model: "deepseek-flash", thinking: { type: "adaptive" }, tools: [{ name: "Bash" }], messages: [
+      { role: "user", content: [{ type: "text", text: "<system-reminder>notes</system-reminder>" }, { type: "text", text: `Run. ${'[[tool Bash {"command":"echo hi"}]]'}` }] },
+      { role: "assistant", content: [thought, { type: "tool_use", id: "t1", name: "Bash", input: { command: "echo hi" } }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "hi" }] },
+      { role: "user", content: [{ type: "text", text: "<system-reminder>a note from Claude Code</system-reminder>" }] }] })).json();
+    ok("fake: a note after the tool result doesn't hide it", after.content?.at(-1)?.text === "MOCK DONE. Last tool result: hi", JSON.stringify(after.content));
   });
 
   const ds = await import("../src/deepseek.js");
@@ -145,6 +144,17 @@ async function unitTests() {
   });
 
   // ───── the key keeper ─────
+  await step("SSE usage parser", async () => {
+    const ev = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const sse = ": keep-alive\n\n" + ev("message_start", { type: "message_start", message: { usage: { input_tokens: 5, cache_read_input_tokens: 20, output_tokens: 1 } } })
+      + ev("ping", { type: "ping" }) + ev("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "héllo ✓ 你好" } })
+      + ev("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 42 } }) + ev("message_stop", { type: "message_stop" });
+    const usage = (text, size) => { const p = ds.sseUsage(), b = Buffer.from(text); for (let i = 0; i < b.length; i += size) p.push(b.subarray(i, i + size)); return { u: p.end(), stopped: p.stopped }; };
+    const whole = usage(sse, 1e9), bytes = usage(sse, 1), crlf = usage(sse.replace(/\n/g, "\r\n"), 3);
+    ok("SSE usage parser: the same usage whole, one byte at a time (UTF-8 cut too) and with CRLF", whole.u?.output_tokens === 42 && whole.u.input_tokens === 5 && whole.u.cache_read_input_tokens === 20
+      && JSON.stringify(bytes.u) === JSON.stringify(whole.u) && JSON.stringify(crlf.u) === JSON.stringify(whole.u) && whole.stopped && bytes.stopped && crlf.stopped, JSON.stringify([whole, bytes, crlf]));
+  });
+
   await step("key keeper", async () => {
     const proxySrv = http.createServer((req, res) => { const url = new URL(req.url, "http://x"); if (url.pathname.startsWith("/deepseek/")) return ds.proxy(req, res, url); res.writeHead(404); res.end(); });
     await new Promise(r => proxySrv.listen(SERVER_PORT, "127.0.0.1", r));
@@ -249,6 +259,17 @@ async function unitTests() {
     for (const id of fakes) live.set(id, { sessionId: id, link: { parent: "p" }, state: "running" });
     try { r = await call(fake({ permissionMode: "bypassPermissions" }), { task: "One more." }); } finally { for (const id of fakes) live.delete(id); }
     ok("at most three workers at once", /Three workers/.test(resultText(r)));
+    const kept = dg.pocketTools(fake({ permissionMode: "bypassPermissions" }))[0];   // a chat keeps the tools it started with…
+    ds.setDsSettings({ toDeepseek: false });
+    try { r = await kept.handler({ task: "Do it.", cwd: path.join(T, "no-such-folder") }); } finally { ds.setDsSettings({ toDeepseek: true }); }
+    ok("…but a direction turned off since then is off", /turned off/.test(resultText(r)), resultText(r));
+    // Stopped before the worker got its task: it isn't sent, and the new worker chat closes (this opens one on the fake binary)
+    const before = new Set(live.keys());
+    r = await call(fake({ permissionMode: "bypassPermissions" }), { task: "Never sent." }, { signal: AbortSignal.abort(), ...meta("toolu_stopped") });
+    const opened = [...live.values()].filter(s => !before.has(s.sessionId));
+    await until(() => opened.every(s => !live.has(s.sessionId)), 5000, "the worker to close").catch(() => {});
+    ok("stopped before the worker began: nothing sent, the worker closes", /Stopped before the worker began/.test(resultText(r)) && opened.every(s => !live.has(s.sessionId) && !s.buffer.some(e => e.ev.type === "pa_user")),
+      resultText(r));
   });
 
   await step("report", async () => {
@@ -345,6 +366,10 @@ async function e2eTests() {
     PA_DEEPSEEK_URL: mock.url, PA_TEST_ANTHROPIC_URL: mock.url, PA_TEST_ANTHROPIC_KEY: CLAUDE_KEY,
     // anything aimed at another host (api.anthropic.com…) goes to the fake, which refuses it and writes it down
     HTTPS_PROXY: refuse, HTTP_PROXY: refuse, https_proxy: refuse, http_proxy: refuse, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" };
+  // A run that was killed (Android does that when memory runs low) can leave its server behind; ours would then fail to
+  // listen while the old one answered every check below.
+  const stale = await fetch(`http://127.0.0.1:${SERVER_PORT}/health`).then(r => r.ok, () => false);
+  if (!ok(`e2e: port ${SERVER_PORT} is free`, !stale, "something already answers there: a test server left from a killed run? Stop it, then run again")) return;
   server = spawn(process.execPath, [path.join(REPO, "server/src/index.js"), "--port", String(SERVER_PORT)], { env, stdio: ["ignore", "pipe", "pipe"] });
   server.stdout.on("data", d => serverOut += d); server.stderr.on("data", d => serverOut += d);
   await until(() => serverOut.includes(`:${SERVER_PORT}`), 20000, "the test server").catch(() => {});
@@ -413,7 +438,8 @@ async function e2eTests() {
     const reqs = mock.requests.slice(n0).filter(r => r.model);
     ok("e2e DeepSeek chat: DeepSeek got the real key and model deepseek-flash", reqs.length > 0 && reqs.every(r => r.auth === `Bearer ${KEY}` && r.model === "deepseek-flash"),
       reqs.map(r => `${r.model} ${r.auth}`).join(" | "));
-    ok("e2e DeepSeek chat: the turn ends normally", end.subtype === "success" && /MOCK DONE/.test(end.result || ""), end.result);
+    if (!ok("e2e DeepSeek chat: the turn ends normally", end.subtype === "success" && /MOCK DONE/.test(end.result || ""), end.result))
+      for (const r of reqs) console.log("   request:", r.shape, "→", (r.reply || []).join(" "));   // what Claude Code sent, to see why
     const item = (await cl.call("sessions.list", {})).sessions.find(s => s.sessionId === dsChat);
     ok("e2e sessions.list: a DeepSeek chat, with its spend", item?.engine === "deepseek" && item.spend > 0, JSON.stringify(item && { engine: item.engine, spend: item.spend }));
     const st = await cl.call("deepseek.status", {});
@@ -476,7 +502,7 @@ async function e2eTests() {
     await turnEnd(parent, from);
     const rep = reportIn(parent, from);
     ok("e2e Claude → DeepSeek: the report: done, the worker's chat, its output, the new file", rep.startsWith("DeepSeek worker: done\n") && rep.includes(`\nChat: ${link.child}\n`)
-      && rep.includes("worker-ok") && /\nModel: deepseek-flash · \d+s · (about \$|under \$)/.test(rep) && rep.includes("Changed: 1 file\n  ?? worker.txt"), rep.slice(0, 400));
+      && rep.includes("worker-ok") && /\nModel: deepseek-flash · (\d+m )?\d+s · (about|under) \$/.test(rep) && rep.includes("Changed: 1 file\n  ?? worker.txt"), rep.slice(0, 400));
     const reqs = mock.requests.slice(n0).filter(r => r.model);
     const parentReqs = reqs.filter(r => /^claude/.test(r.model)), workerReqs = reqs.filter(r => r.bodyText.includes("You're a DeepSeek worker"));
     ok("e2e Claude → DeepSeek: the Claude chat had deepseek_task; the worker had no pocket tools", parentReqs.some(r => r.tools.includes(DS_TOOL)) && workerReqs.length > 0
@@ -586,3 +612,20 @@ async function e2eTests() {
   });
   cl.ws.close();
 }
+
+// ───── the run ─────
+try {
+  mock = await startMock({ port: MOCK_PORT, key: KEY, alsoAccept: [CLAUDE_KEY] });
+  await unitTests();
+  if (UNIT_ONLY) console.log("SKIP e2e: --unit");
+  else if (!CLAUDE_BIN) console.log("SKIP e2e: no Claude Code binary");
+  else await e2eTests();
+} catch (e) { ok("the test ran to the end", false, e?.stack || e); }
+finally {
+  await stopServer();
+  if (fails && serverOut) console.log("\n── the test server's log (end) ──\n" + serverOut.slice(-6000).replaceAll(KEY, "<key>"));
+  await mock?.close();
+  fs.rmSync(T, { recursive: true, force: true });
+}
+console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
+process.exit(fails ? 1 : 0);
