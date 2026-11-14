@@ -42,6 +42,21 @@ await until(() => $$("#messages > *").length > 0, 20000, "history render");
 ok(`history rendered: ${$$(".user-msg").length} user msgs, ${$$(".tool").length} tool cards, ${$$("#messages .md").length} text blocks`, $$(".user-msg").length > 0);
 ok("title set", $("#chat-title").textContent !== "New chat");
 
+// result lines: a turn that showed nothing (Claude Code noting stopped background tasks) gets none
+const lines0 = $$(".result-line").length;
+ev(`chat.event({ type: "result", subtype: "success", duration_ms: 431 })`);
+ok("a turn that showed nothing adds no result line", $$(".result-line").length === lines0);
+ev(`chat.event({ type: "assistant", uuid: "u-test-1", message: { id: "m-test-1", content: [{ type: "text", text: "Done." }] } }); chat.event({ type: "result", subtype: "success", duration_ms: 1200 })`);
+ok("a turn with a reply gets its result line", $$(".result-line").length === lines0 + 1);
+
+// thoughts stay in the chat (one tap opens them); a run of tool calls continues past them into one line
+ev(`chat.event({ type: "assistant", uuid: "u-t-2", message: { id: "m-t-2", content: [{ type: "tool_use", id: "tu-a", name: "Bash", input: { command: "ls", description: "List files" } }] } });
+  chat.event({ type: "assistant", uuid: "u-t-3", message: { id: "m-t-3", content: [{ type: "thinking", thinking: "Now check the size of each file." }] } });
+  chat.event({ type: "assistant", uuid: "u-t-4", message: { id: "m-t-4", content: [{ type: "tool_use", id: "tu-b", name: "Bash", input: { command: "du -sh *", description: "Check sizes" } }] } })`);
+const lastGroup = [...$$("#messages > .steps")].pop();
+ok("thoughts stay in the chat, not inside the steps line", $$("#messages .steps .thinking").length === 0 && $$("#messages > .thinking").length > 0);
+ok("tool calls on both sides of a thought share one line: " + lastGroup?.querySelector(".sl-t").textContent, lastGroup?.querySelectorAll(".steps-list > .tool").length === 2);
+
 // grouped steps: one line per run of tool calls, a timeline sheet, a page per step that hands the card back
 const grp = $("#messages .steps.has-tools");
 if (grp) {

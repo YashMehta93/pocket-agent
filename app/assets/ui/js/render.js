@@ -135,6 +135,7 @@ class ChatView {
     this.finishGhosts();
     for (const card of this.tools.values()) if (card.status === "run") this.setStatus(card, "unknown");
     this.loadingHistory = false;
+    this.fresh = false;
   }
   systemHistory(m) {
     const msg = m.message || {};
@@ -175,7 +176,7 @@ class ChatView {
         let el;
         if (b.type === "text") { el = h(`<div class="md ghost caret"></div>`); }
         else { el = h(`<details class="thinking ghost" ${settings.showThinking ? "open" : ""}><summary>${icon("brain")}<span>Thinking…</span></summary><div class="md"></div></details>`); }
-        if (b.type === "text") parent.append(el); else this.place(el, this.curParent);
+        parent.append(el);
         this.ghosts.set(key, { el, kind: b.type, text: "" });
         scrollIfPinned();
       } else if (b.type === "tool_use") {
@@ -221,6 +222,7 @@ class ChatView {
       const bkey = `${msg.id}:${b.type}:${b.id || i}:${(b.text || b.thinking || "").length}`;
       if (this.renderedBlocks.has(bkey)) return;
       this.renderedBlocks.add(bkey);
+      this.fresh = true;
       if (b.type === "text") {
         if (!b.text?.trim()) return;
         const g = !history && this.takeGhost("text");
@@ -237,7 +239,7 @@ class ChatView {
         el.classList.remove("ghost"); el.open = false;
         el.querySelector("summary span").textContent = "Thought";
         if (text) setMd(el.querySelector(".md"), text);
-        if (!g) this.place(el, parentId);
+        if (!g) parent.append(el);
       } else if (b.type === "tool_use" || b.type === "server_tool_use") {
         const card = this.tools.get(b.id);
         if (card) { card.input = b.input || {}; this.fillToolInput(card); }
@@ -276,6 +278,7 @@ class ChatView {
   userBubble(text, images = [], uuid, isCmd) {
     if (uuid && this.rendered.has(uuid)) return;
     if (uuid) { this.rendered.add(uuid); this.userTexts.set(uuid, text); }
+    this.fresh = true;
     const wrap = h(`<div class="user-msg-wrap"><div class="user-msg"><div><div class="imgs"></div><div class="bubble ${isCmd ? "cmd-chip" : ""}"></div></div></div>
       <div class="msg-actions" hidden><button class="icon-btn sm" data-a="copy" data-icon="copy" aria-label="Copy"></button>${uuid ? `<button class="icon-btn sm" data-a="edit" data-icon="edit" aria-label="Edit"></button>` : ""}</div></div>`);
     wrap.querySelector(".bubble").textContent = text;
@@ -353,10 +356,11 @@ class ChatView {
     this.updateGroup(card.el.closest(".steps"));
   }
 
-  // ───── grouped steps (steps.js): a run of top-level tool calls and thoughts shares one line ─────
+  // ───── grouped steps (steps.js): a run of top-level tool calls shares one line; thoughts stay in the chat ─────
   place(el, parentId) {
     if (parentId) return this.container(parentId).append(el);
     let g = this.root.lastElementChild;
+    while (g?.classList.contains("thinking")) g = g.previousElementSibling;   // the run goes on past Claude's thoughts
     if (!g?.classList.contains("steps")) {
       g = h(`<div class="steps"><button class="steps-line"><span class="spark"></span><span class="sl-t"></span><span class="sl-err"></span><span class="chev">›</span></button><div class="steps-list"></div></div>`);
       g.querySelector(".steps-line").onclick = () => openSteps(g);
@@ -379,6 +383,10 @@ class ChatView {
   // ───── misc ─────
   resultLine(ev) {
     for (const c of this.tools.values()) if (c.status === "run") this.setStatus(c, "unknown");
+    // a turn that showed nothing (e.g. Claude Code noting that background tasks stopped) gets no line
+    const quiet = !this.fresh && (!ev.subtype || ev.subtype === "success") && !ev.permission_denials?.length;
+    this.fresh = false;
+    if (quiet) return;
     const bits = [];
     if (ev.duration_ms) bits.push(fmtDur(ev.duration_ms));
     if (ev.usage) { const out = ev.usage.output_tokens || 0; if (out) bits.push(fmtTok(out) + " out"); }
