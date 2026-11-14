@@ -96,6 +96,7 @@ export class LiveSession {
       for await (const m of this.q) {
         this.lastActive = Date.now();
         this.activity.feed(m);
+        if (this.state === "idle" && (m.type === "stream_event" || m.type === "assistant")) this.setState("running");   // Claude is replying, whatever ended the last turn
         if (m.type === "system" && m.subtype === "init") {
           this.model = m.model || this.model;
           if (m.permissionMode && (!this.sawInit || this.permissionMode === "plan")) this.permissionMode = m.permissionMode;
@@ -107,6 +108,9 @@ export class LiveSession {
         } else if (m.type === "assistant" && !m.parent_tool_use_id) {
           const t = (m.message?.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
           if (t) this.lastText = t;
+        } else if (m.type === "command_lifecycle" && m.state === "started") {
+          // a queued message begins its turn (e.g. after a short turn for background-task notices ended in "idle")
+          if (this.state !== "waiting") this.setState("running");
         } else if (m.type === "rate_limit_event") {
           noteRateLimit(m.rate_limit_info);
         } else if (m.type === "result") {
