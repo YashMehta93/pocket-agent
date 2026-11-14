@@ -53,7 +53,7 @@ function taskAgent(t, sid) {
   const status = TASK_STATE[t.status] || "done";
   return { key: "t:" + t.id, kind: t.kind === "agent" ? "agent" : "command", id: t.id, sid, engine: chatEngine(sid), title: t.description || "Background task", status,
     now: status === "working" ? t.activity || (t.kind === "agent" ? "Starting…" : "") : t.summary && t.summary !== t.description ? t.summary : "",
-    steps: t.tools ?? null, tokens: t.tokens ?? null, ms: t.ms || ((t.endedAt || Date.now()) - t.startedAt), at: t.startedAt || 0, agentType: t.agentType, toolUseId: t.toolUseId };
+    steps: t.tools ?? null, tokens: t.tokens ?? null, ms: status === "working" ? Date.now() - (t.startedAt || Date.now()) : t.ms || ((t.endedAt || Date.now()) - t.startedAt), at: t.startedAt || 0, agentType: t.agentType, toolUseId: t.toolUseId };
 }
 /** A subagent seen only in the chat's history: its tool call (prompt and result). */
 function cardAgent(c, at) {
@@ -108,7 +108,8 @@ function askPhrase(name, input = {}) {
 /** The same, as HTML for a sheet's heading: the command or file in code. */
 function askPhraseHtml(name, input = {}) {
   const t = askPhrase(name, input), m = /^(wants to (?:run|edit|write|read|open)) (.+)$/.exec(t);
-  return m && !/^a (command|file|notebook|web page)$/.test(m[2]) ? `${esc(m[1])} <code>${esc(m[2])}</code>` : esc(t);
+  // a path may break after its slashes, not in the middle of a name
+  return m && !/^a (command|file|notebook|web page)$/.test(m[2]) ? `${esc(m[1])} <code>${esc(m[2]).replace(/(?<=\S)\//g, "/<wbr>")}</code>` : esc(t);
 }
 
 // ───────────── the switch under the header ─────────────
