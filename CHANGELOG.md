@@ -2,10 +2,11 @@
 
 Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 
-## 1.1.2
+## Unreleased
 
 - After installing an app update (APK), Pocket Agent no longer offers a second, pointless "An update is ready".
 - Update checks use far fewer GitHub requests (GitHub limits them per internet connection, and phones on the same Wi-Fi share that limit), and retry once when the network drops a request. *Check for updates* still asks GitHub right away.
+- **Background services**: dev and preview servers started from chats used to die whenever Android killed the app. `pa-service add <name> -- <command>` registers one; Pocket Agent starts it with the server, restarts it (with backoff) if it exits, and stops it cleanly on shutdown. Claude is told to use it instead of `nohup`/`&`.
 
 ## 1.1.1
 

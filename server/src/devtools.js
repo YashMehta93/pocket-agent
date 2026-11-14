@@ -164,6 +164,7 @@ export function phoneContext() {
     standalone ? "This shell is the app's built-in Alpine Linux (proot) with home /root. Phone storage is at /sdcard (Downloads: /sdcard/Download). `apk add` needs root, which this shell doesn't have: ask the user, or use `apk --usermode --root ~/sys`." : "",
     "- `termux <command>` runs a shell command in Termux (if installed and allowed in the app's Settings) and prints its output: Termux packages, termux-api (`termux termux-battery-status`), etc.",
     "- `cs` lists Claude Code sessions.",
+    "- `pa-service add <name> [--cwd DIR] -- <command>` keeps a background process (a dev server, a preview server) running: Pocket Agent restarts it after Android kills the app and if it exits. Use it instead of `nohup`/`&` for anything the user should be able to keep using. `pa-service list | logs <name> | restart <name> | remove <name>`.",
     devRepo() ? `- This app's own source code is at ${devRepo()}; it's the user's personal version. Read its CLAUDE.md before changing the app.` : "",
   ];
   return lines.filter(Boolean).join("\n");
@@ -174,7 +175,7 @@ export function phoneContext() {
 export async function ensureDefaults() {
   try {
     const writable = d => { try { fs.accessSync(d, fs.constants.W_OK); return true; } catch { return false; } };
-    for (const name of ["cs", "termux"]) {
+    for (const name of ["cs", "termux", "pa-service"]) {
       const src = path.join(ROOT, "server/devtools", name), dst = path.join("/usr/local/bin", name);
       if (!exists(src) || !writable("/usr/local/bin")) continue;
       const want = await fsp.readFile(src, "utf8");

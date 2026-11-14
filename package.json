@@ -16,7 +16,8 @@
     "test:migrate": "bash server/test/migrate.test.sh",
     "test:github": "bash server/test/github.test.sh",
     "test:extras": "cd server && node test/extras.test.mjs",
-    "test:upgrade": "bash server/test/upgrade.test.sh"
+    "test:upgrade": "bash server/test/upgrade.test.sh",
+    "test:services": "node server/test/services.test.mjs"
   },
   "devDependencies": {
     "jsdom": "^25.0.1"
