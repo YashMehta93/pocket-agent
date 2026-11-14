@@ -20,7 +20,13 @@ const TOOL_VERBS = {
   NotebookEdit: "Editing a notebook", Glob: "Finding files", Grep: "Searching code", WebFetch: "Fetching a web page",
   WebSearch: "Searching the web", TodoWrite: "Updating the task list", Task: "Starting a subagent", Agent: "Starting a subagent",
   Skill: "Using a skill", AskUserQuestion: "Asking you a question", ExitPlanMode: "Presenting a plan",
+  // Pocket Agent's own tools (delegate.js): the call lasts as long as the worker chat's turn
+  mcp__pocket__deepseek_task: "DeepSeek is working", mcp__pocket__claude_task: "Claude is working",
 };
+// ...but before the person allows the call, nothing is working yet
+const ASK_VERBS = { mcp__pocket__deepseek_task: "Send to DeepSeek", mcp__pocket__claude_task: "Ask Claude" };
+const isDelegation = name => name === "mcp__pocket__deepseek_task" || name === "mcp__pocket__claude_task";
+const firstLine = s => (String(s || "").split("\n").map(l => l.trim()).find(Boolean) || "").slice(0, 60);
 export const toolVerb = name => TOOL_VERBS[name] || (name.startsWith("mcp__") ? `Using ${name.split("__")[1]}` : `Using ${name}`);
 
 /** One line describing a tool call, e.g. the command or the file path. */
@@ -37,6 +43,7 @@ export function toolDetail(name, input) {
     case "Task": case "Agent": return input.description || "";
     case "TodoWrite": { const t = (input.todos || []).find(x => x.status === "in_progress"); return t ? t.activeForm || t.content : ""; }
     case "Skill": return input.skill || "";
+    case "mcp__pocket__deepseek_task": case "mcp__pocket__claude_task": return input.title || firstLine(input.task);
     default: { const v = Object.values(input).find(x => typeof x === "string"); return v ? v.slice(0, 160) : ""; }
   }
 }
@@ -97,7 +104,7 @@ export class Activity {
     this.changed(true);
   }
 
-  approval(toolName, input) { this.set("approval", "Waiting for your approval", `${toolVerb(toolName)}: ${toolDetail(toolName, input)}`); this.changed(true); }
+  approval(toolName, input) { this.set("approval", "Waiting for your approval", `${ASK_VERBS[toolName] || toolVerb(toolName)}: ${toolDetail(toolName, input)}`); this.changed(true); }
   approvalDone(allowed) { if (this.s.phase === "approval") this.set("waiting", allowed ? "Approved, continuing" : "Denied, telling Claude"); }
 
   /** Feed every SDK message through here. */
@@ -182,6 +189,7 @@ export class Activity {
         blk.json += d.partial_json || "";
         const n = blk.name;
         const hint = n === "Bash" ? partialField(blk.json, "command") : n === "Write" ? `${partialField(blk.json, "file_path")} · ${(blk.json.match(/\\n/g) || []).length + 1} lines`
+          : isDelegation(n) ? partialField(blk.json, "title") || firstLine(partialField(blk.json, "task"))
           : partialField(blk.json, "file_path") || partialField(blk.json, "pattern") || partialField(blk.json, "description") || partialField(blk.json, "url") || partialField(blk.json, "query");
         if (hint) { this.s.detail = hint; this.changed(); }
       }
