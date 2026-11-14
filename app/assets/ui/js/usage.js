@@ -82,7 +82,7 @@ function renderUsageRing() {
 
 /** One sheet for everything that runs out: this chat's context window and the account's limits. */
 async function openUsage() {
-  const cur = state.current, live = cur && !cur.isNew && state.liveInfo[cur.sessionId];
+  const cur = state.current, saved = cur && !cur.isNew && cur.sessionId;
   let ctx = null, busy = true, open = false;
   const draw = () => {
     if (sheet.key !== "usage") return;
@@ -92,7 +92,7 @@ async function openUsage() {
       + `<div class="sub">${esc([plan && "Claude " + plan[0].toUpperCase() + plan.slice(1), busy ? "Updating…" : u?.at ? "Updated " + (relTime(u.at) === "now" ? "just now" : relTime(u.at) + " ago") : ""].filter(Boolean).join(" · "))}</div>`
       + (ctx ? `<h3 class="u-sec">This chat</h3><button class="u-ctx${open ? " open" : ""}" id="u-ctx" aria-expanded="${open}">`
         + usageRow(["Context window", { used: Math.round(ctx.percentage), level: ctx.percentage >= 90 ? "warn" : "", resetsAt: null }], true).replace("</small>", ` ${icon("down")}</small>`)
-        + `<span class="u-sub">${fmtTok(ctx.totalTokens)} of ${fmtTok(ctx.maxTokens)} tokens</span></button>`
+        + `<span class="u-sub">${fmtTok(ctx.totalTokens)} of ${fmtTok(ctx.maxTokens)} tokens${ctx.estimated ? " · from the last reply" : ""}</span></button>`
         + (open ? `<div class="u-cats">${cats.map(c => `<div class="ctx-row"><span><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span><span>${fmtTok(c.tokens)}</span></div>`).join("")}<button class="chip" id="u-compact">Compact this chat now</button></div>` : "") : "")
       + (pace ? `<p class="u-pace">${icon("info")}<span>Heads up. ${esc(pace)}</span></p>` : "")
       + `<h3 class="u-sec">Plan limits</h3>`
@@ -107,7 +107,7 @@ async function openUsage() {
     busy = true; draw();
     await Promise.all([
       conn.call("usage.get", { refresh }).then(r => { if (r.usage) { state.usage = r.usage; renderUsage(); } }).catch(() => {}),
-      live ? conn.call("session.context", { sessionId: cur.sessionId }).then(r => { ctx = r.usage; }).catch(() => {}) : null,
+      saved ? conn.call("session.context", { sessionId: cur.sessionId }).then(r => { ctx = r.usage; }).catch(() => {}) : null,
     ]);
     busy = false; draw();
   };
