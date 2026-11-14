@@ -154,6 +154,7 @@ export class LiveSession {
     else Object.assign(t, { status: m.status || "completed", summary: m.summary || null, endedAt: Date.now(), activity: null });
     t.description ||= m.description || m.summary || "Background task";
     t.kind ||= /^a[0-9a-f]{12,}$/.test(m.task_id) ? "agent" : "command";
+    if (t.kind === "command" && !t.background) return;   // an ordinary command, not one left running in the background
     this.tasks.set(m.task_id, t);
     broadcastAll({ t: "tasks", sessionId: this.sessionId, tasks: [...this.tasks.values()] });
   }

@@ -423,7 +423,9 @@ body:not(.steps-cards) .steps.has-tools > .steps-list { display: none; }
 .step-row .sr-t b { font-weight: 500; color: var(--text); }
 .step-row .sr-t span { color: var(--muted); font-size: 13px; }
 .step-row .sr-st svg { width: 16px; height: 16px; color: var(--red); }
-.step-st { font-size: 13px; color: var(--muted); margin: 2px 0 10px; } .step-st.err { color: var(--red); }
+.step-st { font-size: 13px; color: var(--muted); margin: 12px 18px 8px; } .step-st.err { color: var(--red); }
+#page-body > .tool.in-page, #page-body > .thinking.in-page { margin: 0 14px; }
+.ag-head { position: sticky; top: 0; z-index: 1; background: var(--bg); }
 .tool.in-page, .thinking.in-page { border: 0; background: none; margin: 0; }
 .tool.in-page > summary { pointer-events: none; padding: 0 0 10px; }
 .thinking.in-page > summary { pointer-events: none; }

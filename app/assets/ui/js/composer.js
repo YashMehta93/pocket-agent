@@ -237,8 +237,10 @@ $("#chip-model").onclick = () => {
   const cur = currentSettings();
   const models = state.models.length ? state.models : [{ value: "", displayName: "Default", description: "Start a chat once to load the model list" }];
   const b = sheet.open(`<h2>Model</h2><div id="models"></div><h2 style="margin-top:16px">Effort</h2><div class="sub">Higher effort thinks longer and uses more of your limits.</div><div class="seg" id="efforts"></div>`);
+  // no model chosen = the default; an open chat reports the resolved id (claude-…), which ticks its named entry
+  const curVal = cur.model || "default", exact = models.some(m => m.value === curVal);
   for (const m of models) {
-    const on = (cur.model || "") === (m.value || "") || (cur.model && m.resolvedModel === cur.model);
+    const on = m.value === curVal || (!exact && m.value !== "default" && m.resolvedModel === curVal) || (!state.models.length && !m.value);
     const o = h(`<button class="opt ${on ? "on" : ""}">${icon(on ? "ccheck" : "circle")}<div class="ot"><div>${esc(m.displayName)}</div><div class="od">${esc(m.description || "")}</div></div></button>`);
     o.onclick = () => { sheet.close(true); applySetting({ model: m.value || null }); };
     b.querySelector("#models").append(o);

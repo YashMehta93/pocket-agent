@@ -15,12 +15,11 @@ function taskStats(t) {
 function renderAgentsLine() {
   const el = $("#agents-line"), tasks = chatTasks();
   if (!tasks.length) { el.hidden = true; return; }
-  const run = tasks.filter(t => t.status === "running"), agents = tasks.filter(t => t.kind === "agent").length;
-  const what = agents === tasks.length ? "agent" : "background task";
+  // "1 agent working · 2 commands done · 1 agent stopped": each group named by what's in it
+  const word = (list, n) => { const ag = list.every(t => t.kind === "agent"), cm = list.every(t => t.kind === "command"); const w = ag ? "agent" : cm ? "command" : "task"; return `${n} ${w}${n === 1 ? "" : "s"}`; };
+  const run = tasks.filter(t => t.status === "running"), done = tasks.filter(t => t.status === "completed"), stopped = tasks.filter(t => t.status !== "running" && t.status !== "completed");
+  const parts = [run.length && word(run, run.length) + " working", done.length && word(done, done.length) + " done", stopped.length && word(stopped, stopped.length) + " stopped"].filter(Boolean);
   el.hidden = false;
-  const n = (k, word) => `${k} ${word}`;
-  const done = tasks.filter(t => t.status === "completed").length, stopped = tasks.length - run.length - done;
-  const parts = [run.length && n(run.length, `${what}${run.length === 1 ? "" : "s"} working`), done && n(done, run.length ? "done" : `${what}${done === 1 ? "" : "s"} done`), stopped && n(stopped, "stopped")].filter(Boolean);
   el.innerHTML = (run.length ? '<span class="spark"></span>' : icon("bot")) + `<span>${parts.join(" · ")}</span><span class="chev">›</span>`;
   if (sheet.key === "agents") drawAgents();
 }

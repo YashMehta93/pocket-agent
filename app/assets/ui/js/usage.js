@@ -90,6 +90,7 @@ async function openUsage() {
     const cats = (ctx?.categories || []).filter(c => c.tokens > 0);
     b.innerHTML = `<div class="u-head"><h2>Usage</h2><button class="icon-btn" id="u-refresh" aria-label="Refresh">${icon("retry")}</button></div>`
       + `<div class="sub">${esc([plan && "Claude " + plan[0].toUpperCase() + plan.slice(1), busy ? "Updating…" : u?.at ? "Updated " + (relTime(u.at) === "now" ? "just now" : relTime(u.at) + " ago") : ""].filter(Boolean).join(" · "))}</div>`
+      + (!ctx && busy && saved ? `<h3 class="u-sec">This chat</h3><p class="u-sub">Checking the context window…</p>` : "")
       + (ctx ? `<h3 class="u-sec">This chat</h3><button class="u-ctx${open ? " open" : ""}" id="u-ctx" aria-expanded="${open}">`
         + usageRow(["Context window", { used: Math.round(ctx.percentage), level: ctx.percentage >= 90 ? "warn" : "", resetsAt: null }], true).replace("</small>", ` ${icon("down")}</small>`)
         + `<span class="u-sub">${fmtTok(ctx.totalTokens)} of ${fmtTok(ctx.maxTokens)} tokens${ctx.estimated ? " · from the last reply" : ""}</span></button>`

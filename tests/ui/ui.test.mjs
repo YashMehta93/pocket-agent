@@ -106,7 +106,7 @@ ev("page.close()");
 ev(`state.liveInfo[state.current.sessionId] = { ...(state.liveInfo[state.current.sessionId] || {}), tasks: [
   { id: "a1234567890abcdef", kind: "agent", agentType: "general-purpose", description: "Research DeepSeek", status: "running", activity: "Reading the API docs", tokens: 23548, tools: 4, startedAt: Date.now() - 90000 },
   { id: "box1", kind: "command", description: "Run the tests", status: "completed", summary: "Run the tests", startedAt: Date.now() - 60000, endedAt: Date.now() } ] }; renderAgentsLine()`);
-ok("a line shows the agents at work", !$("#agents-line").hidden && /1 background task working · 1 done/.test($("#agents-line").textContent));
+ok("a line shows the agents at work", !$("#agents-line").hidden && /1 agent working · 1 command done/.test($("#agents-line").textContent));
 $("#agents-line").click();
 ok("tapping it lists each with what it's doing now", ev("sheet.key") === "agents" && $$("#sheet .ag-row").length === 2 && $("#sheet").textContent.includes("Reading the API docs") && $("#sheet").textContent.includes("23.5k tokens"));
 ev("sheet.close(true)");
@@ -128,6 +128,8 @@ ev(`state.usage = null; renderUsage()`);
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");
 ev(`state.models = [{ value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)" }, { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5" }]`);
+ev(`document.querySelector("#chip-model").click()`);
+ok("the model sheet ticks Default when the chat uses the default", $$("#sheet .opt.on").length === 1 && $("#sheet .opt.on").textContent.includes("Default")); ev("sheet.close(true)");
 ok("the model chip names the real model, never Default", ev('modelLabel(null)') === "Opus 5.5" && ev('modelLabel("default")') === "Opus 5.5" && ev('modelLabel("claude-haiku-4-5-20251001")') === "Haiku 4.5" && ev('modelLabel("claude-sonnet-5-5[1m]")') === "Sonnet 5.5");
 ev(`document.querySelector("#chip-model").click()`); ok("model sheet opens", ev("sheet.isOpen")); ev("sheet.close(true)");
 ev(`document.querySelector("#btn-more").click()`); ok("overflow menu opens", $$("#sheet .menu-item").length > 3); ev("sheet.close(true)");
