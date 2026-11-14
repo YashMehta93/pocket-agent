@@ -2,6 +2,10 @@
 
 Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 
+## Unreleased
+
+- **Security:** WebView remote debugging is on only in debug builds; only the app's own pages load inside the app (exact origin), and every other link opens in the browser, which also fixes links that opened inside the app with no way back; backups never include signing keys (`*.keystore`, `*.pem`), Claude logins or git credentials, at any depth.
+
 ## 1.1.1
 
 - Updating from 1.0.0 through "An update is ready" left out the new trusted-keys file (1.0.0 copied only the files it knew), so the update was offered again and again, and signed releases were refused. The app now restores that file on start-up, updates copy every file the new code brings, and when an app update (APK) is available it's the only banner shown, since it includes the code.
