@@ -126,7 +126,7 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 #usage-note.full svg { color: var(--red); }
 .u-head { display: flex; align-items: center; justify-content: space-between; } .u-head .icon-btn { margin-right: -10px; } .u-head .icon-btn svg { width: 19px; height: 19px; }
 .u-sec { font: 600 11px/1.4 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 22px 0 10px; }
-.u-ctx { display: block; width: 100%; text-align: left; } .u-ctx small svg { width: 13px; height: 13px; vertical-align: -2px; transition: transform .15s; }
+.u-ctx { display: block; width: 100%; text-align: left; } .u-ctx small svg { display: inline-block; width: 13px; height: 13px; vertical-align: -2px; transition: transform .15s; }
 .u-ctx.open small svg { transform: rotate(180deg); }
 .u-sub { display: block; margin-top: 6px; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .u-cats { margin-top: 8px; } .u-cats .chip { margin-top: 12px; }
