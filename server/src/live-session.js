@@ -6,7 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { query, getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
-import { CLAUDE, CLAUDE_DIR, HOME, BUFFER_MAX, IDLE_CLOSE_MS, prefs, savePrefs, cache, saveCache, log } from "./config.js";
+import { CLAUDE, CLAUDE_DIR, HOME, DATA, BUFFER_MAX, IDLE_CLOSE_MS, prefs, savePrefs, cache, saveCache, log } from "./config.js";
 
 // Each chat's own model, effort and permission mode, kept in prefs so a chat reopened after an idle close or
 // a server restart keeps them (before, it fell back to the defaults: Default model, Ask).
@@ -82,6 +82,7 @@ export class LiveSession {
     this.state = state;
     this.lastActive = Date.now();
     broadcastAll({ t: "state", sessionId: this.sessionId, state, info: this.info() });
+    saveWorking();
     if (prev === "running" && state === "idle") notifyNative({ type: "done", sessionId: this.sessionId, title: this.title || "Session", text: this.lastText.slice(0, 300) });
   }
   info() {
@@ -279,3 +280,30 @@ setInterval(() => {
 
 /** True while any session is mid-turn (used to delay restarts). */
 export const anyBusy = () => [...live.values()].some(s => s.state === "running" || s.state === "waiting");
+
+// ───── picking up after an unexpected stop ─────
+// working.json lists the chats mid-reply. Stopping on purpose closes them first or waits until they're idle (updates),
+// which empties the list, so a list found at start-up means Android (or a crash) killed the server mid-reply.
+// Those chats get a message asking Claude to continue: at most once per chat an hour, and only right after the stop.
+const WORKING = path.join(DATA, "working.json");
+export const CONTINUE_TEXT = "[Pocket Agent] The app was closed while you were working (Android stopped it), so your last step and any background agents you started were cut off. Continue where you left off; restart background agents if they're still needed.";
+function saveWorking() {
+  const ids = [...live.values()].filter(s => s.state === "running" || s.state === "waiting").map(s => s.sessionId);
+  try { fs.writeFileSync(WORKING, JSON.stringify({ ids, at: Date.now() })); } catch {}
+}
+/** A stop on purpose (Settings → Restart, SIGTERM): nothing should continue afterwards. */
+export function clearWorking() { try { fs.rmSync(WORKING, { force: true }); } catch {} }
+export async function continueInterrupted() {
+  let w; try { w = JSON.parse(fs.readFileSync(WORKING, "utf8")); } catch { return []; }
+  fs.rmSync(WORKING, { force: true });
+  if (!w?.ids?.length || Date.now() - w.at > 30 * 60e3 || prefs.autoContinue === false) return [];
+  const done = [];
+  prefs.continued ||= {};
+  for (const id of w.ids) {
+    if (Date.now() - (prefs.continued[id] || 0) < 3600e3) continue;
+    prefs.continued[id] = Date.now(); savePrefs();
+    try { const s = await openSession({ sessionId: id }); s.send({ text: CONTINUE_TEXT }); done.push(id); log("continued", id.slice(0, 8), "after an unexpected stop"); }
+    catch (e) { log("couldn't continue", id.slice(0, 8), e?.message); }
+  }
+  return done;
+}

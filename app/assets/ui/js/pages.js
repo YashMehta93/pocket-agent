@@ -249,7 +249,7 @@ function wireSettings(root) {
     b.className = "viewer"; b.append(codeBlock(await nativeRpc("runtime.logs", { which: "server", bytes: 40000 }).catch(e => e.message) || "(empty)"));
   }));
   if (standalone && root.querySelector("#s-auth")) nativeRpc("runtime.auth").then(a => { const el = root.querySelector("#s-auth"); if (el) el.textContent = a.loggedIn ? [a.email, a.subscriptionType].filter(Boolean).join(" · ") : "Not signed in"; }).catch(() => {});
-  on("#s-restart", () => { nativeCall("restartServer"); toast("Restarting server…"); });
+  on("#s-restart", async () => { try { await conn.call("working.clear"); } catch {} nativeCall("restartServer"); toast("Restarting server…"); });
   if (native && root.querySelector("#phone-ctl")) renderPhoneControl(root.querySelector("#phone-ctl"));
   if (native && root.querySelector("#termux-box")) renderTermux(root.querySelector("#termux-box"));
 }

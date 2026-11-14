@@ -4,9 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, deleteSession, forkSession } from "@anthropic-ai/claude-agent-sdk";
-import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache, githubRepo } from "./config.js";
+import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache, saveCache, githubRepo } from "./config.js";
 import { broadcastAll, callNative } from "./hub.js";
-import { live, getLive, openSession, busyElsewhere, runClaude, chatSettings, rememberChatSettings } from "./live-session.js";
+import { live, getLive, openSession, busyElsewhere, runClaude, chatSettings, rememberChatSettings, clearWorking } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
 import { importSessions, checkUpdate, applyUpdate, sourceName, pickRelease, listReleases, releaseAsset, bundleInfo, clearReleaseCache } from "./transfer.js";
 import { runDevSetup, devSetupStatus, devRepo } from "./devtools.js";
@@ -53,6 +53,9 @@ export const handlers = {
     return { sessionId, messages, info };
   },
 
+  /** Before a restart on purpose: replies it stops shouldn't continue afterwards. */
+  async "working.clear"() { clearWorking(); return {}; },
+
   // ───── usage limits ─────
   async "usage.get"({ refresh } = {}) {
     const s = [...live.values()].find(x => x.q && x.state !== "closed");
@@ -77,7 +80,15 @@ export const handlers = {
   async "permission.reply"(m) { return { ok: getLive(m.sessionId).answer(m) }; },
   async set(m) { const s = live.get(m.sessionId); if (s) await s.set(m); else rememberChatSettings(m.sessionId, m); return { info: s?.info(), settings: chatSettings(m.sessionId) }; },
   async "session.rewindFiles"({ sessionId, userMessageId, dryRun }) { return { result: await getLive(sessionId).q.rewindFiles(userMessageId, { dryRun: !!dryRun }) }; },
-  async "session.context"({ sessionId }) { return { usage: await getLive(sessionId).q.getContextUsage() }; },
+  async "session.context"({ sessionId }) {
+    const s = live.get(sessionId);
+    if (s) {
+      const usage = await s.q.getContextUsage();
+      if (usage?.model && usage.maxTokens && cache.contextMax?.[usage.model] !== usage.maxTokens) { cache.contextMax = { ...cache.contextMax, [usage.model]: usage.maxTokens }; saveCache(); }
+      return { usage };
+    }
+    return { usage: await estimateContext(sessionId) };
+  },
   async "session.stopTask"({ sessionId, taskId }) { await getLive(sessionId).q.stopTask(taskId); return {}; },
 
   // ───── session management ─────
@@ -195,3 +206,17 @@ export const handlers = {
   async "fs.mkdir"({ path: p }) { await fs.promises.mkdir(p, { recursive: true }); return { path: p }; },
   async upload({ cwd, name, data }) { return { path: await saveUpload(cwd, name, data) }; },
 };
+
+/** A closed chat's context window, estimated from its last reply's token counts (Claude Code reports it only for open chats). */
+async function estimateContext(sessionId) {
+  const messages = await getSessionMessages(sessionId);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i], u = m.type === "assistant" && !m.parent_tool_use_id && m.message?.usage;
+    if (!u) continue;
+    const total = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.output_tokens || 0);
+    const model = m.message.model || "";
+    const max = cache.contextMax?.[model] || (total > 200000 || /\[1m\]/.test(model) ? 1000000 : 200000);
+    return { estimated: true, model, totalTokens: total, maxTokens: max, percentage: Math.min(100, total / max * 100), categories: [] };
+  }
+  return null;
+}

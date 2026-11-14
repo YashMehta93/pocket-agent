@@ -200,6 +200,22 @@ try {
     await refreshUsage(fakeQ, { asked: true });
     ok("asking again within 30 seconds doesn't fetch again", calls === 1);
     ok("without the call (older Claude Code), the saved numbers stay", (await refreshUsage({}, { asked: true }))?.windows?.seven_day?.used === 65);
+
+    // after an unexpected stop, chats that were mid-reply continue: only right after it, once an hour, and not when turned off
+    const { continueInterrupted, clearWorking } = await import("../src/live-session.js");
+    const { prefs: P } = await import("../src/config.js");
+    const W = path.join(process.env.PA_DATA, "working.json");
+    fs.writeFileSync(W, JSON.stringify({ ids: ["chat-old"], at: Date.now() - 3 * 3600e3 }));
+    ok("a stop hours ago continues nothing, and the list is cleared", (await continueInterrupted()).length === 0 && !fs.existsSync(W));
+    P.continued = { "chat-again": Date.now() };
+    fs.writeFileSync(W, JSON.stringify({ ids: ["chat-again"], at: Date.now() }));
+    ok("a chat continued in the last hour isn't continued again (no crash loops)", (await continueInterrupted()).length === 0);
+    P.autoContinue = false;
+    fs.writeFileSync(W, JSON.stringify({ ids: ["chat-new"], at: Date.now() }));
+    ok("turned off, nothing continues", (await continueInterrupted()).length === 0);
+    delete P.autoContinue;
+    fs.writeFileSync(W, "{}"); clearWorking();
+    ok("a restart on purpose clears the list", !fs.existsSync(W));
   } finally { server.kill(); }
 } catch (e) { console.log("FAIL", e.stack); fails++; }
 finally { fs.rmSync(T, { recursive: true, force: true }); }

@@ -2,9 +2,10 @@
 // Lets the Pocket Agent app drive Claude Code through the Claude Agent SDK.
 // Architecture overview: docs/ARCHITECTURE.md. Protocol: docs/PROTOCOL.md.
 import path from "node:path";
+import fs from "node:fs";
 import { spawn } from "node:child_process";
-import { VERSION, PORT, HOST, log } from "./config.js";
-import { live, anyBusy } from "./live-session.js";
+import { VERSION, PORT, HOST, DATA, log } from "./config.js";
+import { live, anyBusy, continueInterrupted, clearWorking } from "./live-session.js";
 import { createServer } from "./http.js";
 import { prefs, savePrefs, DEFAULT_REPO } from "./config.js";
 import { ensureDefaults } from "./devtools.js";
@@ -25,12 +26,18 @@ if (process.env.PA_SUPERVISED) {
 server.listen(PORT, HOST, () => {
   log(`pocket-agent server ${VERSION} on http://${HOST}:${PORT}`);
   startServices();   // background services Android's process kills took down (services.js)
+  setTimeout(() => continueInterrupted().catch(e => log("continue failed", e?.message)), 3000);   // replies cut off by a kill
 });
 
-function shutdown() { stopServices(); for (const s of live.values()) s.close(); process.exit(0); }
+function shutdown() { stopServices(); for (const s of live.values()) s.close(); clearWorking(); process.exit(0); }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 process.on("unhandledRejection", e => log("unhandled", e?.message || e));
+// Crashes and starts also go to a file in the app's data, readable from inside Linux (the app's server log isn't).
+const events = line => { try { fs.appendFileSync(path.join(DATA, "server-events.log"), new Date().toISOString() + " " + line + "\n"); } catch {} };
+events(`start ${VERSION} pid ${process.pid}`);
+process.on("uncaughtException", e => { events("crash " + (e?.stack || e)); log("crash", e?.stack || e); process.exit(1); });
+process.on("exit", code => events(`exit ${code}`));
 
 // SIGUSR2 = restart once no chat is mid-turn (`pocket-agent restart --when-idle`),
 // so deploying a server change never cuts off a reply in progress.
