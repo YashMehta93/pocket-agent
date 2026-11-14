@@ -106,7 +106,7 @@ ev("page.close()");
 ev(`state.liveInfo[state.current.sessionId] = { ...(state.liveInfo[state.current.sessionId] || {}), tasks: [
   { id: "a1234567890abcdef", kind: "agent", agentType: "general-purpose", description: "Research DeepSeek", status: "running", activity: "Reading the API docs", tokens: 23548, tools: 4, startedAt: Date.now() - 90000 },
   { id: "box1", kind: "command", description: "Run the tests", status: "completed", summary: "Run the tests", startedAt: Date.now() - 60000, endedAt: Date.now() } ] }; renderAgentsLine()`);
-ok("a line shows the agents at work", !$("#agents-line").hidden && /1 background task working · 1 finished/.test($("#agents-line").textContent));
+ok("a line shows the agents at work", !$("#agents-line").hidden && /1 background task working · 1 done/.test($("#agents-line").textContent));
 $("#agents-line").click();
 ok("tapping it lists each with what it's doing now", ev("sheet.key") === "agents" && $$("#sheet .ag-row").length === 2 && $("#sheet").textContent.includes("Reading the API docs") && $("#sheet").textContent.includes("23.5k tokens"));
 ev("sheet.close(true)");

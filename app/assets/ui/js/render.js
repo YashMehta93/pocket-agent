@@ -310,6 +310,7 @@ class ChatView {
   fillToolInput(card) {
     const { name, input } = card, body = card.body;
     card.summaryEl.textContent = toolSummary(name, input);
+    if (card.el.isConnected) this.updateGroup(card.el.closest(".steps"));   // the line names what's running once its input arrives
     body.querySelector(".tin")?.remove();
     const box = document.createElement("div"); box.className = "tin";
     if (name === "Bash") { box.append(codeBlock("$ " + (input.command || ""), "bash", true)); }

@@ -148,6 +148,7 @@ export class LiveSession {
   /** Background agents and commands Claude started: what each is doing, and how it ended. */
   noteTask(m) {
     const t = this.tasks.get(m.task_id) || { id: m.task_id, status: "running", startedAt: Date.now() };
+    if (m.subtype !== "task_notification") Object.assign(t, { status: "running", endedAt: null });   // also an agent resumed after it stopped
     if (m.subtype === "task_started") Object.assign(t, { description: m.description, kind: m.task_type === "local_agent" || m.subagent_type ? "agent" : "command", agentType: m.subagent_type || null, background: !!m.is_backgrounded });
     else if (m.subtype === "task_progress") Object.assign(t, { activity: m.description, tokens: m.usage?.total_tokens ?? t.tokens, tools: m.usage?.tool_uses ?? t.tools, ms: m.usage?.duration_ms ?? t.ms });
     else Object.assign(t, { status: m.status || "completed", summary: m.summary || null, endedAt: Date.now(), activity: null });

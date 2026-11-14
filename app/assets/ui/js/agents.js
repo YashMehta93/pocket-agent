@@ -18,9 +18,10 @@ function renderAgentsLine() {
   const run = tasks.filter(t => t.status === "running"), agents = tasks.filter(t => t.kind === "agent").length;
   const what = agents === tasks.length ? "agent" : "background task";
   el.hidden = false;
-  el.innerHTML = (run.length ? '<span class="spark"></span>' : icon("bot"))
-    + `<span>${run.length ? `${run.length} ${what}${run.length === 1 ? "" : "s"} working` : `${tasks.length} ${what}${tasks.length === 1 ? "" : "s"} finished`}`
-    + `${run.length && run.length < tasks.length ? ` · ${tasks.length - run.length} finished` : ""}</span><span class="chev">›</span>`;
+  const n = (k, word) => `${k} ${word}`;
+  const done = tasks.filter(t => t.status === "completed").length, stopped = tasks.length - run.length - done;
+  const parts = [run.length && n(run.length, `${what}${run.length === 1 ? "" : "s"} working`), done && n(done, run.length ? "done" : `${what}${done === 1 ? "" : "s"} done`), stopped && n(stopped, "stopped")].filter(Boolean);
+  el.innerHTML = (run.length ? '<span class="spark"></span>' : icon("bot")) + `<span>${parts.join(" · ")}</span><span class="chev">›</span>`;
   if (sheet.key === "agents") drawAgents();
 }
 
