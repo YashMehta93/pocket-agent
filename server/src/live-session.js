@@ -28,6 +28,7 @@ export function rememberChatSettings(id, { model, effort, permissionMode }) {
 import { broadcast, broadcastAll, notifyNative, clients } from "./hub.js";
 import { Inbox } from "./inbox.js";
 import { Activity, toolDetail } from "./activity.js";
+import { noteRateLimit, refreshUsage } from "./usage.js";
 import { phoneContext } from "./devtools.js";
 
 /** sessionId -> LiveSession */
@@ -106,6 +107,8 @@ export class LiveSession {
         } else if (m.type === "assistant" && !m.parent_tool_use_id) {
           const t = (m.message?.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
           if (t) this.lastText = t;
+        } else if (m.type === "rate_limit_event") {
+          noteRateLimit(m.rate_limit_info);
         } else if (m.type === "result") {
           if (this.state !== "waiting") this.setState("idle");
         }
@@ -130,6 +133,7 @@ export class LiveSession {
       try { cache.account = await this.q.accountInfo(); } catch {}
       saveCache();
       broadcastAll({ t: "meta", commands: cache.commands, models: cache.models, account: cache.account });
+      refreshUsage(this.q).catch(() => {});
     } catch (e) { log("meta failed", e?.message); }
   }
 

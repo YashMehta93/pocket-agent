@@ -182,6 +182,24 @@ try {
     const other = await call2("subscribe", { sessionId: "chat-never-set", after: 0 });
     ok("a chat with nothing remembered gets no settings (the defaults apply)", other.settings === null);
     ws2.close();
+
+    // usage limits: from the rate_limit_event every reply carries (0–1, Unix seconds) and from Claude Code's /usage data (0–100, ISO)
+    const { noteRateLimit, refreshUsage, getUsage } = await import("../src/usage.js");
+    noteRateLimit({ status: "allowed_warning", resetsAt: 1794658200, rateLimitType: "five_hour", utilization: 0.91,
+      unifiedWindows: { five_hour: { utilization: 0.91, resetsAt: 1794658200, status: "allowed_warning" }, seven_day: { utilization: 0.64, resetsAt: 1794909600, status: "allowed" } } });
+    const ev1 = getUsage();
+    ok("a rate-limit event gives both windows in percent, with reset times", ev1?.windows?.five_hour?.used === 91 && ev1.windows.five_hour.resetsAt === 1794658200000
+      && ev1.windows.five_hour.status === "allowed_warning" && ev1.windows.seven_day?.used === 64 && ev1.status === "allowed_warning");
+    let calls = 0;
+    const fakeQ = { usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => (calls++, { subscription_type: "max", rate_limits_available: true, rate_limits: {
+      five_hour: { utilization: 93, resets_at: "2026-11-14T15:30:00Z" }, seven_day: { utilization: 65, resets_at: "2026-11-20T09:00:00Z" }, seven_day_opus: null,
+      model_scoped: [{ display_name: "Fable", utilization: 40, resets_at: "2026-11-20T09:00:00Z" }] } }) };
+    const fresh = await refreshUsage(fakeQ, { asked: true });
+    ok("Claude Code's usage data adds per-model limits and keeps the warning", fresh?.windows?.five_hour?.used === 93 && fresh.windows.five_hour.resetsAt === Date.parse("2026-11-14T15:30:00Z")
+      && fresh.windows.five_hour.status === "allowed_warning" && fresh.models?.[0]?.name === "Fable" && fresh.models[0].used === 40 && fresh.plan === "max" && !("seven_day_opus" in fresh.windows));
+    await refreshUsage(fakeQ, { asked: true });
+    ok("asking again within 30 seconds doesn't fetch again", calls === 1);
+    ok("without the call (older Claude Code), the saved numbers stay", (await refreshUsage({}, { asked: true }))?.windows?.seven_day?.used === 65);
   } finally { server.kill(); }
 } catch (e) { console.log("FAIL", e.stack); fails++; }
 finally { fs.rmSync(T, { recursive: true, force: true }); }

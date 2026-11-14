@@ -14,6 +14,7 @@ import { runMigration, migrationStatus } from "./migrate.js";
 import { createBackup, listBackups, restoreBackup, BACKUP_DIR } from "./backup.js";
 import { installCommand } from "./termux.js";
 import { listServices, addService, removeService, setServiceEnabled, restartService, serviceLogs } from "./services.js";
+import { getUsage, refreshUsage } from "./usage.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
 
@@ -29,7 +30,7 @@ export const handlers = {
   // ───── connection ─────
   async hello() {
     return { version: VERSION, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
-      defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account,
+      defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account, usage: getUsage(),
       updateChannel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null,
       updateKind: prefs.updateChannel ? (prefs.updateChannel.github ? "github" : prefs.updateChannel.path ? "path" : "server") : null,
       githubToken: !!prefs.updateChannel?.token, defaultRepo: DEFAULT_REPO, mode: process.env.PA_MODE || "server", devRepo: devRepo(), updateTrack: prefs.updateTrack || { track: "stable" },
@@ -50,6 +51,12 @@ export const handlers = {
   async "session.history"({ sessionId }) {
     const [messages, info] = await Promise.all([getSessionMessages(sessionId), getSessionInfo(sessionId).catch(() => undefined)]);
     return { sessionId, messages, info };
+  },
+
+  // ───── usage limits ─────
+  async "usage.get"({ refresh } = {}) {
+    const s = [...live.values()].find(x => x.q && x.state !== "closed");
+    return { usage: refresh ? await refreshUsage(s?.q, { asked: true }) : getUsage(), live: !!s };
   },
 
   // ───── live sessions ─────

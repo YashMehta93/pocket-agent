@@ -152,6 +152,7 @@ function settingsSections() {
       html: () => item(`<div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server || (native ? "This phone (built-in)" : location.host))}</small></div><button class="chip" id="s-server">Change</button></div>`, "server termux computer pc remote connection")
         + (standalone ? item(`<div class="set-row"><div class="l">Claude sign-in<small id="s-auth">Checking…</small></div><button class="chip" id="s-login">Sign in again</button></div>`, "login account logout") : "")
         + item(`<div class="set-row"><div class="l">${esc(state.account?.email || state.account?.organization || "Claude account")}<small>${esc(state.account?.subscriptionType || state.account?.apiKeySource || "Signed in through Claude Code")}</small></div></div>`, "account plan subscription")
+        + item(`<div class="set-row"><div class="l">Usage limits<small>${esc(usageSummary())}</small></div><button class="chip" id="s-usage">Show</button></div>`, "usage limits quota 5-hour weekly plan")
         + (native ? item(`<div class="set-row"><div class="l">Restart Claude's server<small>Stops any reply in progress</small></div><button class="chip" id="s-restart">Restart</button></div>`, "reload stuck") : "")
         + (standalone ? item(`<div class="set-row"><div class="l">Server log<small>For troubleshooting</small></div><button class="chip" id="s-log">View</button></div>`, "debug errors logs") : "") },
     { id: "updates", title: "Updates", icon: "retry",
@@ -253,6 +254,7 @@ function wireSettings(root) {
     } catch (e) { toast(e.message, 5000); }
   });
   on("#s-login", () => nativeCall("openSetup", "#login"));
+  on("#s-usage", () => openUsage());
   on("#s-log", () => page.open("Server log", async b => {
     b.className = "viewer"; b.append(codeBlock(await nativeRpc("runtime.logs", { which: "server", bytes: 40000 }).catch(e => e.message) || "(empty)"));
   }));

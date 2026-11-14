@@ -20,6 +20,7 @@
     <div class="search"><span data-icon="search"></span><input id="session-search" type="search" placeholder="Search chats" autocomplete="off"></div>
     <div class="filters" id="project-filters"></div>
     <div id="session-list" class="session-list"></div>
+    <button class="usage-meter" id="usage-meter" aria-label="Usage limits" hidden></button>
     <div class="drawer-foot" id="conn-foot"></div>
   </aside>
   <div id="scrim"></div>
@@ -50,6 +51,7 @@
 
     <footer id="composer">
       <div id="status-line" hidden></div>
+      <button id="usage-note" hidden></button>
       <button id="activity" class="activity" hidden aria-live="polite"></button>
       <div id="popup" hidden></div>
       <div id="attachments" hidden></div>
@@ -86,6 +88,7 @@
 <script src="js/composer.js"></script>
 <script src="js/approvals.js"></script>
 <script src="js/pages.js"></script>
+<script src="js/usage.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>
