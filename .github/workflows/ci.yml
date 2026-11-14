@@ -29,14 +29,6 @@ jobs:
       - run: npm run test:extras
       - run: npm run test:services
       - run: npm run test:setup
-      - name: Screens and the phone channel (against a throwaway server)
-        run: |
-          node server/src/index.js --port 8766 > /tmp/server.log 2>&1 &
-          for i in $(seq 1 40); do curl -fs http://127.0.0.1:8766/health >/dev/null && break; sleep 0.25; done
-          PA_PORT=8766 npm run test:native
-          PA_PORT=8766 npm run test:ui
-      - if: failure()
-        run: tail -50 /tmp/server.log || true
 
   apk:
     name: apk
@@ -60,3 +52,11 @@ jobs:
       - run: npm run test:github
       - run: npm run test:upgrade
       - run: npm run test:tar
+      - name: Screens and the phone channel (against a throwaway server; needs the APK built above)
+        run: |
+          node server/src/index.js --port 8766 > /tmp/server.log 2>&1 &
+          for i in $(seq 1 40); do curl -fs http://127.0.0.1:8766/health >/dev/null && break; sleep 0.25; done
+          PA_PORT=8766 npm run test:native
+          PA_PORT=8766 npm run test:ui
+      - if: failure()
+        run: tail -50 /tmp/server.log || true
