@@ -329,6 +329,19 @@ textarea.field { min-height: 90px; resize: vertical; line-height: 1.5; }
 .settings h3 { font: 600 10.5px/1 var(--sans); color: var(--faint); text-transform: uppercase; letter-spacing: .08em; margin: 30px 0 4px; }
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--line); font-size: 14.5px; }
 .set-row .l { flex: 1; } .set-row .l small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; line-height: 1.45; }
+/* Settings home: search + categories, each opening its own short page */
+.set-search { width: 100%; min-height: 48px; margin: 12px 0 6px; padding: 0 14px; border: 1px solid var(--line2); border-radius: 10px; background: var(--surface); color: var(--text); font: 400 15px var(--sans); }
+.set-search:focus { outline: 2px solid var(--text); outline-offset: 1px; }
+.set-cats { display: flex; flex-direction: column; margin: 6px 0 24px; }
+.set-cat { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 60px; padding: 10px 2px; border-bottom: 1px solid var(--line); text-align: left; color: var(--text); background: none; }
+.set-cat:active { background: var(--bg2); }
+.set-cat .ic { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: var(--bg3); color: var(--text2); }
+.set-cat .ic svg { width: 18px; height: 18px; }
+.set-cat .t { flex: 1; min-width: 0; font-size: 15px; font-weight: 500; }
+.set-cat .t small { display: block; margin-top: 2px; color: var(--muted); font-size: 12.5px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.set-cat .go { flex: none; color: var(--muted); font-size: 22px; line-height: 1; }
+#set-results section[hidden], .set-item[hidden] { display: none; }
+.set-none { color: var(--muted); padding: 24px 0; }
 .switch { width: 40px; height: 24px; border-radius: 9999px; background: var(--line2); position: relative; flex: none; transition: background .2s; }
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); transition: transform .25s var(--ease); }
 .switch.on { background: var(--primary); } .switch.on::after { transform: translateX(16px); background: var(--primary-ink); }
