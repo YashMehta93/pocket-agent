@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { VERSION, PORT, HOST, DATA, log } from "./config.js";
 import { live, anyBusy, continueInterrupted, clearWorking } from "./live-session.js";
+import "./delegate.js";   // Pocket Agent's own tools for chats: deepseek_task / claude_task (registers itself with live-session.js)
 import { createServer } from "./http.js";
 import { prefs, savePrefs, DEFAULT_REPO } from "./config.js";
 import { ensureDefaults } from "./devtools.js";
