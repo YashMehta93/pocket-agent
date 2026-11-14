@@ -54,20 +54,7 @@ const hardStop = setTimeout(async () => { console.log("FAIL the whole test took 
 hardStop.unref();
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, async () => { await stopServer(); process.exit(1); });
 
-try {
-  mock = await startMock({ port: MOCK_PORT, key: KEY, alsoAccept: [CLAUDE_KEY] });
-  await unitTests();
-  if (UNIT_ONLY) console.log("SKIP e2e: --unit");
-  else if (!CLAUDE_BIN) console.log("SKIP e2e: no Claude Code binary");
-  else await e2eTests();
-} catch (e) { ok("the test ran to the end", false, e?.stack || e); }
-finally {
-  await stopServer();
-  await mock?.close();
-  fs.rmSync(T, { recursive: true, force: true });
-}
-console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
-process.exit(fails ? 1 : 0);
+// (the run itself is at the end of the file, once every class and binding below exists)
 
 async function unitTests() {
   // ───── the fake itself ─────
@@ -589,3 +576,19 @@ async function e2eTests() {
   });
   cl.ws.close();
 }
+
+// ───── the run ─────
+try {
+  mock = await startMock({ port: MOCK_PORT, key: KEY, alsoAccept: [CLAUDE_KEY] });
+  await unitTests();
+  if (UNIT_ONLY) console.log("SKIP e2e: --unit");
+  else if (!CLAUDE_BIN) console.log("SKIP e2e: no Claude Code binary");
+  else await e2eTests();
+} catch (e) { ok("the test ran to the end", false, e?.stack || e); }
+finally {
+  await stopServer();
+  await mock?.close();
+  fs.rmSync(T, { recursive: true, force: true });
+}
+console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
+process.exit(fails ? 1 : 0);
