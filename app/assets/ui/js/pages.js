@@ -157,7 +157,8 @@ function settingsSections() {
         + item(`<div class="set-row"><div class="l">Back up to phone storage<small>Chats, memory, settings and projects, to Download/Pocket Agent. Not your sign-in.</small></div><button class="chip" id="b-make">Back up</button></div>`, "export save")
         + item(`<div class="set-row"><div class="l">Restore a backup<small>After reinstalling, or on a new phone</small></div><button class="chip" id="b-restore">Restore</button></div>`, "import reinstall") },
     native && { id: "phone", title: "Phone control", icon: "chart", summary: "Permissions and background running",
-      html: () => `<div id="phone-ctl">${item(`<div class="set-row"><div class="l">Checking…</div></div>`)}</div>` },
+      html: () => `<div id="phone-ctl">${item(`<div class="set-row"><div class="l">Checking…</div></div>`)}</div>`
+        + item(`<div class="set-row"><div class="l">Keep Claude working when you swipe the app away<small>Lock Pocket Agent in recent apps: on vivo, pull its card down; on OnePlus, tap ⋮ on its card, then Lock. If Android still stops it, replies continue when the app comes back.</small></div></div>`, "swipe recents lock killed background keep running") },
     native && { id: "termux", title: "Termux", icon: "terminal", summary: "Optional: commands and setup",
       html: () => `<div id="termux-box">${item(`<div class="set-row"><div class="l">Checking…</div></div>`)}</div>` },
     standalone && { id: "dev", title: "Make it yours", icon: "brain", summary: state.devRepo ? "Improve Pocket Agent" : "Build Pocket Agent yourself",
