@@ -83,7 +83,8 @@ PA_PORT=8766 npm run test:ui
 ## Tests
 
 ```bash
-npm run test:ui          # headless UI (jsdom) against a running server, no Claude turns
+npm run test:ui          # headless UI (jsdom) against a running server, no Claude turns; opens an existing
+                         # chat (none yet? sh tests/ui/seed-sample-chat.sh adds a made-up one, as CI does)
 npm run test:ui:live     # + a real Claude turn with an approval (uses your Claude plan)
 npm run test:server      # protocol end-to-end, includes a real Claude turn
 npm run test:native      # server ↔ phone channel with a fake phone (fast, no Claude)
