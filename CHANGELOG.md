@@ -4,6 +4,10 @@ Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 
 ## Unreleased
 
+- **Usage limits** (#35): a ring in the chat header and a meter in the chats drawer show how much of your 5-hour and weekly Claude limits you've used and when they reset. A line above the message box warns from 90%. Tap either for the Usage sheet: this chat's context window, every limit including per-model ones, and a warning when your pace would run out before the reset.
+- **Steps in one line** (#37): a reply's tool steps collapse into one line ("Ran 2 commands, read 3 files ›"). Tap it for a timeline, then a step for its input and output, with Copy and Prettify. Settings → Appearance switches back to cards. While Claude works, the box says "Queue a message…".
+- The model chip names the real model (for example "Opus 5.5") instead of "Default" (#36).
+
 - **Releases:** every release now ships as a beta first; a final release is the last beta plus only the version and changelog, approved by an approver. Work is tracked in issues and milestones.
 - After installing an app update (APK), Pocket Agent no longer offers a second, pointless "An update is ready".
 - Update checks use far fewer GitHub requests (GitHub limits them per internet connection, and phones on the same Wi-Fi share that limit), and retry once when the network drops a request. *Check for updates* still asks GitHub right away.
