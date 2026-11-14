@@ -4,6 +4,8 @@ Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 
 ## Unreleased
 
+- **DeepSeek** (#44): add your DeepSeek key in Settings → DeepSeek, then start chats on DeepSeek with the new engine chip, or let a Claude chat send work to DeepSeek (and the other way round) with your OK each time. Each worker is its own chat you can watch and stop. The Usage sheet shows your DeepSeek balance and spend.
+
 - **Usage limits** (#35): a ring in the chat header and a meter in the chats drawer show how much of your 5-hour and weekly Claude limits you've used and when they reset. A line above the message box warns from 90%. Tap either for the Usage sheet: this chat's context window, every limit including per-model ones, and a warning when your pace would run out before the reset.
 - **Steps in one line** (#37): a reply's tool steps collapse into one line ("Ran 2 commands, read 3 files ›"). Tap it for a timeline, then a step for its input and output, with Copy and Prettify. Settings → Appearance switches back to cards. While Claude works, the box says "Queue a message…".
 - The model chip names the real model (for example "Opus 5.5") instead of "Default" (#36).
