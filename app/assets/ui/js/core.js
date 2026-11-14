@@ -184,6 +184,7 @@ const sheet = {
   get isOpen() { return document.body.classList.contains("sheet-open"); },
 };
 $("#sheet-scrim").addEventListener("click", () => sheet.close());
+$("#sheet-x").addEventListener("click", () => sheet.close());
 
 const page = {
   stack: [],
@@ -197,14 +198,15 @@ const page = {
     nativeCall("setBackHandler", true);
   },
   back() {
-    this.stack.pop()?.leave?.();
+    this.stack.pop()?.leave?.("back");
     const prev = this.stack.pop();
     if (prev) this.open(prev.title, prev.render, prev.actions, prev.leave); else this.close();
   },
-  close() { for (const s of this.stack.splice(0)) s.leave?.(); $("#page").hidden = true; $("#page-body").innerHTML = ""; },
+  close() { for (const s of this.stack.splice(0)) s.leave?.("close"); $("#page").hidden = true; $("#page-body").innerHTML = ""; },
   get isOpen() { return !$("#page").hidden; },
 };
 $("#page-back").addEventListener("click", () => page.back());
+$("#page-back2").addEventListener("click", () => page.back());   // the same, within thumb reach
 
 // Android back button: close the top-most layer. Returns true if handled.
 window.paBack = function () {

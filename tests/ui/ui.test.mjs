@@ -68,6 +68,11 @@ if (grp) {
   ok("a step opens its own page with the details", !$("#page").hidden && $("#page-body .in-page") !== null);
   ev("page.back()");
   ok("leaving the page puts the step back in the chat", $("#page").hidden && grp.querySelectorAll(".steps-list > *").length === nSteps && !grp.querySelector(".in-page"));
+  ok("back from a step returns to its timeline", ev("sheet.key") === "steps");
+  $("#sheet-x").click();
+  ok("the close button closes a sheet", !ev("sheet.isOpen"));
+  ev("openSettings()"); ev(`document.querySelector('[data-sec="look"]').click()`); $("#page-back2").click();
+  ok("the bottom back button goes back one page", !$("#page").hidden && $$(".set-cat").length >= 7); ev("page.close()");
   ev("settings.groupSteps = false; applySettings()");
   ok("the setting shows cards instead", w.getComputedStyle(grp.querySelector(".steps-list")).display !== "none");
   ev("settings.groupSteps = true; applySettings()");

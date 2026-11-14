@@ -44,13 +44,13 @@ function drawSteps(g) {
       c?.status === "run" ? '<span class="spark"></span>' : c?.status === "err" ? icon("x") : ""}</span></button></li>`);
     li.querySelector("b").textContent = c ? stepVerb(c) : "Thought";
     li.querySelector(".sr-t span").textContent = c ? stepShort(c) : "";
-    li.querySelector("button").onclick = () => { sheet.close(true); openStep(el); };
+    li.querySelector("button").onclick = () => { sheet.close(true); openStep(el, g); };
     ol.append(li);
   }
 }
 
 /** A step's own page: the card itself moves in (so a running step keeps updating) and goes back on leaving. */
-function openStep(el) {
+function openStep(el, fromGroup) {
   const c = el._card, ph = document.createComment("step"), wasOpen = el.open;
   page.open(c ? prettyToolName(c.name) : "Thought", body => {
     if (!ph.parentNode) el.replaceWith(ph);
@@ -59,7 +59,7 @@ function openStep(el) {
     el.classList.add("in-page"); el.open = true;
     body.append(el);
     decorateBlocks(el);
-  }, "", () => { el.classList.remove("in-page"); el.open = wasOpen; ph.replaceWith(el); });
+  }, "", how => { el.classList.remove("in-page"); el.open = wasOpen; ph.replaceWith(el); if (how === "back" && fromGroup) openSteps(fromGroup); });   // back returns to the timeline
 }
 /** Copy buttons on every block, and Prettify / Show raw on JSON output. */
 function decorateBlocks(root) {

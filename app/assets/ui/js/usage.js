@@ -60,9 +60,9 @@ function usagePace() {
     if (gone < 15 * 60e3) continue;
     const out = Date.now() + (100 - w.used) / (w.used / gone);
     if (out >= w.resetsAt) continue;
-    const day = d => new Date(d).toDateString() === new Date().toDateString() ? "" : new Date(d).toLocaleDateString([], { weekday: "short" }) + " ";
-    const at = d => day(d) + new Date(d).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    return `At this pace you'll run out of your ${USAGE_NAME[k]} around ${at(out)}, before it resets ${at(w.resetsAt)}.`;
+    const time = d => new Date(d).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const day = d => new Date(d).toDateString() === new Date().toDateString() ? "today" : new Date(d).toLocaleDateString([], { weekday: "short" });
+    return `At this pace you'll run out of your ${USAGE_NAME[k]} ${day(out)} around ${time(out)}, before it resets ${day(w.resetsAt)} ${time(w.resetsAt)}.`;
   }
   return "";
 }

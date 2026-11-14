@@ -73,9 +73,9 @@
 
   <!-- Bottom sheet (approvals, pickers, menus) -->
   <div id="sheet-scrim"></div>
-  <section id="sheet" role="dialog" aria-modal="true"><div class="grip"></div><div id="sheet-body"></div></section>
+  <section id="sheet" role="dialog" aria-modal="true"><div class="grip"></div><button class="icon-btn sheet-x" id="sheet-x" aria-label="Close" data-icon="x"></button><div id="sheet-body"></div></section>
   <!-- Full-screen pages (settings, files, viewer) -->
-  <section id="page" hidden><header><button class="icon-btn" id="page-back" data-icon="back" aria-label="Back"></button><div id="page-title"></div><div id="page-actions"></div></header><div id="page-body"></div></section>
+  <section id="page" hidden><header><button class="icon-btn" id="page-back" data-icon="back" aria-label="Back"></button><div id="page-title"></div><div id="page-actions"></div></header><div id="page-body"></div><button class="page-back2" id="page-back2" aria-label="Back" data-icon="back"></button></section>
   <div id="toast"></div>
 </div>
 <script src="lib/marked.min.js"></script>

@@ -430,3 +430,12 @@ body:not(.steps-cards) .steps.has-tools > .steps-list { display: none; }
 pre.has-btns { position: relative; padding-top: 34px; }
 .blk-btns { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; }
 .blk-btns .chip { font-size: 12px; padding: 3px 10px; }
+
+/* back and close within reach (#41): a close button on every sheet, a second back button at the bottom of pages */
+.sheet-x { position: absolute; top: 6px; right: 8px; z-index: 1; } .sheet-x svg { width: 18px; height: 18px; }
+#sheet-body > h2:first-child, #sheet-body > :first-child > h2:first-child { padding-right: 40px; }
+.u-head .icon-btn { margin-right: 34px; }
+.page-back2 { position: absolute; left: 14px; bottom: calc(16px + var(--safe-b)); width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface); border: 1px solid var(--line2); color: var(--text2); box-shadow: 0 2px 10px rgba(0,0,0,.12); z-index: 2; }
+.page-back2 svg { width: 20px; height: 20px; }
+#page-body { padding-bottom: calc(80px + var(--safe-b)); }
