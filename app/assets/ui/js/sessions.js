@@ -16,7 +16,7 @@ function renderSessions() {
     && (!state.project || s.cwd === state.project));
   // live sessions not yet on disk (brand new)
   for (const id of Object.keys(state.liveInfo)) if (!state.sessions.some(s => s.sessionId === id)) {
-    const i = state.liveInfo[id]; items.unshift({ sessionId: id, title: i.title || "New chat", cwd: i.cwd, lastModified: Date.now() });
+    const i = state.liveInfo[id]; items.unshift({ sessionId: id, title: i.title || "New chat", cwd: i.cwd, lastModified: Date.now(), engine: i.engine, parent: i.parent });
   }
   const groups = { Pinned: [], Today: [], Yesterday: [], "Previous 7 days": [], Older: [] };
   const day = 864e5, startToday = new Date().setHours(0, 0, 0, 0);
@@ -38,7 +38,9 @@ function renderSessions() {
         <div class="t"><div></div><div class="meta"></div></div>
         ${state.pinned.includes(s.sessionId) ? `<span class="pin">${icon("pin")}</span>` : ""}</button>`);
       row.querySelector(".t div").textContent = s.title || s.firstPrompt || "Untitled";
-      row.querySelector(".meta").textContent = `${baseName(s.cwd)} · ${relTime(s.lastModified)}${st === "waiting" ? " · needs approval" : st === "running" ? " · working" : s.elsewhere ? " · open in Termux" : ""}`;
+      // DeepSeek chats and worker chats (started by another chat) say so
+      const eng = s.parent ? ` · ${s.engine === "deepseek" ? "DeepSeek" : "Claude"} worker` : s.engine === "deepseek" ? " · DeepSeek" : "";
+      row.querySelector(".meta").textContent = `${baseName(s.cwd)} · ${relTime(s.lastModified)}${eng}${st === "waiting" ? " · needs approval" : st === "running" ? " · working" : s.elsewhere ? " · open in Termux" : ""}`;
       row.onclick = () => { closeDrawer(); openSession(s.sessionId); };
       longPress(row, () => sessionMenu(s));
       list.append(row);
@@ -115,7 +117,7 @@ async function openSession(sessionId, { keepScroll } = {}) {
   if (prev && prev.sessionId !== sessionId && !prev.isNew) conn.call("unsubscribe", { sessionId: prev.sessionId }).catch(() => {});
   const meta = state.sessions.find(s => s.sessionId === sessionId) || {};
   const info = state.liveInfo[sessionId];
-  state.current = { sessionId, cwd: meta.cwd || info?.cwd || state.home, title: meta.title || info?.title || "Chat", isNew: false, lastSeq: 0 };
+  state.current = { sessionId, cwd: meta.cwd || info?.cwd || state.home, title: meta.title || info?.title || "Chat", isNew: false, lastSeq: 0, engine: meta.engine || info?.engine || undefined };
   chat.reset(); hideEmpty(); updateHeader(); updateComposer(); renderSessions();
   setStatus("Loading…");
   try {
@@ -125,6 +127,8 @@ async function openSession(sessionId, { keepScroll } = {}) {
     chat.loadHistory(hist.messages || []);
     // Live session: get only events newer than what the transcript already shows.
     const sub = await conn.call("subscribe", { sessionId, after: 1e15 });
+    if (sub.engine || sub.info?.engine) state.current.engine = sub.engine || sub.info.engine;
+    if (sub.parent && typeof parentOf === "function") state.links[sessionId] = { ...state.links[sessionId], parent: parentOf(sub.parent) };
     if (sub.info) { state.liveInfo[sessionId] = sub.info; state.current.lastSeq = sub.info.seq; if (sub.info.activity) state.activity[sessionId] = sub.info.activity; }
     else if (sub.settings) Object.assign(state.current, { model: sub.settings.model ?? null, effort: sub.settings.effort ?? null, permissionMode: sub.settings.permissionMode || state.current.permissionMode });
   } catch (e) { chat.note("Couldn't load this chat: " + e.message, true); }
@@ -134,10 +138,12 @@ async function openSession(sessionId, { keepScroll } = {}) {
   if (!keepScroll) scrollToBottom(true);
   showNextPermission();
 }
-function newChat(cwd) {
+/** engine: "claude" | "deepseek"; by default the one Settings → DeepSeek starts new chats on. */
+function newChat(cwd, engine) {
   if (state.current && !state.current.isNew) conn.call("unsubscribe", { sessionId: state.current.sessionId }).catch(() => {});
   state.current = { sessionId: uuid(), cwd: cwd || state.defaults.cwd || state.home, title: "New chat", isNew: true, lastSeq: 0,
     model: state.defaults.model || null, effort: state.defaults.effort || null, permissionMode: state.defaults.permissionMode || "default" };
+  if (typeof applyEngine === "function") { applyEngine(state.current, engine || defaultEngine()); state.current.engineChosen = !!engine; }
   chat.reset(); showEmpty(); updateHeader(); updateComposer(); renderSessions();
 }
 function showEmpty() {
@@ -156,5 +162,7 @@ function updateHeader() {
   $("#chat-title").textContent = cur.isNew ? "New chat" : (cur.title || "Chat");
   const st = sessionState(cur.sessionId);
   const elsewhere = !cur.isNew && state.sessions.find(s => s.sessionId === cur.sessionId)?.elsewhere;
-  $("#chat-sub").textContent = `${shortPath(cur.cwd)}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
+  const ds = typeof chatEngine === "function" && chatEngine(cur.sessionId) === "deepseek" ? " · DeepSeek" : "";
+  $("#chat-sub").textContent = `${shortPath(cur.cwd)}${ds}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
+  if (typeof renderLinksBar === "function") renderLinksBar();
 }

@@ -80,7 +80,8 @@ function renderUsageRing() {
   btn.innerHTML = `<svg viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="8" class="track"/><circle cx="11" cy="11" r="8" class="fill" stroke-dasharray="${(c * w.used / 100).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 11 11)"/></svg>`;
 }
 
-/** One sheet for everything that runs out: this chat's context window and the account's limits. */
+let usageRedraw = null;   // the open Usage sheet's draw(), so new DeepSeek numbers show at once (deepseek.js)
+/** One sheet for everything that runs out: this chat's context window, DeepSeek credit and the account's limits. */
 async function openUsage() {
   const cur = state.current, saved = cur && !cur.isNew && cur.sessionId;
   let ctx = null, busy = true, open = false;
@@ -88,6 +89,7 @@ async function openUsage() {
     if (sheet.key !== "usage") return;
     const b = $("#usage-sheet"), u = state.usage, rows = usageRows(true), plan = u?.plan || state.account?.subscriptionType, pace = usagePace();
     const cats = (ctx?.categories || []).filter(c => c.tokens > 0);
+    const ds = typeof dsUsageHtml === "function" && (state.deepseek?.ready || (saved && chatEngine(cur.sessionId) === "deepseek"));
     b.innerHTML = `<div class="u-head"><h2>Usage</h2><button class="icon-btn" id="u-refresh" aria-label="Refresh">${icon("retry")}</button></div>`
       + `<div class="sub">${esc([plan && "Claude " + plan[0].toUpperCase() + plan.slice(1), busy ? "Updating…" : u?.at ? "Updated " + (relTime(u.at) === "now" ? "just now" : relTime(u.at) + " ago") : ""].filter(Boolean).join(" · "))}</div>`
       + (!ctx && busy && saved ? `<h3 class="u-sec">This chat</h3><p class="u-sub">Checking the context window…</p>` : "")
@@ -96,6 +98,7 @@ async function openUsage() {
         + `<span class="u-sub">${fmtTok(ctx.totalTokens)} of ${fmtTok(ctx.maxTokens)} tokens${ctx.estimated ? " · from the last reply" : ""}</span></button>`
         + (open ? `<div class="u-cats">${cats.map(c => `<div class="ctx-row"><span><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span><span>${fmtTok(c.tokens)}</span></div>`).join("")}<button class="chip" id="u-compact">Compact this chat now</button></div>` : "") : "")
       + (pace ? `<p class="u-pace">${icon("info")}<span>Heads up. ${esc(pace)}</span></p>` : "")
+      + (ds ? dsUsageHtml(cur) : "")
       + `<h3 class="u-sec">Plan limits</h3>`
       + (rows.length ? `<div class="u-list">${rows.map(r => usageRow(r, true)).join("")}</div>` : `<p class="u-foot">Nothing yet: the numbers come with Claude's replies. Send a message, then look again.</p>`)
       + `<p class="u-foot">Limits count everything on this Claude account: this phone, your computers and claude.ai.</p>`;
@@ -103,12 +106,15 @@ async function openUsage() {
     b.querySelector("#u-refresh").onclick = () => load(true);
     const t = b.querySelector("#u-ctx"); if (t) t.onclick = () => { open = !open; draw(); };
     const k = b.querySelector("#u-compact"); if (k) k.onclick = () => { sheet.close(true); send("/compact"); };
+    if (ds) wireDsUsage(b, () => load(true));
   };
+  usageRedraw = draw;
   const load = async refresh => {
     busy = true; draw();
     await Promise.all([
       conn.call("usage.get", { refresh }).then(r => { if (r.usage) { state.usage = r.usage; renderUsage(); } }).catch(() => {}),
       saved ? conn.call("session.context", { sessionId: cur.sessionId }).then(r => { ctx = r.usage; }).catch(() => {}) : null,
+      state.deepseek?.ready ? conn.call("deepseek.status", { refresh }).then(r => dsSetStatus(r.deepseek)).catch(() => {}) : null,
     ]);
     busy = false; draw();
   };

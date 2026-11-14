@@ -145,6 +145,7 @@ function settingsSections() {
         + item(`<div class="set-row"><div class="l">Usage limits<small>${esc(usageSummary())}</small></div><button class="chip" id="s-usage">Show</button></div>`, "usage limits quota 5-hour weekly plan")
         + (native ? item(`<div class="set-row"><div class="l">Restart Claude's server<small>Stops any reply in progress</small></div><button class="chip" id="s-restart">Restart</button></div>`, "reload stuck") : "")
         + (standalone ? item(`<div class="set-row"><div class="l">Server log<small>For troubleshooting</small></div><button class="chip" id="s-log">View</button></div>`, "debug errors logs") : "") },
+    typeof dsSettingsSection === "function" && dsSettingsSection(),   // deepseek.js; none on a server without DeepSeek
     { id: "updates", title: "Updates", icon: "retry",
       summary: state.updateChannel ? `${state.updateChannel}${state.updateKind === "github" ? " · " + (state.updateTrack?.track === "pin" ? "pinned to " + state.updateTrack.tag : state.updateTrack?.track === "beta" ? "Beta" : "Stable") : ""}` : "Not set",
       html: () => item(`<div class="set-row"><div class="l">Get updates from<small id="u-src">${esc(state.updateChannel ? state.updateChannel + (state.updateKind === "github" && !state.githubToken ? " (no token)" : "") : "Not set: updates come with new app versions")}</small></div><button class="chip" id="u-set">${state.updateChannel ? "Change" : "Set"}</button></div>`, "source github folder")
@@ -203,7 +204,8 @@ function openSettings(sectionId) {
 function openSettingsSection(id) {
   const c = settingsSections().find(x => x.id === id);
   if (!c) return;
-  page.open(c.title, body => { body.innerHTML = `<div class="settings">${c.html()}</div>`; wireSettings(body); });
+  // built again on every render, so a re-render after a change (openSettingsRefresh) shows the new values
+  page.open(c.title, body => { body.innerHTML = `<div class="settings">${(settingsSections().find(x => x.id === id) || c).html()}</div>`; wireSettings(body); });
 }
 /** Hooks up whatever settings controls are inside root (a category page or search results). */
 function wireSettings(root) {
@@ -253,6 +255,7 @@ function wireSettings(root) {
   on("#s-restart", async () => { try { await conn.call("working.clear"); } catch {} nativeCall("restartServer"); toast("Restarting server…"); });
   if (native && root.querySelector("#phone-ctl")) renderPhoneControl(root.querySelector("#phone-ctl"));
   if (native && root.querySelector("#termux-box")) renderTermux(root.querySelector("#termux-box"));
+  if (typeof wireDsSettings === "function") wireDsSettings(root);
 }
 /** Re-renders the settings page on screen (home or a category) so it shows changed values. */
 function openSettingsRefresh() {

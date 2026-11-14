@@ -26,12 +26,13 @@ async function pairServer() {
 
 async function onConnected() {
   hideBanner();
-  const hello = await conn.call("hello");
+  const hello = await conn.call("hello", { tzOffset: new Date().getTimezoneOffset() });   // DeepSeek counts spend by the phone's day
   // The server serves the UI; if its files changed since this page loaded, reload to pick them up.
   if (window.__uiVersion && hello.uiVersion && hello.uiVersion !== window.__uiVersion && !Object.values(hello.live || {}).some(i => i.state === "running")) { location.reload(); return; }
   window.__uiVersion = hello.uiVersion;
   Object.assign(state, { home: hello.home, hostName: hello.host, defaults: hello.defaults || {}, pinned: hello.pinned || [],
     commands: hello.commands || [], models: hello.models || [], account: hello.account, usage: hello.usage || null });
+  if (typeof dsHello === "function") dsHello(hello);   // engines and the DeepSeek status (deepseek.js)
   renderUsage();
   // the server may have restarted: only the chats it reports are live now (stale ones kept a Stop button that did nothing)
   for (const id of Object.keys(state.liveInfo)) if (!(hello.live || []).some(i => i.sessionId === id)) { delete state.liveInfo[id]; delete state.activity[id]; }
