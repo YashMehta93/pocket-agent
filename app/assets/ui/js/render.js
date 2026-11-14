@@ -172,12 +172,14 @@ class ChatView {
     if (e.type === "content_block_start") {
       const b = e.content_block;
       if (b.type === "text" || b.type === "thinking") {
-        const parent = this.container(this.curParent);
-        let el;
-        if (b.type === "text") { el = h(`<div class="md ghost caret"></div>`); }
-        else { el = h(`<details class="thinking ghost" ${settings.showThinking ? "open" : ""}><summary>${icon("brain")}<span>Thinking…</span></summary><div class="md"></div></details>`); }
-        parent.append(el);
-        this.ghosts.set(key, { el, kind: b.type, text: "" });
+        if (b.type === "text") {
+          const el = h(`<div class="md ghost caret"></div>`);
+          this.container(this.curParent).append(el);
+          this.ghosts.set(key, { el, kind: "text", text: "" });
+        } else {
+          const md = this.thoughtSlot(this.curParent, true);
+          this.ghosts.set(key, { el: md.closest(".thinking"), md, kind: "thinking", text: "" });
+        }
         scrollIfPinned();
       } else if (b.type === "tool_use") {
         if (!this.tools.has(b.id)) this.toolCard(b.id, b.name, {}, this.curParent, true);
@@ -206,9 +208,9 @@ class ChatView {
   scheduleGhost(g) { if (g.t) return; g.t = setTimeout(() => { g.t = null; this.paintGhost(g); scrollIfPinned(); }, 70); }
   paintGhost(g) {
     if (g.kind === "text") setMd(g.el, g.text);
-    else setMd(g.el.querySelector(".md"), g.text || "…");
+    else setMd(g.md, g.text || "…");
   }
-  finishGhosts() { for (const g of this.ghosts.values()) { clearTimeout(g.t); g.el.classList.remove("caret"); } this.ghosts.clear(); }
+  finishGhosts() { for (const g of this.ghosts.values()) { clearTimeout(g.t); g.el.classList.remove("caret"); if (g.kind === "thinking") this.endThought(g.el); } this.ghosts.clear(); }
   takeGhost(kind, parentId) {
     for (const [k, g] of this.ghosts) if (g.kind === kind) { clearTimeout(g.t); this.ghosts.delete(k); return g; }
     return null;
@@ -235,11 +237,9 @@ class ChatView {
         const g = !history && this.takeGhost("thinking");
         const text = b.thinking || "";
         if (!text && !g) return;
-        const el = g ? g.el : h(`<details class="thinking"><summary>${icon("brain")}<span>Thought</span></summary><div class="md"></div></details>`);
-        el.classList.remove("ghost"); el.open = false;
-        el.querySelector("summary span").textContent = "Thought";
-        if (text) setMd(el.querySelector(".md"), text);
-        if (!g) parent.append(el);
+        const md = g ? g.md : this.thoughtSlot(parentId, false);
+        if (text) setMd(md, text);
+        this.endThought(md.closest(".thinking"));
       } else if (b.type === "tool_use" || b.type === "server_tool_use") {
         const card = this.tools.get(b.id);
         if (card) { card.input = b.input || {}; this.fillToolInput(card); }
@@ -354,6 +354,32 @@ class ChatView {
     card.stEl.className = "st " + (s === "ok" ? "ok" : s === "err" ? "err" : "");
     card.stEl.innerHTML = s === "ok" ? icon("check") : s === "err" ? icon("x") : "";
     this.updateGroup(card.el.closest(".steps"));
+  }
+
+  // ───── thoughts: back-to-back thoughts share one collapsible block ─────
+  thoughtSlot(parentId, live) {
+    const parent = this.container(parentId);
+    let head = parent.lastElementChild;
+    if (!head?.classList.contains("thinking")) {
+      head = h(`<details class="thinking"><summary>${icon("brain")}<span>Thought</span></summary><div class="th-body"></div></details>`);
+      head.querySelector("summary").addEventListener("click", () => delete head.dataset.auto);   // the person's choice sticks
+      parent.append(head);
+    }
+    const md = document.createElement("div"); md.className = "md";
+    head.querySelector(".th-body").append(md);
+    if (live) {
+      head.classList.add("ghost");
+      head.querySelector("summary span").textContent = "Thinking…";
+      if (settings.showThinking && !head.open) { head.open = true; head.dataset.auto = "1"; }
+    }
+    return md;
+  }
+  endThought(head) {
+    if (!head) return;
+    head.classList.remove("ghost");
+    if (head.dataset.auto) { head.open = false; delete head.dataset.auto; }
+    const n = head.querySelectorAll(".th-body > .md").length;
+    head.querySelector("summary span").textContent = n > 1 ? `Thought · ${n} times` : "Thought";
   }
 
   // ───── grouped steps (steps.js): a run of top-level tool calls shares one line; thoughts stay in the chat ─────

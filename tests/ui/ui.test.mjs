@@ -55,6 +55,9 @@ ev(`chat.event({ type: "assistant", uuid: "u-t-2", message: { id: "m-t-2", conte
   chat.event({ type: "assistant", uuid: "u-t-4", message: { id: "m-t-4", content: [{ type: "tool_use", id: "tu-b", name: "Bash", input: { command: "du -sh *", description: "Check sizes" } }] } })`);
 const lastGroup = [...$$("#messages > .steps")].pop();
 ok("thoughts stay in the chat, not inside the steps line", $$("#messages .steps .thinking").length === 0 && $$("#messages > .thinking").length > 0);
+ev(`chat.event({ type: "assistant", uuid: "u-t-5", message: { id: "m-t-5", content: [{ type: "thinking", thinking: "Sizes look fine; summarise next." }] } })`);
+const th = [...$$("#messages > .thinking")].pop();
+ok("back-to-back thoughts share one block: " + th?.querySelector("summary").textContent, th?.querySelectorAll(".th-body > .md").length === 2 && /2 times/.test(th.querySelector("summary").textContent));
 ok("tool calls on both sides of a thought share one line: " + lastGroup?.querySelector(".sl-t").textContent, lastGroup?.querySelectorAll(".steps-list > .tool").length === 2);
 
 // grouped steps: one line per run of tool calls, a timeline sheet, a page per step that hands the card back
