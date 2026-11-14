@@ -1,8 +1,8 @@
 // Pocket Agent's own MCP tools, put in every top-level chat: hand a task to the other engine as a linked worker chat.
 // Claude chats get deepseek_task, DeepSeek chats get claude_task (docs: SPEC §4.9 and §6 in the DeepSeek notes).
-// Each call asks on the phone first, except in a chat that runs in Bypass (the owner's rule). The worker is a normal
-// chat the person can open, approve and stop; it runs in the calling chat's permission mode, and its report (status,
-// time, cost, changed files, its last message) goes back to the calling chat as the tool's result.
+// Each call asks on the phone first, unless the chat runs in Bypass (the owner's rule) or the person chose "always" for
+// it in that chat. The worker is a normal chat the person can open, approve and stop; it runs in the calling chat's
+// permission mode, and its report (status, time, cost, changed files, its last message) goes back as the tool's result.
 // Workers get no tools of their own (depth 1), so they can't start chains of workers.
 import fs from "node:fs";
 import path from "node:path";
@@ -57,7 +57,7 @@ export function toolsFor(s) {
     const server = createSdkMcpServer({ name: "pocket", version: VERSION, alwaysLoad: true, timeout: 6 * 3600e3,
       instructions: s.engine === "deepseek" ? DEEPSEEK_SIDE : CLAUDE_SIDE, tools });
     // always_ask: Claude Code asks our canUseTool before every call, even where an allow rule or Auto mode would let it
-    // through. live-session.js answers it for a chat in Bypass; every other mode asks the phone.
+    // through. live-session.js allows it at once in Bypass or after "always" in this chat; otherwise the phone is asked.
     return { pocket: { ...server, tools: tools.map(t => ({ name: t.name, permission_policy: "always_ask" })) } };
   } catch (e) {
     log("pocket tools failed", e?.message);   // the chat still opens, just without them
