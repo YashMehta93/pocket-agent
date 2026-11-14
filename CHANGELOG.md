@@ -4,6 +4,9 @@ Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 
 ## Unreleased
 
+- **DeepSeek** (#44): add your DeepSeek key in Settings → DeepSeek, then start chats on DeepSeek with the new engine chip, or let a Claude chat send work to DeepSeek (and the other way round) with your OK each time. Each worker is its own chat you can watch and stop. The Usage sheet shows your DeepSeek balance and spend.
+- Fixed: after switching Claude accounts, usage showed the previous account's numbers; an unused 5-hour window now shows 0% (#50).
+
 ## 1.2.0
 
 - **Usage limits** (#35): a ring in the chat header and a meter in the chats drawer show how much of your 5-hour and weekly Claude limits you've used and when they reset. A line above the message box warns from 90%. Tap either for the Usage sheet: this chat's context window, every limit including per-model ones, and a warning when your pace would run out before the reset.

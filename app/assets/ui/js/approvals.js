@@ -11,6 +11,7 @@ function showNextPermission() {
   if (sheet.key === "perm:" + p.requestId) return;
   if (p.toolName === "AskUserQuestion") return askQuestionSheet(p);
   if (p.toolName === "ExitPlanMode") return planSheet(p);
+  if (typeof isDelegationTool === "function" && isDelegationTool(p.toolName)) return delegationSheet(p);   // deepseek.js
   const inp = p.input || {};
   let detail = "";
   if (p.toolName === "Bash") detail = `<pre>$ ${esc(inp.command)}</pre>${inp.description ? `<div class="sub" style="margin-top:6px">${esc(inp.description)}</div>` : ""}`;

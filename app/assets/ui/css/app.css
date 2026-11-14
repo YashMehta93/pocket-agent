@@ -111,8 +111,8 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 .usage-meter { display: block; margin: 0 14px; padding: 11px 4px 12px; border-top: 1px solid var(--line); text-align: left; }
 .usage-meter:not([hidden]) + .drawer-foot { border-top: 0; padding-top: 2px; }
 .u-row + .u-row { margin-top: 10px; }
-.u-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 12.5px; color: var(--text2); }
-.u-top small { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.u-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 10px; font-size: 12.5px; color: var(--text2); }
+.u-top small { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .u-bar { display: block; height: 4px; margin-top: 6px; border-radius: 2px; background: var(--bg3); overflow: hidden; }
 .u-bar i { display: block; height: 100%; border-radius: 2px; background: var(--text2); }
 .u-row.warn .u-bar i { background: var(--yellow); } .u-row.full .u-bar i { background: var(--red); }
@@ -455,3 +455,61 @@ pre.has-btns { position: relative; padding-top: 34px; }
 .ag-head { display: flex; gap: 10px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
 .ag-head .ag-now { flex: 1; min-width: 0; }
 .ag-chat { padding: 4px 18px; }
+
+/* DeepSeek (#44): engine chip, linked worker chats, worker cards, Settings and the Usage section.
+   One quiet accent marks DeepSeek, an indigo kept apart from the blue of "reading" tags (≥ 6.6:1 on its tint, both themes). */
+:root { --ds: #4B44A8; --ds-bg: #ECEBFA; }
+:root[data-theme="dark"] { --ds: #B9B4F4; --ds-bg: #28263C; }
+.chip.engine-ds { color: var(--ds); background: var(--ds-bg); border-color: transparent; }
+/* the chips take the room between the clip and the mic; with large text they wrap to a second line instead of being cut */
+#composer .chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.chip.danger { color: var(--red); background: var(--red-bg); border-color: transparent; }
+/* below the header: a worker's way back to its chat, or the chat's workers; a quiet row each, a thumb high */
+#links-bar { margin: 0 14px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.lk-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 7px 12px; text-align: left; font-size: 13.5px; line-height: 1.35; color: var(--text2); }
+.lk-row + .lk-row { border-top: 1px solid var(--line); }
+.lk-row:active { background: var(--bg2); }
+.lk-ic { width: 16px; flex: none; display: grid; place-items: center; color: var(--muted); }
+.lk-ic svg { width: 15px; height: 15px; } .lk-ic.done { color: var(--green); } .lk-ic.stopped, .lk-ic.failed { color: var(--red); }
+.lk-dot { display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); }
+.lk-t { flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.lk-eng { font-weight: 500; } .lk-eng.deepseek { color: var(--ds); } .lk-eng.claude { color: var(--text); }
+.lk-from .lk-ti { color: var(--text); }
+.lk-st { flex: none; color: var(--muted); font-size: 12.5px; white-space: nowrap; } .lk-st.needs-you { color: var(--yellow); font-weight: 500; }
+.lk-st.stopped, .lk-st.failed { color: var(--red); }
+.lk-sep { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.lk-row .chev { flex: none; color: var(--faint); font-size: 16px; line-height: 1; }
+.lk-list { border-top: 1px solid var(--line); } .lk-list .lk-row { padding-left: 2px; padding-right: 2px; }
+/* the worker's card in the calling chat: status and a link first, then the task and the report, each folded */
+.tool[data-kind="ds"] .tn { background: var(--ds-bg); color: var(--ds); }
+.tool[data-kind="cl"] .tn { background: var(--bg3); color: var(--text2); }
+.dl-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; min-height: 30px; font-size: 13px; color: var(--text2); }
+.dl-head .dl-st { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
+.dl-sec { margin-top: 8px; }
+.dl-sec > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 6px; min-height: 32px; font: 600 10.5px/1 var(--sans); color: var(--muted); text-transform: uppercase; letter-spacing: .07em; }
+.dl-sec > summary::-webkit-details-marker { display: none; }
+.dl-sec > summary::before { content: "›"; font-size: 15px; letter-spacing: 0; transition: transform .15s; }
+.dl-sec[open] > summary::before { transform: rotate(90deg); }
+.dl-sec .md { font-size: 14px; padding: 2px 0 4px; }
+.dl-files { font: 12px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); margin: 2px 0 8px; }
+/* the approval sheet for a worker */
+.dl-title { font-size: 15px; font-weight: 500; color: var(--text); margin: -6px 0 2px; overflow-wrap: anywhere; }
+.dl-task { max-height: 36vh; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); font-size: 14px; }
+.ds-err { color: var(--red); font-size: 13.5px; margin: 4px 0 0; }
+.set-foot { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 16px 0 4px; }
+/* Usage sheet: DeepSeek's balance as a figure, then what we estimate was spent, then the price now */
+.ds-bal { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; margin: 0 0 8px; }
+.ds-fig { font-size: 15px; color: var(--muted); }
+.ds-fig b { font: 500 28px/1.15 var(--serif); letter-spacing: -0.02em; color: var(--text); font-variant-numeric: tabular-nums; margin-right: 3px; }
+.ds-bal small { font-size: 12.5px; color: var(--muted); }
+.ds-bal.stale .ds-fig b { color: var(--muted); }
+.ds-out { font: 500 17px/1.3 var(--sans); color: var(--red); }
+.ds-tap { min-height: 36px; font-size: 14px; color: var(--text2); text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px; text-align: left; }
+.ds-row { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 2px 12px; padding: 5px 0; font-size: 15px; color: var(--text); }
+.ds-row small { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ds-row.warn small { color: var(--yellow); } .ds-row.full small { color: var(--red); }
+.ds-bar { height: 6px; border-radius: 3px; margin: 2px 0 8px; }
+.ds-bar.warn i { background: var(--yellow); } .ds-bar.full i { background: var(--red); }
+.ds-price { display: flex; gap: 9px; align-items: flex-start; margin: 8px 0 0; font-size: 13.5px; color: var(--text2); }
+.ds-price i { width: 7px; height: 7px; border-radius: 50%; flex: none; margin-top: .55em; background: var(--green); } .ds-price.peak i { background: var(--yellow); }
+.result-line .cost { color: var(--muted); }

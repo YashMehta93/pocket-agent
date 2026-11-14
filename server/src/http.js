@@ -8,6 +8,8 @@
 //   GET  /apk/download?token=  latest built APK, for in-app updates
 //   GET  /bundle/info, /bundle.tgz, /export/sessions.tgz (?token=)  for another server's update / chat import
 //   GET  /termux/install.sh, /termux/bundle.tgz (?code=)  Termux setup, with a 30-minute code (termux.js)
+//   POST /deepseek/v1/messages[/count_tokens]  the DeepSeek key keeper (deepseek.js): DeepSeek chats only, with their
+//                              own per-chat token instead of the app token
 import http from "node:http";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -22,6 +24,7 @@ import { toolDetail } from "./activity.js";
 import { live, getLive } from "./live-session.js";
 import { handlers } from "./handlers.js";
 import { validCode, installScript } from "./termux.js";
+import { proxy as dsProxy } from "./deepseek.js";
 
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".woff2": "font/woff2" };
@@ -32,6 +35,7 @@ export function createServer() {
     const url = new URL(req.url, "http://x");
     if (url.pathname === "/health") { res.setHeader("access-control-allow-origin", "*"); return json(res, 200, { ok: true, version: VERSION, live: live.size }); }
     if (url.pathname === "/" || url.pathname.startsWith("/ui/")) return serveUi(url.pathname, res);
+    if (url.pathname.startsWith("/deepseek/")) return dsProxy(req, res, url);   // checks its own per-chat tokens
     if (url.pathname.startsWith("/termux/")) {
       const code = url.searchParams.get("code");
       if (!validCode(code)) { res.writeHead(403, { "content-type": "text/plain" }); return res.end("echo 'This setup command has expired. Get a new one in Pocket Agent: Settings → Termux.' >&2; exit 1\n"); }
@@ -106,7 +110,7 @@ function sse(req, res, v, api) {
     // Catch the phone up: open approvals and current progress, as ready-to-show notifications.
     const events = [
       ...pending.flatMap(p => toNative({ type: "permission.request", ...p, input: toolDetail(p.toolName, p.input) })),
-      ...running.flatMap(s => { const a = s.activity.snapshot(); return toNative({ type: "activity", sessionId: s.sessionId, title: s.title, phase: a.phase, label: a.label, detail: a.detail, turnStart: a.turnStart }); }),
+      ...running.flatMap(s => { const a = s.activity.snapshot(); return toNative({ type: "activity", sessionId: s.sessionId, title: s.title, phase: a.phase, label: a.label, detail: a.detail, turnStart: a.turnStart, engine: s.engine }); }),
     ];
     res.write(`data: ${JSON.stringify({ type: "batch", events })}\n\n`);
   } else {

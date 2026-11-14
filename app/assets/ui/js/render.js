@@ -25,7 +25,7 @@ function setMd(el, text) { el.innerHTML = mdToHtml(text); enhanceMd(el); }
 
 const TOOL_ICON = { Bash: "terminal", BashOutput: "terminal", KillShell: "terminal", Read: "eye", Write: "file", Edit: "pencil", MultiEdit: "pencil",
   NotebookEdit: "pencil", Glob: "search", Grep: "search", WebFetch: "globe", WebSearch: "globe", TodoWrite: "list", Task: "bot", Agent: "bot",
-  ExitPlanMode: "plan", AskUserQuestion: "question", Skill: "bolt", LSP: "search" };
+  ExitPlanMode: "plan", AskUserQuestion: "question", Skill: "bolt", LSP: "search", mcp__pocket__deepseek_task: "bot", mcp__pocket__claude_task: "bot" };
 /** Semantic colour of a tool: read (blue), edit (green), run (yellow). */
 const TOOL_KIND = { Read: "read", Glob: "read", Grep: "read", WebFetch: "read", WebSearch: "read", LSP: "read",
   Write: "edit", Edit: "edit", MultiEdit: "edit", NotebookEdit: "edit",
@@ -47,10 +47,13 @@ function toolSummary(name, inp = {}) {
     case "Skill": return inp.skill || inp.command || "";
     case "AskUserQuestion": return (inp.questions || [])[0]?.question || "";
     case "ExitPlanMode": return "Proposed plan";
+    case "mcp__pocket__deepseek_task": case "mcp__pocket__claude_task": return inp.title || (typeof dsFirstLine === "function" ? dsFirstLine(inp.task) : "");
     default: { const v = Object.values(inp).find(x => typeof x === "string"); return v ? v.slice(0, 120) : ""; }
   }
 }
 function prettyToolName(name) {
+  if (name === "mcp__pocket__deepseek_task") return "DeepSeek worker";
+  if (name === "mcp__pocket__claude_task") return "Claude worker";
   if (name.startsWith("mcp__")) { const p = name.split("__"); return `${p[1]}·${p.slice(2).join("__")}`; }
   return name === "Task" || name === "Agent" ? "Subagent" : name;
 }
@@ -152,6 +155,7 @@ class ChatView {
       case "result": this.finishGhosts(); this.resultLine(ev); break;
       case "system": this.system(ev); break;
       case "pa_error": this.note("Error: " + ev.message, true); break;
+      case "pa_cost": this.costNote(ev.usd); break;
       case "tool_progress": { const c = this.tools.get(ev.tool_use_id); if (c && ev.elapsed_time_seconds) c.summaryEl.title = `${Math.round(ev.elapsed_time_seconds)}s`; break; }
     }
   }
@@ -300,17 +304,19 @@ class ChatView {
     el.querySelector(".tn").textContent = prettyToolName(name);
     el.dataset.kind = TOOL_KIND[name] || (name.startsWith("mcp__") ? "run" : "other");  // colours the tag (css: .tool[data-kind])
     const card = { id, name, input, el, body: el.querySelector(".tb"), summaryEl: el.querySelector(".ts"), stEl: el.querySelector(".st"), status: live ? "run" : "done" };
-    if (settings.autoExpandTools || name === "TodoWrite" || name === "Task" || name === "Agent" || name === "ExitPlanMode") el.open = name !== "Task" && name !== "Agent" ? true : false;
+    const worker = name.startsWith("mcp__pocket__");   // deepseek_task / claude_task (deepseek.js)
+    if (settings.autoExpandTools || worker || name === "TodoWrite" || name === "Task" || name === "Agent" || name === "ExitPlanMode") el.open = name !== "Task" && name !== "Agent" ? true : false;
     this.tools.set(id, card);
     el._card = card;
     this.fillToolInput(card);
-    if (name === "AskUserQuestion" || name === "ExitPlanMode") this.container(parentId).append(el); else this.place(el, parentId);
+    if (worker || name === "AskUserQuestion" || name === "ExitPlanMode") this.container(parentId).append(el); else this.place(el, parentId);
     return card;
   }
   fillToolInput(card) {
     const { name, input } = card, body = card.body;
     card.summaryEl.textContent = toolSummary(name, input);
     if (card.el.isConnected) this.updateGroup(card.el.closest(".steps"));   // the line names what's running once its input arrives
+    if (name.startsWith("mcp__pocket__") && typeof delegationCard === "function") return delegationCard(card);
     body.querySelector(".tin")?.remove();
     const box = document.createElement("div"); box.className = "tin";
     if (name === "Bash") { box.append(codeBlock("$ " + (input.command || ""), "bash", true)); }
@@ -332,6 +338,7 @@ class ChatView {
     card.body.querySelector(".tout")?.remove();
     const out = document.createElement("div"); out.className = "tout";
     const name = card.name;
+    if (name.startsWith("mcp__pocket__") && typeof delegationCard === "function") { delegationCard(card, text, isErr); return this.setStatus(card, isErr ? "err" : "ok"); }
     if (isErr) { out.append(h(`<div class="lbl">Error</div>`)); const p = codeBlock(text, "", true); p.classList.add("err-text"); out.append(p); }
     else if (name === "Edit" || name === "MultiEdit" || name === "Write") {
       const patch = structured?.structuredPatch;
@@ -429,6 +436,12 @@ class ChatView {
     line.querySelector('[data-a="retry"]').onclick = () => retryLast();
     this.root.append(line);
     scrollIfPinned();
+  }
+  /** A DeepSeek turn's estimated cost (the server's pa_cost event), on that turn's result line. */
+  costNote(usd) {
+    const line = [...this.root.querySelectorAll(":scope > .result-line")].pop();
+    if (!line || !(usd > 0) || line.querySelector(".cost")) return;
+    line.querySelector("span").insertAdjacentHTML("afterend", `<span class="cost" title="Estimated from token counts">≈ ${esc(typeof dsMoney === "function" ? dsMoney(usd) : "$" + usd.toFixed(3))}</span>`);
   }
   note(text, err) { this.root.append(h(`<div class="note ${err ? "err" : ""}">${esc(text)}</div>`)); scrollIfPinned(); }
   divider(text) { this.root.append(h(`<div class="divider">${esc(text)}</div>`)); }

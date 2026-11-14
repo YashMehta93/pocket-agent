@@ -12,6 +12,8 @@ export const VERSION = (() => {
 export const HOME = os.homedir();
 export const DATA = process.env.PA_DATA || path.join(HOME, ".pocket-agent");   // token, prefs, cache, logs
 export const CLAUDE_DIR = path.join(HOME, ".claude");                          // Claude Code's own state
+export const SECRETS_DIR = path.join(DATA, "secrets");                         // provider keys, 0700; backups skip DATA (except prefs.json)
+export const DS_DIR = path.join(DATA, "engines", "deepseek");                  // CLAUDE_CONFIG_DIR of DeepSeek chats: no Claude login inside
 
 const args = parseArgs(process.argv.slice(2));
 export const PORT = +(args.port || process.env.PA_PORT || 8765);
@@ -43,7 +45,9 @@ export const BUFFER_MAX = 4000;               // events kept per live session so
 fs.mkdirSync(DATA, { recursive: true, mode: 0o700 });
 
 export const TOKEN = loadToken();
-export const prefs = loadJSON("prefs.json", { pinned: [], defaults: {} });
+// deepseek: DeepSeek settings (deepseek.js); chatEngine: chat → "deepseek" (never trimmed: a lost entry would send a
+// DeepSeek chat to Anthropic); chatLinks: worker chat → { parent, via, toolUseId, at } (engines.js)
+export const prefs = loadJSON("prefs.json", { pinned: [], defaults: {}, deepseek: {}, chatEngine: {}, chatLinks: {} });
 export const cache = loadJSON("cache.json", { commands: [], models: [], account: null });
 export const savePrefs = () => saveJSON("prefs.json", prefs);
 export const saveCache = () => saveJSON("cache.json", cache);

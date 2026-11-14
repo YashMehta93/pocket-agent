@@ -178,6 +178,7 @@ const sheet = {
   close(silent) {
     if (!document.body.classList.contains("sheet-open")) return;
     document.body.classList.remove("sheet-open");
+    this.closedAt = Date.now();   // a tap that closed a sheet must not also hit what was under it
     const cb = this.onClose; this.onClose = null; this.key = null;
     if (!silent && cb) cb();
   },

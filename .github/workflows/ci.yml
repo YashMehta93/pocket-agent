@@ -28,6 +28,7 @@ jobs:
         run: for f in server/src/*.js app/assets/ui/js/*.js scripts/*.mjs; do node --check "$f"; done
       - run: npm run test:extras
       - run: npm run test:services
+      - run: npm run test:deepseek   # unit part; the end-to-end part needs Claude Code, which CI doesn't install yet
       - run: npm run test:setup
 
   apk:

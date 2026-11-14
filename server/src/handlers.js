@@ -6,7 +6,7 @@ import path from "node:path";
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, deleteSession, forkSession } from "@anthropic-ai/claude-agent-sdk";
 import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache, saveCache, githubRepo } from "./config.js";
 import { broadcastAll, callNative } from "./hub.js";
-import { live, getLive, openSession, busyElsewhere, runClaude, chatSettings, rememberChatSettings, clearWorking, taskTranscript, restartContinuing } from "./live-session.js";
+import { live, getLive, openSession, checkEngine, busyElsewhere, runClaude, chatSettings, rememberChatSettings, clearWorking, taskTranscript, restartContinuing } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
 import { importSessions, checkUpdate, applyUpdate, sourceName, pickRelease, listReleases, releaseAsset, bundleInfo, clearReleaseCache } from "./transfer.js";
 import { runDevSetup, devSetupStatus, devRepo } from "./devtools.js";
@@ -15,6 +15,8 @@ import { createBackup, listBackups, restoreBackup, BACKUP_DIR } from "./backup.j
 import { installCommand } from "./termux.js";
 import { listServices, addService, removeService, setServiceEnabled, restartService, serviceLogs } from "./services.js";
 import { getUsage, refreshUsage } from "./usage.js";
+import { engineOf, copyEngine, forget, linkOf, engineList } from "./engines.js";
+import { status as dsStatus, balance as dsBalance, setKey as dsSetKey, removeKey as dsRemoveKey, setDsSettings, chatSpend, isDeepseekModel, dsModel } from "./deepseek.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
 
@@ -28,25 +30,31 @@ export function uiVersion() {
 
 export const handlers = {
   // ───── connection ─────
-  async hello() {
+  async hello({ tzOffset } = {}) {
+    // the phone's time zone (minutes, as getTimezoneOffset()), so DeepSeek spend is counted per local day
+    if (Number.isFinite(tzOffset) && tzOffset >= -900 && tzOffset <= 900 && prefs.tzOffset !== tzOffset) { prefs.tzOffset = tzOffset; savePrefs(); }
     return { version: VERSION, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
       defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account, usage: getUsage(),
       updateChannel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null,
       updateKind: prefs.updateChannel ? (prefs.updateChannel.github ? "github" : prefs.updateChannel.path ? "path" : "server") : null,
       githubToken: !!prefs.updateChannel?.token, defaultRepo: DEFAULT_REPO, mode: process.env.PA_MODE || "server", devRepo: devRepo(), updateTrack: prefs.updateTrack || { track: "stable" },
-      live: [...live.values()].map(s => s.info()) };
+      live: [...live.values()].map(s => s.info()), engines: engineList(), deepseek: dsStatus() };
   },
 
   // ───── session list & history ─────
   async "sessions.list"({ limit = 300, dir } = {}) {
     const list = await listSessions({ limit, ...(dir ? { dir } : {}) });
     const busy = busyElsewhere();
-    return { sessions: list.map(s => ({
-      sessionId: s.sessionId, title: s.customTitle || s.summary, firstPrompt: s.firstPrompt, cwd: s.cwd,
-      lastModified: s.lastModified, createdAt: s.createdAt, gitBranch: s.gitBranch, tag: s.tag,
-      custom: !!s.customTitle, pinned: prefs.pinned.includes(s.sessionId),
-      live: live.get(s.sessionId)?.state || null, elsewhere: busy.get(s.sessionId)?.kind || null,
-    })) };
+    return { sessions: list.map(s => {
+      const engine = engineOf(s.sessionId), parent = linkOf(s.sessionId)?.parent;
+      return {
+        sessionId: s.sessionId, title: s.customTitle || s.summary, firstPrompt: s.firstPrompt, cwd: s.cwd,
+        lastModified: s.lastModified, createdAt: s.createdAt, gitBranch: s.gitBranch, tag: s.tag,
+        custom: !!s.customTitle, pinned: prefs.pinned.includes(s.sessionId),
+        live: live.get(s.sessionId)?.state || null, elsewhere: busy.get(s.sessionId)?.kind || null,
+        ...(engine ? { engine } : {}), ...(parent ? { parent } : {}), ...(engine === "deepseek" ? { spend: chatSpend(s.sessionId)?.usd ?? 0 } : {}),
+      };
+    }) };
   },
   async "session.history"({ sessionId }) {
     const [messages, info] = await Promise.all([getSessionMessages(sessionId), getSessionInfo(sessionId).catch(() => undefined)]);
@@ -60,27 +68,40 @@ export const handlers = {
 
   // ───── usage limits ─────
   async "usage.get"({ refresh } = {}) {
-    const s = [...live.values()].find(x => x.q && x.state !== "closed");
+    const s = [...live.values()].find(x => x.q && x.state !== "closed" && x.engine !== "deepseek");   // a DeepSeek chat has no Claude login
     return { usage: refresh ? await refreshUsage(s?.q, { asked: true }) : getUsage(), live: !!s };
   },
 
   // ───── live sessions ─────
-  async "session.open"(m, ws) { const s = await openSession(m); ws.subs.add(s.sessionId); return { sessionId: s.sessionId, info: s.info() }; },
+  // (`link` is the server's own: only delegate.js makes worker chats)
+  async "session.open"(m, ws) { const s = await openSession({ ...m, link: undefined }); ws.subs.add(s.sessionId); return { sessionId: s.sessionId, info: s.info() }; },
   async subscribe({ sessionId, after = 0 }, ws) {
     ws.subs.add(sessionId);
     const s = live.get(sessionId);
-    return { sessionId, info: s ? s.info() : null, events: s ? s.buffer.filter(e => e.seq > after) : [], settings: chatSettings(sessionId) };
+    return { sessionId, info: s ? s.info() : null, events: s ? s.buffer.filter(e => e.seq > after) : [], settings: chatSettings(sessionId),
+      engine: s?.engine || engineOf(sessionId) || "claude", parent: s?.link?.parent || linkOf(sessionId)?.parent || null };
   },
   async unsubscribe({ sessionId }, ws) { ws.subs.delete(sessionId); return {}; },
   async send(m, ws) {
-    const s = live.get(m.sessionId) || await openSession(m);
+    const s = live.get(m.sessionId) || await openSession({ ...m, link: undefined });
+    checkEngine(s.engine, m.engine);
     ws.subs.add(s.sessionId);
     return { sessionId: s.sessionId, uuid: s.send(m) };
   },
   async interrupt({ sessionId }) { await getLive(sessionId).q.interrupt(); return {}; },
   async "session.close"({ sessionId }) { live.get(sessionId)?.close(); return {}; },
   async "permission.reply"(m) { return { ok: getLive(m.sessionId).answer(m) }; },
-  async set(m) { const s = live.get(m.sessionId); if (s) await s.set(m); else rememberChatSettings(m.sessionId, m); return { info: s?.info(), settings: chatSettings(m.sessionId) }; },
+  async set(m) {
+    const s = live.get(m.sessionId);
+    if (m.model) {   // a model must suit the chat's engine ("" / null is the engine's default)
+      if ((s?.engine || engineOf(m.sessionId)) === "deepseek") {
+        if (!isDeepseekModel(m.model) && !/^(flash|pro)$/i.test(m.model)) throw new Error("That model isn't available on DeepSeek.");
+        m = { ...m, model: dsModel(m.model) };
+      } else if (isDeepseekModel(m.model)) throw new Error("That model isn't available on Claude.");
+    }
+    if (s) await s.set(m); else rememberChatSettings(m.sessionId, m);
+    return { info: s?.info(), settings: chatSettings(m.sessionId) };
+  },
   async "session.rewindFiles"({ sessionId, userMessageId, dryRun }) { return { result: await getLive(sessionId).q.rewindFiles(userMessageId, { dryRun: !!dryRun }) }; },
   async "session.context"({ sessionId }) {
     const s = live.get(sessionId);
@@ -99,6 +120,7 @@ export const handlers = {
   async "session.delete"({ sessionId }) {
     live.get(sessionId)?.close();
     await deleteSession(sessionId);
+    forget(sessionId);
     prefs.pinned = prefs.pinned.filter(x => x !== sessionId); savePrefs();
     changed(); return {};
   },
@@ -107,10 +129,11 @@ export const handlers = {
     if (pinned) prefs.pinned.unshift(sessionId);
     savePrefs(); changed(); return { pinned: prefs.pinned };
   },
-  async "session.fork"({ sessionId, upToMessageId, title }) { const r = await forkSession(sessionId, { upToMessageId, title }); changed(); return { sessionId: r.sessionId }; },
+  // A copy runs on the same engine (edit and retry fork too).
+  async "session.fork"({ sessionId, upToMessageId, title }) { const r = await forkSession(sessionId, { upToMessageId, title }); copyEngine(sessionId, r.sessionId); changed(); return { sessionId: r.sessionId }; },
   /** Resolve BUSY_ELSEWHERE: mode "fork" continues in a copy, "stop" stops the Termux background copy first. */
   async "session.continueHere"({ sessionId, mode }) {
-    if (mode === "fork") { const r = await forkSession(sessionId); changed(); return { sessionId: r.sessionId }; }
+    if (mode === "fork") { const r = await forkSession(sessionId); copyEngine(sessionId, r.sessionId); changed(); return { sessionId: r.sessionId }; }
     if (mode !== "stop") throw new Error("unknown mode");
     const busy = busyElsewhere().get(sessionId);
     if (busy?.kind === "terminal") throw new Error("That chat is open in a Termux terminal. Close it there (type /exit), then try again.");
@@ -122,6 +145,12 @@ export const handlers = {
     return { sessionId };
   },
   async "defaults.set"({ defaults }) { prefs.defaults = { ...prefs.defaults, ...defaults }; savePrefs(); return { defaults: prefs.defaults }; },
+
+  // ───── DeepSeek (deepseek.js): the key never comes back, only `keyHint` (its last 4 characters) ─────
+  async "deepseek.status"({ refresh } = {}) { if (refresh) await dsBalance({ refresh: true }).catch(() => {}); return { deepseek: dsStatus() }; },
+  async "deepseek.setKey"({ key }) { return { deepseek: await dsSetKey(key) }; },
+  async "deepseek.removeKey"() { return { deepseek: dsRemoveKey() }; },
+  async "deepseek.settings"({ settings }) { setDsSettings(settings); return { deepseek: dsStatus() }; },
 
   // ───── between servers (transfer.js) ─────
   /** Copy chats from another Pocket Agent server (e.g. Termux) into this one. */
@@ -218,7 +247,7 @@ async function estimateContext(sessionId) {
     if (!u) continue;
     const total = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.output_tokens || 0);
     const model = m.message.model || "";
-    const max = cache.contextMax?.[model] || (total > 200000 || /\[1m\]/.test(model) ? 1000000 : 200000);
+    const max = cache.contextMax?.[model] || (total > 200000 || /\[1m\]|^deepseek/i.test(model) ? 1000000 : 200000);   // DeepSeek models have 1M
     return { estimated: true, model, totalTokens: total, maxTokens: max, percentage: Math.min(100, total / max * 100), categories: [] };
   }
   return null;
