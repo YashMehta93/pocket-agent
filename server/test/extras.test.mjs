@@ -201,6 +201,20 @@ try {
     ok("asking again within 30 seconds doesn't fetch again", calls === 1);
     ok("without the call (older Claude Code), the saved numbers stay", (await refreshUsage({}, { asked: true }))?.windows?.seven_day?.used === 65);
 
+    // numbers belong to the signed-in account; a service answer without a 5-hour window means 0% there
+    const { cache: C } = await import("../src/config.js");
+    const { accountChanged } = await import("../src/usage.js");
+    C.account = { email: "one@example.com" };
+    noteRateLimit({ status: "allowed", unifiedWindows: { seven_day: { utilization: 0.5, resetsAt: 1795024800, status: "allowed" } } });
+    ok("usage remembers whose numbers they are", getUsage()?.account === "one@example.com");
+    C.account = { email: "two@example.com" };
+    ok("after switching Claude accounts, the old account's numbers don't show", getUsage() === null);
+    accountChanged();
+    const q2 = { usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({ subscription_type: "max", rate_limits_available: true, rate_limits: { seven_day: { utilization: 72, resets_at: "2026-11-18T23:30:00Z" } } }) };
+    const u2 = await refreshUsage(q2, { asked: true });
+    ok("no 5-hour window from the service shows as 0%, the week as reported", u2?.windows?.five_hour?.used === 0 && u2.windows.seven_day.used === 72 && u2.account === "two@example.com");
+    delete C.account;
+
     // after an unexpected stop, chats that were mid-reply continue: only right after it, once an hour, and not when turned off
     const { continueInterrupted, clearWorking } = await import("../src/live-session.js");
     const { prefs: P } = await import("../src/config.js");

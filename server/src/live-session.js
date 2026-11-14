@@ -28,7 +28,7 @@ export function rememberChatSettings(id, { model, effort, permissionMode }) {
 import { broadcast, broadcastAll, notifyNative, clients } from "./hub.js";
 import { Inbox } from "./inbox.js";
 import { Activity, toolDetail } from "./activity.js";
-import { noteRateLimit, refreshUsage } from "./usage.js";
+import { noteRateLimit, refreshUsage, accountChanged } from "./usage.js";
 import { phoneContext } from "./devtools.js";
 import { engineOptions, engineOf, recordEngine, linkOf, recordLink, detectEngine } from "./engines.js";
 import { ready as dsReady, revokeToken, requireReady, checkFolder, dsModel, isDeepseekModel, dsSettings, chatSpend } from "./deepseek.js";
@@ -170,7 +170,9 @@ export class LiveSession {
     try {
       const [commands, models] = await Promise.all([this.q.supportedCommands(), this.q.supportedModels()]);
       Object.assign(cache, { commands, models });
+      const before = cache.account?.email || null;
       try { cache.account = await this.q.accountInfo(); } catch {}
+      if (before && cache.account?.email && before !== cache.account.email) accountChanged();   // signed in to another Claude account
       saveCache();
       broadcastAll({ t: "meta", commands: cache.commands, models: cache.models, account: cache.account });
       refreshUsage(this.q).catch(() => {});

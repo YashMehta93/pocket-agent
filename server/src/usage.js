@@ -9,11 +9,16 @@ const ASKED_MS = 30_000;      // ...and this often when the person opens the det
 const USAGE_CALL = "usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET";
 let fetching = null, lastTry = 0;
 
-export const getUsage = () => cache.usage || null;
+// The numbers belong to the signed-in Claude account: after switching accounts the old ones must not show.
+const who = () => cache.account?.email || cache.account?.organization || null;
+const mine = u => u && (!u.account || !who() || u.account === who());
+export const getUsage = () => (mine(cache.usage) ? cache.usage : null);
+/** The signed-in account changed: forget the old account's numbers and tell the screens. */
+export function accountChanged() { cache.usage = null; saveCache(); broadcastAll({ t: "usage", usage: null }); lastTry = 0; }
 
 function store(next) {
   const same = JSON.stringify([cache.usage?.windows, cache.usage?.models, cache.usage?.status]) === JSON.stringify([next.windows, next.models, next.status]);
-  cache.usage = { ...next, at: Date.now() };
+  cache.usage = { ...next, account: who(), at: Date.now() };
   saveCache();
   if (!same) broadcastAll({ t: "usage", usage: cache.usage });
 }
@@ -21,6 +26,7 @@ function store(next) {
 /** A rate_limit_event's info: utilization is 0–1 and times are Unix seconds. Newer Claude Code lists every window. */
 export function noteRateLimit(info) {
   if (!info) return;
+  if (!mine(cache.usage)) cache.usage = null;
   const windows = { ...cache.usage?.windows };
   const put = (k, x) => {
     if (x?.utilization == null && !x?.status) return;
@@ -42,11 +48,14 @@ export async function refreshUsage(q, { asked = false } = {}) {
     try {
       const r = await Promise.race([q[USAGE_CALL]({ skipBehaviors: true }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 15000).unref())]);
       const rl = r?.rate_limits_available ? r.rate_limits : null;
+      if (!mine(cache.usage)) cache.usage = null;
       const windows = { ...cache.usage?.windows };
       const time = s => (s ? Date.parse(s) || null : null);
       for (const k of ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"]) {
         const x = rl?.[k];
         if (x?.utilization != null) windows[k] = { status: "allowed", ...windows[k], used: Math.round(x.utilization), resetsAt: time(x.resets_at) };
+        // the service answered but has no 5-hour window yet: nothing used in it, so it's at 0%
+        else if (k === "five_hour" && rl && !windows.five_hour?.resetsAt) windows.five_hour = { used: 0, resetsAt: null, status: "allowed" };
       }
       const models = (rl?.model_scoped || []).filter(x => x?.utilization != null)
         .map(x => ({ name: String(x.display_name || "Model"), used: Math.round(x.utilization), resetsAt: time(x.resets_at) }));
