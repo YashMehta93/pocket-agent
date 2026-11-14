@@ -55,7 +55,10 @@ $("#btn-send").onclick = () => {
 };
 async function interrupt() {
   haptic("tick");
-  try { await conn.call("interrupt", { sessionId: state.current.sessionId }); } catch (e) { toast(e.message); }
+  try { await conn.call("interrupt", { sessionId: state.current.sessionId }); }
+  catch (e) {   // not running any more (e.g. the server restarted): show it as stopped instead of an error
+    if (/not (running|live|open)|no live/i.test(e.message)) { delete state.liveInfo[state.current.sessionId]; updateComposer(); toast("Already stopped"); } else toast(e.message);
+  }
 }
 async function send(textOverride) {
   const cur = state.current;

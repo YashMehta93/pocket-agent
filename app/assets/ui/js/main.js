@@ -33,6 +33,8 @@ async function onConnected() {
   Object.assign(state, { home: hello.home, hostName: hello.host, defaults: hello.defaults || {}, pinned: hello.pinned || [],
     commands: hello.commands || [], models: hello.models || [], account: hello.account, usage: hello.usage || null });
   renderUsage();
+  // the server may have restarted: only the chats it reports are live now (stale ones kept a Stop button that did nothing)
+  for (const id of Object.keys(state.liveInfo)) if (!(hello.live || []).some(i => i.sessionId === id)) { delete state.liveInfo[id]; delete state.activity[id]; }
   for (const i of hello.live || []) { state.liveInfo[i.sessionId] = i; if (i.activity) state.activity[i.sessionId] = i.activity; }
   state.pending = (hello.live || []).flatMap(i => i.pending || []);
   const where = hello.mode === "standalone" ? "This phone" : settings.server ? settings.server.replace(/^https?:\/\//, "") : hello.host;

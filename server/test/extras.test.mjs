@@ -207,9 +207,9 @@ try {
     const W = path.join(process.env.PA_DATA, "working.json");
     fs.writeFileSync(W, JSON.stringify({ ids: ["chat-old"], at: Date.now() - 3 * 3600e3 }));
     ok("a stop hours ago continues nothing, and the list is cleared", (await continueInterrupted()).length === 0 && !fs.existsSync(W));
-    P.continued = { "chat-again": Date.now() };
+    P.continued = { "chat-again": [Date.now() - 60e3, Date.now() - 30e3, Date.now()] };
     fs.writeFileSync(W, JSON.stringify({ ids: ["chat-again"], at: Date.now() }));
-    ok("a chat continued in the last hour isn't continued again (no crash loops)", (await continueInterrupted()).length === 0);
+    ok("a chat continued 3 times in 30 minutes isn't continued again (no crash loops)", (await continueInterrupted()).length === 0);
     P.autoContinue = false;
     fs.writeFileSync(W, JSON.stringify({ ids: ["chat-new"], at: Date.now() }));
     ok("turned off, nothing continues", (await continueInterrupted()).length === 0);

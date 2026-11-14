@@ -302,6 +302,7 @@ export const anyBusy = () => [...live.values()].some(s => s.state === "running" 
 // Those chats get a message asking Claude to continue: at most once per chat an hour, and only right after the stop.
 const WORKING = path.join(DATA, "working.json");
 export const CONTINUE_TEXT = "[Pocket Agent] The app was closed while you were working (Android stopped it), so your last step and any background agents you started were cut off. Continue where you left off; restart background agents if they're still needed.";
+const events = line => { try { fs.appendFileSync(path.join(DATA, "server-events.log"), new Date().toISOString() + " " + line + "\n"); } catch {} };
 let holdWorking = false;   // set by restartContinuing(): the list must survive this shutdown
 function saveWorking() {
   if (holdWorking) return;
@@ -322,10 +323,12 @@ export async function continueInterrupted() {
   const done = [];
   prefs.continued ||= {};
   for (const id of w.ids) {
-    if (Date.now() - (prefs.continued[id] || 0) < 3600e3) continue;
-    prefs.continued[id] = Date.now(); savePrefs();
-    try { const s = await openSession({ sessionId: id }); s.send({ text: CONTINUE_TEXT }); done.push(id); log("continued", id.slice(0, 8), "after an unexpected stop"); }
-    catch (e) { log("couldn't continue", id.slice(0, 8), e?.message); }
+    // crash-loop guard: at most 3 pick-ups per chat in 30 minutes
+    const recent = [].concat(prefs.continued[id] || []).filter(t => Date.now() - t < 30 * 60e3);
+    if (recent.length >= 3) { log("not continuing", id.slice(0, 8), "(3 times in 30 minutes)"); continue; }
+    prefs.continued[id] = [...recent, Date.now()]; savePrefs();
+    try { const s = await openSession({ sessionId: id }); s.send({ text: CONTINUE_TEXT }); done.push(id); events("continued " + id.slice(0, 8)); }
+    catch (e) { events("couldn't continue " + id.slice(0, 8) + ": " + e?.message); }
   }
   return done;
 }
