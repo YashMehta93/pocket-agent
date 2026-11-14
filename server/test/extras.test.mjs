@@ -216,6 +216,19 @@ try {
     delete P.autoContinue;
     fs.writeFileSync(W, "{}"); clearWorking();
     ok("a restart on purpose clears the list", !fs.existsSync(W));
+
+    // a background agent's own conversation is read from Claude Code's subagents folder
+    const { taskTranscript } = await import("../src/live-session.js");
+    const subDir = path.join(HOME, ".claude/projects/-tmp-x/chat-with-agents/subagents"); fs.mkdirSync(subDir, { recursive: true });
+    fs.writeFileSync(path.join(subDir, "agent-a0123456789abcdef.jsonl"), [
+      JSON.stringify({ type: "user", uuid: "u1", message: { role: "user", content: "Research the API" } }),
+      JSON.stringify({ type: "progress", data: {} }),
+      JSON.stringify({ type: "assistant", uuid: "u2", message: { role: "assistant", content: [{ type: "text", text: "Found it." }] } })].join("\n"));
+    const tr = taskTranscript("chat-with-agents", "a0123456789abcdef");
+    ok("an agent's conversation is found and read", tr?.length === 2 && tr[1].message.content[0].text === "Found it.");
+    ok("an unknown agent has none", taskTranscript("chat-with-agents", "a999") === null);
+    let refused = false; try { taskTranscript("../x", "a1"); } catch { refused = true; }
+    ok("ids with path characters are refused", refused);
   } finally { server.kill(); }
 } catch (e) { console.log("FAIL", e.stack); fails++; }
 finally { fs.rmSync(T, { recursive: true, force: true }); }

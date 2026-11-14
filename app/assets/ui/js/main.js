@@ -129,6 +129,7 @@ conn.on("activity", m => {
   state.activity[m.sessionId] = m.activity;
   if (state.current?.sessionId === m.sessionId) renderActivity();
 });
+conn.on("tasks", m => { (state.liveInfo[m.sessionId] ||= { sessionId: m.sessionId }).tasks = m.tasks; if (m.sessionId === state.current?.sessionId) renderAgentsLine(); });
 conn.on("usage", m => { state.usage = m.usage; renderUsage(); });
 conn.on("meta", m => { state.commands = m.commands || state.commands; state.models = m.models || state.models; state.account = m.account || state.account; updateComposer(); });
 conn.on("sessions.changed", () => debouncedRefresh());

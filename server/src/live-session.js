@@ -39,6 +39,7 @@ export class LiveSession {
     Object.assign(this, { sessionId, cwd, title: title || null, model: model || null, effort: effort || null,
       permissionMode: permissionMode || "default", state: "starting", seq: 0, buffer: [], lastText: "", lastActive: Date.now() });
     this.pending = new Map();   // requestId -> { resolve, info }
+    this.tasks = new Map();     // task_id -> background agent or command (noteTask)
     this.inbox = new Inbox();
     this.activity = new Activity(snap => this.publishActivity(snap));
 
@@ -88,7 +89,7 @@ export class LiveSession {
   info() {
     return { sessionId: this.sessionId, cwd: this.cwd, state: this.state, seq: this.seq, model: this.model, effort: this.effort,
       permissionMode: this.permissionMode, title: this.title, pending: [...this.pending.values()].map(p => p.info),
-      activity: this.activity.snapshot() };
+      activity: this.activity.snapshot(), tasks: [...this.tasks.values()] };
   }
 
   // ───── SDK event loop ─────
@@ -112,6 +113,8 @@ export class LiveSession {
         } else if (m.type === "command_lifecycle" && m.state === "started") {
           // a queued message begins its turn (e.g. after a short turn for background-task notices ended in "idle")
           if (this.state !== "waiting") this.setState("running");
+        } else if (m.type === "system" && /^task_(started|progress|notification)$/.test(m.subtype || "")) {
+          this.noteTask(m);
         } else if (m.type === "rate_limit_event") {
           noteRateLimit(m.rate_limit_info);
         } else if (m.type === "result") {
@@ -140,6 +143,18 @@ export class LiveSession {
       broadcastAll({ t: "meta", commands: cache.commands, models: cache.models, account: cache.account });
       refreshUsage(this.q).catch(() => {});
     } catch (e) { log("meta failed", e?.message); }
+  }
+
+  /** Background agents and commands Claude started: what each is doing, and how it ended. */
+  noteTask(m) {
+    const t = this.tasks.get(m.task_id) || { id: m.task_id, status: "running", startedAt: Date.now() };
+    if (m.subtype === "task_started") Object.assign(t, { description: m.description, kind: m.task_type === "local_agent" || m.subagent_type ? "agent" : "command", agentType: m.subagent_type || null, background: !!m.is_backgrounded });
+    else if (m.subtype === "task_progress") Object.assign(t, { activity: m.description, tokens: m.usage?.total_tokens ?? t.tokens, tools: m.usage?.tool_uses ?? t.tools, ms: m.usage?.duration_ms ?? t.ms });
+    else Object.assign(t, { status: m.status || "completed", summary: m.summary || null, endedAt: Date.now(), activity: null });
+    t.description ||= m.description || m.summary || "Background task";
+    t.kind ||= /^a[0-9a-f]{12,}$/.test(m.task_id) ? "agent" : "command";
+    this.tasks.set(m.task_id, t);
+    broadcastAll({ t: "tasks", sessionId: this.sessionId, tasks: [...this.tasks.values()] });
   }
 
   // ───── permissions ─────
@@ -306,4 +321,19 @@ export async function continueInterrupted() {
     catch (e) { log("couldn't continue", id.slice(0, 8), e?.message); }
   }
   return done;
+}
+
+/** A background agent's own transcript (Claude Code keeps it next to the chat's), as session messages. */
+export function taskTranscript(sessionId, taskId) {
+  if (!/^[\w-]+$/.test(sessionId) || !/^[\w-]+$/.test(taskId)) throw new Error("Bad id");
+  const root = path.join(CLAUDE_DIR, "projects");
+  for (const dir of fs.readdirSync(root)) {
+    const f = path.join(root, dir, sessionId, "subagents", `agent-${taskId}.jsonl`);
+    if (!fs.existsSync(f)) continue;
+    const lines = fs.readFileSync(f, "utf8").split("\n").filter(Boolean).slice(-1500);
+    const messages = [];
+    for (const l of lines) { try { const j = JSON.parse(l); if ((j.type === "user" || j.type === "assistant") && j.message) messages.push({ type: j.type, uuid: j.uuid, message: j.message, parent_tool_use_id: null }); } catch {} }
+    return messages;
+  }
+  return null;
 }

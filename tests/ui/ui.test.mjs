@@ -102,6 +102,17 @@ ev(`document.querySelector("#set-q").value = ""; document.querySelector("#set-q"
 ok("a category opens its own page with its controls", ev("document.querySelector('#page-title').textContent") === "Appearance" && $$("#page-body .set-row").length >= 3 && $$("#page-body #s-theme button").length === 3);
 ev(`document.querySelector('#s-theme button[data-v="dark"]').click()`); ok("a setting works from its category page", ev("settings.theme") === "dark"); ev(`settings.theme = "system"; saveSettings()`);
 ev("page.close()");
+// background agents: a line above the message box, a sheet listing them, a page per agent
+ev(`state.liveInfo[state.current.sessionId] = { ...(state.liveInfo[state.current.sessionId] || {}), tasks: [
+  { id: "a1234567890abcdef", kind: "agent", agentType: "general-purpose", description: "Research DeepSeek", status: "running", activity: "Reading the API docs", tokens: 23548, tools: 4, startedAt: Date.now() - 90000 },
+  { id: "box1", kind: "command", description: "Run the tests", status: "completed", summary: "Run the tests", startedAt: Date.now() - 60000, endedAt: Date.now() } ] }; renderAgentsLine()`);
+ok("a line shows the agents at work", !$("#agents-line").hidden && /1 background task working · 1 finished/.test($("#agents-line").textContent));
+$("#agents-line").click();
+ok("tapping it lists each with what it's doing now", ev("sheet.key") === "agents" && $$("#sheet .ag-row").length === 2 && $("#sheet").textContent.includes("Reading the API docs") && $("#sheet").textContent.includes("23.5k tokens"));
+ev("sheet.close(true)");
+ev(`delete state.liveInfo[state.current.sessionId].tasks; renderAgentsLine()`);
+ok("no agents, no line", $("#agents-line").hidden);
+
 // usage limits: drawer meter, the note above the message box from 90%, the details sheet, the settings row
 ev(`state.usage = { windows: { five_hour: { used: 91, resetsAt: Date.now() + 3 * 3600e3 + 50 * 60e3, status: "allowed_warning" }, seven_day: { used: 64, resetsAt: Date.now() + 4 * 86400e3, status: "allowed" } }, models: [{ name: "Fable", used: 40, resetsAt: Date.now() + 4 * 86400e3 }], at: Date.now() }; renderUsage()`);
 ok("drawer shows the 5-hour and weekly limits", !$("#usage-meter").hidden && $$("#usage-meter .u-row").length === 2 && /91%.*resets in 3h \d+m/.test($("#usage-meter").textContent) && $("#usage-meter .u-row.warn") !== null);

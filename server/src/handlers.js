@@ -6,7 +6,7 @@ import path from "node:path";
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, deleteSession, forkSession } from "@anthropic-ai/claude-agent-sdk";
 import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache, saveCache, githubRepo } from "./config.js";
 import { broadcastAll, callNative } from "./hub.js";
-import { live, getLive, openSession, busyElsewhere, runClaude, chatSettings, rememberChatSettings, clearWorking } from "./live-session.js";
+import { live, getLive, openSession, busyElsewhere, runClaude, chatSettings, rememberChatSettings, clearWorking, taskTranscript } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
 import { importSessions, checkUpdate, applyUpdate, sourceName, pickRelease, listReleases, releaseAsset, bundleInfo, clearReleaseCache } from "./transfer.js";
 import { runDevSetup, devSetupStatus, devRepo } from "./devtools.js";
@@ -90,6 +90,7 @@ export const handlers = {
     return { usage: await estimateContext(sessionId) };
   },
   async "session.stopTask"({ sessionId, taskId }) { await getLive(sessionId).q.stopTask(taskId); return {}; },
+  async "task.transcript"({ sessionId, taskId }) { return { messages: taskTranscript(sessionId, taskId) }; },
 
   // ───── session management ─────
   async "session.rename"({ sessionId, title }) { await renameSession(sessionId, title); const s = live.get(sessionId); if (s) s.title = title; changed(); return {}; },
