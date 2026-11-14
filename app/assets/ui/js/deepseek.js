@@ -397,8 +397,8 @@ function dsWorkerMode(parent, ds) {
   const m = state.deepseek?.settings?.workerMode || parent.permissionMode || "default";
   return (MODES.find(x => x.id === (ds && m === "auto" ? "acceptEdits" : m)) || MODES[0]).short;
 }
-/** "Send this to DeepSeek?" / "Ask Claude?": where and how it runs, and the whole task. No shortcut on the notification,
- *  and no "don't ask again": every call asks (except in Bypass, where the server lets it through without a sheet). */
+/** "Send this to DeepSeek?" / "Ask Claude?": where and how it runs, and the whole task. No shortcut on the notification.
+ *  It asks the first time (never in Bypass: the server lets those through); "don't ask again" lasts until the chat closes. */
 function delegationSheet(p) {
   const inp = p.input || {}, ds = p.toolName === DS_TOOL, parent = state.liveInfo[p.sessionId] || {};
   const folder = shortPath(inp.cwd || parent.cwd || state.current?.cwd || ""), mode = dsWorkerMode(parent, ds);
@@ -410,6 +410,7 @@ function delegationSheet(p) {
   const b = sheet.open(`<h2>${ds ? "Send this to DeepSeek?" : "Ask Claude?"}</h2><div class="sub" id="dl-line"></div>
     ${inp.title ? `<div class="dl-title" id="dl-title"></div>` : ""}<div class="perm-detail md dl-task" id="dl-task"></div>
     <div class="btns"><button class="btn primary" data-a="allow">${ds ? "Send to DeepSeek" : "Ask Claude"}</button>
+    <button class="btn" data-a="always">${ds ? "Send" : "Ask"}, and don't ask again in this chat</button>
     <div class="btns row2" style="margin-top:0"><button class="btn danger" data-a="deny">Deny</button><button class="btn ghost" data-a="tell">Deny & say why</button></div></div>`,
   { key: "perm:" + p.requestId });
   b.querySelector("#dl-line").textContent = line;
@@ -420,6 +421,7 @@ function delegationSheet(p) {
     try { await conn.call("permission.reply", { sessionId: p.sessionId, requestId: p.requestId, behavior, ...extra }); } catch (e) { toast(e.message); }
   };
   b.querySelector('[data-a="allow"]').onclick = () => reply("allow");
+  b.querySelector('[data-a="always"]').onclick = () => reply("allow", { always: true });
   b.querySelector('[data-a="deny"]').onclick = () => reply("deny");
   b.querySelector('[data-a="tell"]').onclick = async () => {
     const why = await promptSheet({ title: `What should ${ENGINE_NAME[chatEngine(p.sessionId)]} do instead?`, multiline: true, ok: "Send" });

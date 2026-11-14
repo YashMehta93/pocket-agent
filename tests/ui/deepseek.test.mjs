@@ -156,9 +156,12 @@ ev("sheet.close(true); state.liveInfo[state.current.sessionId].permissionMode = 
 ok("a DeepSeek worker of an Auto chat runs in Auto-edit (DeepSeek has no Auto)", / · Flash · Auto-edit · /.test(text("#dl-line")));
 ev("sheet.close(true); state.liveInfo[state.current.sessionId].permissionMode = 'bypassPermissions'; state.deepseek.settings.workerMode = 'default'; showNextPermission()");
 ok("a worker mode set in Settings wins over the chat's", / · Flash · Ask · /.test(text("#dl-line")));
-ev("sheet.close(true); state.liveInfo[state.current.sessionId].permissionMode = 'acceptEdits'; state.deepseek.settings.workerMode = null; state.pending[0].suggestions = [{ type: 'addRules' }]; showNextPermission()");
-ok("the buttons: send, deny, deny & say why; no \"don't ask again\", even when Claude Code suggests one", text('#sheet [data-a="allow"]') === "Send to DeepSeek" && $('#sheet [data-a="deny"]') && $('#sheet [data-a="tell"]') && !$('#sheet [data-a="always"]') && !/don't ask again/i.test(text("#sheet")));
-ev("sheet.close(true)");
+ev("sheet.close(true); state.liveInfo[state.current.sessionId].permissionMode = 'acceptEdits'; state.deepseek.settings.workerMode = null; showNextPermission()");
+ok("the buttons: send; send and don't ask again in this chat; deny; deny & say why", text('#sheet [data-a="allow"]') === "Send to DeepSeek" && text('#sheet [data-a="always"]') === "Send, and don't ask again in this chat"
+  && $('#sheet [data-a="deny"]') && $('#sheet [data-a="tell"]'));
+$('#sheet [data-a="always"]').click();
+await sleep(50);
+ok("\"don't ask again\" allows it for the rest of the chat (always: true)", ev(`__calls.some(([t, m]) => t === "permission.reply" && m.requestId === "r-ds-1" && m.behavior === "allow" && m.always === true)`) && !ev("sheet.isOpen"));
 ev(`state.pending = [{ requestId: "r-cl-1", sessionId: state.current.sessionId, toolName: "mcp__pocket__claude_task", toolUseID: "toolu_cl1", input: { task: "Review the CONTRIBUTORS change.", model: "sonnet" }, suggestions: [] }]; showNextPermission()`);
 ok(`asking Claude: "${text("#dl-line")}"`, text("#sheet h2") === "Ask Claude?" && text('#sheet [data-a="allow"]') === "Ask Claude" && text("#dl-line") === "New Claude chat · ~/projects/demo · Sonnet · Auto-edit · uses your Claude plan");
 ev("sheet.close(true)");
