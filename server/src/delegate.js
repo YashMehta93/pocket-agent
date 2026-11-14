@@ -89,6 +89,9 @@ function workerMode(parent, engine) {
 
 async function run(parent, engine, args, extra) {
   const toolName = engine === "deepseek" ? DS_TOOL : CLAUDE_TOOL, who = NAME[engine];
+  // A chat keeps the tools it started with; a direction turned off since then is still off.
+  if (engine === "deepseek" ? dsSettings().toDeepseek === false : dsSettings().toClaude === false)
+    return fail(engine === "deepseek" ? "Sending work to DeepSeek is turned off (Settings → DeepSeek)." : "Asking Claude is turned off (Settings → DeepSeek).");
   const meta = extra?._meta?.["claudecode/toolUseId"], callId = typeof meta === "string" ? meta : null;
   const approved = takeApprovalFor(parent, toolName, callId);
   // Defence in depth: Claude Code only runs this after canUseTool allowed it. Without a recorded OK, only a chat in Bypass may go on.
@@ -116,6 +119,10 @@ async function run(parent, engine, args, extra) {
   log("worker", worker.sessionId.slice(0, 8), "for", parent.sessionId.slice(0, 8), engine, mode);
 
   const before = await gitStatus(worker.cwd), usd0 = chatSpend(worker.sessionId)?.usd || 0, t0 = Date.now(), text0 = worker.lastText;
+  if (extra?.signal?.aborted) {   // the calling chat was stopped before the worker got its task: don't send it
+    if (!args.continue_chat) worker.close();
+    return fail("Stopped before the worker began.");
+  }
   const turn = worker.waitTurn();
   worker.send({ text: args.continue_chat ? `[Pocket Agent] A follow-up from "${oneLine(parent.title) || "the calling chat"}":\n\n${args.task}`
     : brief({ who, other: NAME[parent.engine === "deepseek" ? "deepseek" : "claude"], parent, cwd: worker.cwd, task: args.task, approved: !!approved }) });

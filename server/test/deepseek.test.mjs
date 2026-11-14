@@ -239,6 +239,17 @@ async function unitTests() {
     for (const id of fakes) live.set(id, { sessionId: id, link: { parent: "p" }, state: "running" });
     try { r = await call(fake({ permissionMode: "bypassPermissions" }), { task: "One more." }); } finally { for (const id of fakes) live.delete(id); }
     ok("at most three workers at once", /Three workers/.test(resultText(r)));
+    const kept = dg.pocketTools(fake({ permissionMode: "bypassPermissions" }))[0];   // a chat keeps the tools it started with…
+    ds.setDsSettings({ toDeepseek: false });
+    try { r = await kept.handler({ task: "Do it.", cwd: path.join(T, "no-such-folder") }); } finally { ds.setDsSettings({ toDeepseek: true }); }
+    ok("…but a direction turned off since then is off", /turned off/.test(resultText(r)), resultText(r));
+    // Stopped before the worker got its task: it isn't sent, and the new worker chat closes (this opens one on the fake binary)
+    const before = new Set(live.keys());
+    r = await call(fake({ permissionMode: "bypassPermissions" }), { task: "Never sent." }, { signal: AbortSignal.abort(), ...meta("toolu_stopped") });
+    const opened = [...live.values()].filter(s => !before.has(s.sessionId));
+    await until(() => opened.every(s => !live.has(s.sessionId)), 5000, "the worker to close").catch(() => {});
+    ok("stopped before the worker began: nothing sent, the worker closes", /Stopped before the worker began/.test(resultText(r)) && opened.every(s => !live.has(s.sessionId) && !s.buffer.some(e => e.ev.type === "pa_user")),
+      resultText(r));
   });
 
   await step("report", async () => {
