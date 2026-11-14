@@ -302,7 +302,7 @@ function dsUsageHtml(cur) {
   const thisChat = cur && !cur.isNew && chatEngine(cur.sessionId) === "deepseek";
   const chatUsd = thisChat ? (state.liveInfo[cur.sessionId]?.spend ?? state.sessions.find(s => s.sessionId === cur.sessionId)?.spend ?? 0) : null;
   const stale = !b?.at || Date.now() - b.at > 15 * 60e3;
-  const balance = b?.available === false ? `<span class="ds-out">Out of credit</span>`
+  const balance = b?.available === false ? `<span class="ds-out">Out of credit</span> <small>Top up at platform.deepseek.com</small>`
     : b?.total != null ? `<b>${esc(dsMoney(b.total, b.currency))}</b> left`
     : `<button class="ds-tap" id="ds-u-refresh">${esc(d.balanceError ? "Couldn't check" : "Unknown")} · tap to refresh</button>`;
   const pct = cap ? Math.min(100, Math.round((sp.today || 0) / cap * 100)) : 0;
@@ -324,7 +324,7 @@ const parentOf = p => (typeof p === "string" ? p : p?.parent) || null;
 /** Every known link, from `link` events, the chat list and live chats: child id -> { parent, engine, title, toolUseId }. */
 function dsLinks() {
   const out = {};
-  const add = (id, l) => { if (id && l.parent) out[id] = { ...out[id], ...Object.fromEntries(Object.entries(l).filter(([, v]) => v != null && v !== "")) }; };
+  const add = (id, l) => { if (id && (l.parent || out[id])) out[id] = { ...out[id], ...Object.fromEntries(Object.entries(l).filter(([, v]) => v != null && v !== "")) }; };
   for (const s of state.sessions) if (s.parent) add(s.sessionId, { parent: parentOf(s.parent), engine: s.engine || "claude", title: s.title || s.firstPrompt, toolUseId: s.parent.toolUseId, at: s.parent.at });
   for (const [id, i] of Object.entries(state.liveInfo)) if (i.parent) add(id, { parent: parentOf(i.parent), engine: i.engine || "claude" });
   for (const [id, l] of Object.entries(state.links)) add(id, l);

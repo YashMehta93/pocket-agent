@@ -183,7 +183,7 @@ ok("a daily limit draws a meter, warning near it; peak price shows", $("#usage-s
   && /\$2\.85 of \$3 today/.test(text("#usage-sheet")) && /Peak price now · half price from /.test(text("#usage-sheet")));
 ev(`conn.fire("deepseek", { deepseek: { balance: { total: "0.00", currency: "USD", available: false, at: Date.now() } } })`);
 await sleep(100);
-ok("out of credit says so", /Out of credit/.test(text("#usage-sheet .u-ds")));
+ok("out of credit says so, and where to top up", /Out of credit Top up at platform\.deepseek\.com/.test(text("#usage-sheet .u-ds")));
 ev(`sheet.close(true); state.current.engine = "claude"; delete state.liveInfo[state.current.sessionId]; __ds = __fake(); state.deepseek = __fake()`);
 
 // 6. The links bar
@@ -237,6 +237,9 @@ ev(`delete state.liveInfo["${CHILD}"]; chat.event({ type: "user", uuid: "u-dl-2"
 ok(`the report: "${text("#messages .tool.dl .dl-st")}"`, text("#messages .tool.dl .dl-st") === "Done · 2 files changed · 3m 12s · about $0.031" && $("#messages .tool.dl .st.ok") !== null);
 ok("the report shows the changed files and the worker's last message", /M README\.md/.test(text("#messages .tool.dl .dl-files")) && $("#messages .tool.dl .tout .md strong")?.textContent === "CONTRIBUTORS");
 ok("the links bar learns how it ended", ev(`state.links["${CHILD}"]?.result`) === "done");
+ev(`state.sessions = [{ sessionId: "${CHILD}", title: "Add the CONTRIBUTORS file", cwd: state.home, lastModified: Date.now(), engine: "deepseek", parent: "${P}" }, ...state.sessions]; state.links["${CHILD}"] = { result: "stopped" }; renderLinksBar()`);
+ok("…even when only the chat list knows the worker's parent", /Add the CONTRIBUTORS file · stopped/.test(text("#links-bar")));
+ev(`state.sessions = state.sessions.slice(1); state.links["${CHILD}"] = { parent: "${P}", result: "done" }`);
 ev(`state.links = {}; window.__opened = null; window.__realOpen = openSession; openSession = id => { __opened = id; }`);
 $("#messages .tool.dl .dl-open").click();
 ok("Open chat › opens the worker from the report's Chat: line", ev("__opened") === CHILD);
