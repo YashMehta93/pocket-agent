@@ -151,7 +151,14 @@ export function stopJobsOf(parentId) {
   for (const job of jobs.values()) {
     if (job.parent !== parentId || job.state !== "running" || !job.chat) continue;
     const w = live.get(job.chat);
-    try { w?.q?.interrupt()?.catch?.(() => {}); } catch {}
+    const hit = () => { try { w?.q?.interrupt()?.catch?.(() => {}); } catch {} };
+    hit();
+    // Interrupts that arrive before the worker's turn has begun are lost, so repeat while it's still busy, as runWorker does.
+    if (w) {
+      let k = 0;
+      const timer = setInterval(() => { if (++k > 20 || !busy(w)) clearInterval(timer); else hit(); }, 1500);
+      timer.unref?.();
+    }
     n++;
   }
   return n;
