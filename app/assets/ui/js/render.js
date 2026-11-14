@@ -175,7 +175,7 @@ class ChatView {
         let el;
         if (b.type === "text") { el = h(`<div class="md ghost caret"></div>`); }
         else { el = h(`<details class="thinking ghost" ${settings.showThinking ? "open" : ""}><summary>${icon("brain")}<span>Thinking…</span></summary><div class="md"></div></details>`); }
-        parent.append(el);
+        if (b.type === "text") parent.append(el); else this.place(el, this.curParent);
         this.ghosts.set(key, { el, kind: b.type, text: "" });
         scrollIfPinned();
       } else if (b.type === "tool_use") {
@@ -237,7 +237,7 @@ class ChatView {
         el.classList.remove("ghost"); el.open = false;
         el.querySelector("summary span").textContent = "Thought";
         if (text) setMd(el.querySelector(".md"), text);
-        if (!g) parent.append(el);
+        if (!g) this.place(el, parentId);
       } else if (b.type === "tool_use" || b.type === "server_tool_use") {
         const card = this.tools.get(b.id);
         if (card) { card.input = b.input || {}; this.fillToolInput(card); }
@@ -292,7 +292,6 @@ class ChatView {
 
   // ───── tool cards ─────
   toolCard(id, name, input, parentId, live) {
-    const parent = this.container(parentId);
     const el = h(`<details class="tool"><summary><span class="ti">${icon(TOOL_ICON[name] || (name.startsWith("mcp__") ? "bolt" : "terminal"))}</span>
       <span class="tn"></span><span class="ts"></span><span class="st ${live ? "spin" : ""}"></span></summary><div class="tb"></div></details>`);
     el.querySelector(".tn").textContent = prettyToolName(name);
@@ -300,8 +299,9 @@ class ChatView {
     const card = { id, name, input, el, body: el.querySelector(".tb"), summaryEl: el.querySelector(".ts"), stEl: el.querySelector(".st"), status: live ? "run" : "done" };
     if (settings.autoExpandTools || name === "TodoWrite" || name === "Task" || name === "Agent" || name === "ExitPlanMode") el.open = name !== "Task" && name !== "Agent" ? true : false;
     this.tools.set(id, card);
+    el._card = card;
     this.fillToolInput(card);
-    parent.append(el);
+    if (name === "AskUserQuestion" || name === "ExitPlanMode") this.container(parentId).append(el); else this.place(el, parentId);
     return card;
   }
   fillToolInput(card) {
@@ -350,6 +350,30 @@ class ChatView {
     card.status = s;
     card.stEl.className = "st " + (s === "ok" ? "ok" : s === "err" ? "err" : "");
     card.stEl.innerHTML = s === "ok" ? icon("check") : s === "err" ? icon("x") : "";
+    this.updateGroup(card.el.closest(".steps"));
+  }
+
+  // ───── grouped steps (steps.js): a run of top-level tool calls and thoughts shares one line ─────
+  place(el, parentId) {
+    if (parentId) return this.container(parentId).append(el);
+    let g = this.root.lastElementChild;
+    if (!g?.classList.contains("steps")) {
+      g = h(`<div class="steps"><button class="steps-line"><span class="spark"></span><span class="sl-t"></span><span class="sl-err"></span><span class="chev">›</span></button><div class="steps-list"></div></div>`);
+      g.querySelector(".steps-line").onclick = () => openSteps(g);
+      this.root.append(g);
+    }
+    g.querySelector(".steps-list").append(el);
+    this.updateGroup(g);
+  }
+  updateGroup(g) {
+    if (!g) return;
+    const cards = [...g.querySelector(".steps-list").children].map(e => e._card).filter(Boolean);
+    const err = cards.filter(c => c.status === "err").length;
+    g.classList.toggle("has-tools", cards.length > 0);
+    g.classList.toggle("running", cards.some(c => c.status === "run"));
+    g.querySelector(".sl-t").textContent = stepsSummary(cards);
+    g.querySelector(".sl-err").textContent = err ? ` · ${err} failed` : "";
+    if (sheet.key === "steps" && sheet.group === g) drawSteps(g);
   }
 
   // ───── misc ─────

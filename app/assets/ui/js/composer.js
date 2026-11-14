@@ -16,7 +16,7 @@ function prettyModel(id) {
 }
 /** The model's real name, never "Default": the default resolves to the model it stands for. */
 function modelLabel(id) {
-  if (!id || id === "default") { const def = state.models.find(x => x.value === "default"); if (!def?.resolvedModel) return "Default model"; id = def.resolvedModel; }
+  if (!id || id === "default") { const def = state.models.find(x => x.value === "default"); if (!def?.resolvedModel) return "Model"; id = def.resolvedModel; }
   const m = state.models.find(x => x.value !== "default" && (x.value === id || x.resolvedModel === id));
   return m ? m.displayName : prettyModel(id);
 }
@@ -27,6 +27,7 @@ function updateComposer() {
   $("#chip-model").textContent = modelLabel(s.model) + (s.effort ? " · " + s.effort : "");
   const st = sessionState(state.current?.sessionId);
   const running = st === "running" || st === "waiting";
+  input.placeholder = running ? "Queue a message…" : "Message Claude…";
   const send = $("#btn-send");
   const hasText = input.value.trim() || attachments.length;
   send.classList.toggle("stop", running && !hasText);

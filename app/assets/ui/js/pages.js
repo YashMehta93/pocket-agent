@@ -121,6 +121,7 @@ function settingsSections() {
       html: () => item(`<div class="set-row"><div class="l">Theme</div></div><div class="seg" id="s-theme">${["system", "light", "dark"].map(t => `<button data-v="${t}" class="${settings.theme === t ? "on" : ""}">${t}</button>`).join("")}</div>`, "dark light mode colour")
         + item(`<div class="set-row"><div class="l">Text size</div></div><div class="seg" id="s-font">${[14, 15.5, 17, 19].map(t => `<button data-v="${t}" class="${settings.fontSize == t ? "on" : ""}">${FONT_LABEL[t]}</button>`).join("")}</div>`, "font zoom bigger smaller")
         + item(`<div class="set-row"><div class="l">Show thinking while Claude works</div>${sw("showThinking")}</div>`, "reasoning")
+        + item(`<div class="set-row"><div class="l">Group each reply's steps into one line<small>Tap the line for every step. Off: one card per step</small></div>${sw("groupSteps")}</div>`, "tools steps cards timeline progress")
         + item(`<div class="set-row"><div class="l">Expand tool details by default</div>${sw("autoExpandTools")}</div>`, "commands output") },
     { id: "typing", title: "Typing", icon: "pencil",
       summary: `Enter ${settings.enterToSend ? "sends" : "adds a line"} · haptics ${settings.haptics ? "on" : "off"}`,

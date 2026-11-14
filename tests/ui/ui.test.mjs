@@ -42,6 +42,22 @@ await until(() => $$("#messages > *").length > 0, 20000, "history render");
 ok(`history rendered: ${$$(".user-msg").length} user msgs, ${$$(".tool").length} tool cards, ${$$("#messages .md").length} text blocks`, $$(".user-msg").length > 0);
 ok("title set", $("#chat-title").textContent !== "New chat");
 
+// grouped steps: one line per run of tool calls, a timeline sheet, a page per step that hands the card back
+const grp = $("#messages .steps.has-tools");
+if (grp) {
+  ok(`steps grouped into one line: "${grp.querySelector(".sl-t").textContent}"`, w.getComputedStyle(grp.querySelector(".steps-line")).display !== "none" && w.getComputedStyle(grp.querySelector(".steps-list")).display === "none" && grp.querySelector(".sl-t").textContent.length > 3);
+  grp.querySelector(".steps-line").click();
+  const nSteps = grp.querySelectorAll(".steps-list > *").length;
+  ok(`the line opens a timeline of its ${nSteps} steps`, ev("sheet.key") === "steps" && $$("#sheet .step-row").length === nSteps);
+  $("#sheet .step-row").click();
+  ok("a step opens its own page with the details", !$("#page").hidden && $("#page-body .in-page") !== null);
+  ev("page.back()");
+  ok("leaving the page puts the step back in the chat", $("#page").hidden && grp.querySelectorAll(".steps-list > *").length === nSteps && !grp.querySelector(".in-page"));
+  ev("settings.groupSteps = false; applySettings()");
+  ok("the setting shows cards instead", w.getComputedStyle(grp.querySelector(".steps-list")).display !== "none");
+  ev("settings.groupSteps = true; applySettings()");
+} else console.log("  (this chat has no tool steps; grouping not checked)");
+
 // drawer search
 ev(`state.filter = "zzzz-no-match"; renderSessions()`);
 ok("search filter empties list", $$("#session-list .sess").length === 0);

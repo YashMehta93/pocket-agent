@@ -124,7 +124,7 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 #usage-note { max-width: 760px; width: 100%; margin: 0 auto 8px; padding: 0 4px; font: 12px/1.4 var(--mono); color: var(--text2); display: flex; gap: 8px; align-items: center; text-align: left; }
 #usage-note svg { width: 14px; height: 14px; flex: none; color: var(--yellow); }
 #usage-note.full svg { color: var(--red); }
-.u-head { display: flex; align-items: center; justify-content: space-between; } .u-head .icon-btn { margin-right: -10px; }
+.u-head { display: flex; align-items: center; justify-content: space-between; } .u-head .icon-btn { margin-right: -10px; } .u-head .icon-btn svg { width: 19px; height: 19px; }
 .u-sec { font: 600 11px/1.4 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 22px 0 10px; }
 .u-ctx { display: block; width: 100%; text-align: left; } .u-ctx small svg { width: 13px; height: 13px; vertical-align: -2px; transition: transform .15s; }
 .u-ctx.open small svg { transform: rotate(180deg); }
@@ -406,3 +406,27 @@ textarea.field { min-height: 90px; resize: vertical; line-height: 1.5; }
   #drawer { position: relative; transform: none; }
   #scrim, #btn-menu { display: none; }
 }
+
+/* grouped steps (#37): one line per run of steps, a timeline sheet, a page per step */
+.steps-line { display: none; }
+body:not(.steps-cards) .steps.has-tools > .steps-line { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; margin: 4px 0; padding: 8px 0; min-height: 44px; font-size: 13.5px; color: var(--muted); }
+body:not(.steps-cards) .steps.has-tools > .steps-list { display: none; }
+.steps-line .spark { display: none; } .steps.running .steps-line .spark { display: inline-block; }
+.steps-line .sl-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.steps-line .sl-err { color: var(--red); white-space: nowrap; }
+.steps-line .chev { color: var(--faint); font-size: 16px; line-height: 1; }
+.step-tl { list-style: none; margin: 10px 0 4px; padding: 0; position: relative; }
+.step-tl::before { content: ""; position: absolute; left: 10px; top: 24px; bottom: 24px; width: 1px; background: var(--line2); }
+.step-row { display: flex; gap: 14px; align-items: center; width: 100%; text-align: left; padding: 10px 0; min-height: 48px; font-size: 14.5px; }
+.step-row > svg { width: 20px; height: 20px; padding: 2px 0; color: var(--muted); background: var(--bg); flex: none; position: relative; }
+.step-row .sr-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-row .sr-t b { font-weight: 500; color: var(--text); }
+.step-row .sr-t span { color: var(--muted); font-size: 13px; }
+.step-row .sr-st svg { width: 16px; height: 16px; color: var(--red); }
+.step-st { font-size: 13px; color: var(--muted); margin: 2px 0 10px; } .step-st.err { color: var(--red); }
+.tool.in-page, .thinking.in-page { border: 0; background: none; margin: 0; }
+.tool.in-page > summary { pointer-events: none; padding: 0 0 10px; }
+.thinking.in-page > summary { pointer-events: none; }
+pre.has-btns { position: relative; padding-top: 34px; }
+.blk-btns { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; }
+.blk-btns .chip { font-size: 12px; padding: 3px 10px; }
