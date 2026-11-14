@@ -227,7 +227,7 @@ function meter(sessionId, model, u, t = Date.now()) {
   if (searches) spend.searchDays[d] = (spend.searchDays[d] || 0) + searches;
   const c = spend.chats[sessionId] ||= { usd: 0, hit: 0, miss: 0, out: 0, n: 0, searches: 0, at: 0 };
   c.usd += usd; c.hit += u.cache_read_input_tokens || 0; c.miss += u.input_tokens || 0; c.out += u.output_tokens || 0; c.n++; c.searches += searches; c.at = t;
-  saveTimer ||= setTimeout(saveSpend, 2000);
+  if (!saveTimer) { saveTimer = setTimeout(saveSpend, 2000); saveTimer.unref(); }   // (an exit saves it too)
   pushSpend();
   return usd;
 }
@@ -235,7 +235,7 @@ function meter(sessionId, model, u, t = Date.now()) {
 let lastPush = 0, pushTimer = null;
 function pushSpend() {
   const wait = 2000 - (Date.now() - lastPush);
-  if (wait > 0) { pushTimer ||= setTimeout(() => { pushTimer = null; pushSpend(); }, wait); return; }
+  if (wait > 0) { if (!pushTimer) { pushTimer = setTimeout(() => { pushTimer = null; pushSpend(); }, wait); pushTimer.unref(); } return; }
   lastPush = Date.now();
   broadcastAll({ t: "deepseek", deepseek: { spend: spendSummary(), price: priceNow() } });
 }
@@ -305,6 +305,7 @@ const loopback = a => /^(127\.|::1$|::ffff:127\.)/.test(a || "");
  * node:http(s), not fetch: undici's 300 s header/body timeouts would cut off DeepSeek's long queues.
  */
 export async function proxy(req, res, url) {
+  req.on("error", () => {}); res.on("error", () => {});   // a chat that goes away mid-request mustn't take the server down
   // from this phone only (a DeepSeek chat runs here), even when the server also listens on other addresses
   if (!loopback(req.socket.remoteAddress) && req.socket.remoteAddress !== req.socket.localAddress) return errJson(res, 403, "permission_error", "Not allowed");
   const auth = String(req.headers.authorization || "");
