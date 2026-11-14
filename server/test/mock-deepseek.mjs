@@ -75,10 +75,15 @@ function plan(body) {
   const done = msgs.slice(hi + 1).filter(m => m.role === "assistant" && Array.isArray(m.content)).flatMap(m => m.content).filter(b => b.type === "tool_use").length;
   const toolNames = new Set((body.tools || []).map(t => t.name));
   const next = d.tools[done];
-  const last = msgs.at(-1);
-  const lastResult = last?.role === "user" && Array.isArray(last.content) ? last.content.find(b => b.type === "tool_result") : null;
+  // the newest tool result since that message: Claude Code may send a note of its own after it
+  let lastResult = null;
+  for (let i = msgs.length - 1; i > hi && !lastResult; i--) if (msgs[i].role === "user" && Array.isArray(msgs[i].content)) lastResult = msgs[i].content.findLast(b => b.type === "tool_result") || null;
   return { ...d, next: next && toolNames.has(next.name) ? next : null, lastResult };
 }
+
+/** The last few messages in brief ("user[tool_result,text:"<system-…"]"), for a test to print when a turn goes oddly. */
+const shape = msgs => msgs.slice(-4).map(m => `${m.role}[${typeof m.content === "string" ? "text:" + JSON.stringify(m.content.slice(0, 30))
+  : (m.content || []).map(b => b.type + (b.type === "text" ? ":" + JSON.stringify(b.text.slice(0, 30)) : "")).join(",")}]`).join(" ");
 
 function blocks(body, p) {
   const out = [];
@@ -113,6 +118,7 @@ export async function startMock({ port = 8772, key = "sk-test-deepseek", alsoAcc
       && m.content.some(b => b.type === "tool_use") && !m.content.some(b => b.type === "thinking")))
       return fail(res, 400, "invalid_request_error", "The reasoning_content in the thinking mode must be passed back to the API.");
     const p = plan(body);
+    entry.shape = shape(body.messages || []);
     if (p.error === "402") { balance = { ...balance, is_available: false }; return fail(res, 402, "invalid_request_error", "Insufficient Balance"); }
     if (p.error) return fail(res, +p.error, p.error === "429" ? "rate_limit_error" : "api_error", "Mock error " + p.error);
     const content = blocks(body, p);

@@ -75,6 +75,13 @@ async function unitTests() {
     ok("fake: a worker's directives stay inside the caller's tool call", d.tools.length === 1 && d.tools[0].input.task === task && d.think && d.slow === 0);
     const bal = await (await fetch(`http://127.0.0.1:${MOCK_PORT}/user/balance`, { headers: { authorization: `Bearer ${KEY}` } })).json();
     ok("fake: the balance answers like DeepSeek's", bal.is_available === true && bal.balance_infos?.[0]?.total_balance === "4.20");
+    const thought = { type: "thinking", thinking: "t", signature: "s" };
+    const after = await (await post({ model: "deepseek-flash", thinking: { type: "adaptive" }, tools: [{ name: "Bash" }], messages: [
+      { role: "user", content: [{ type: "text", text: "<system-reminder>notes</system-reminder>" }, { type: "text", text: `Run. ${'[[tool Bash {"command":"echo hi"}]]'}` }] },
+      { role: "assistant", content: [thought, { type: "tool_use", id: "t1", name: "Bash", input: { command: "echo hi" } }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "hi" }] },
+      { role: "user", content: [{ type: "text", text: "<system-reminder>a note from Claude Code</system-reminder>" }] }] })).json();
+    ok("fake: a note after the tool result doesn't hide it", after.content?.at(-1)?.text === "MOCK DONE. Last tool result: hi", JSON.stringify(after.content));
   });
 
   const ds = await import("../src/deepseek.js");
@@ -359,6 +366,10 @@ async function e2eTests() {
     PA_DEEPSEEK_URL: mock.url, PA_TEST_ANTHROPIC_URL: mock.url, PA_TEST_ANTHROPIC_KEY: CLAUDE_KEY,
     // anything aimed at another host (api.anthropic.com…) goes to the fake, which refuses it and writes it down
     HTTPS_PROXY: refuse, HTTP_PROXY: refuse, https_proxy: refuse, http_proxy: refuse, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost" };
+  // A run that was killed (Android does that when memory runs low) can leave its server behind; ours would then fail to
+  // listen while the old one answered every check below.
+  const stale = await fetch(`http://127.0.0.1:${SERVER_PORT}/health`).then(r => r.ok, () => false);
+  if (!ok(`e2e: port ${SERVER_PORT} is free`, !stale, "something already answers there: a test server left from a killed run? Stop it, then run again")) return;
   server = spawn(process.execPath, [path.join(REPO, "server/src/index.js"), "--port", String(SERVER_PORT)], { env, stdio: ["ignore", "pipe", "pipe"] });
   server.stdout.on("data", d => serverOut += d); server.stderr.on("data", d => serverOut += d);
   await until(() => serverOut.includes(`:${SERVER_PORT}`), 20000, "the test server").catch(() => {});
@@ -427,7 +438,8 @@ async function e2eTests() {
     const reqs = mock.requests.slice(n0).filter(r => r.model);
     ok("e2e DeepSeek chat: DeepSeek got the real key and model deepseek-flash", reqs.length > 0 && reqs.every(r => r.auth === `Bearer ${KEY}` && r.model === "deepseek-flash"),
       reqs.map(r => `${r.model} ${r.auth}`).join(" | "));
-    ok("e2e DeepSeek chat: the turn ends normally", end.subtype === "success" && /MOCK DONE/.test(end.result || ""), end.result);
+    if (!ok("e2e DeepSeek chat: the turn ends normally", end.subtype === "success" && /MOCK DONE/.test(end.result || ""), end.result))
+      for (const r of reqs) console.log("   request:", r.shape, "→", (r.reply || []).join(" "));   // what Claude Code sent, to see why
     const item = (await cl.call("sessions.list", {})).sessions.find(s => s.sessionId === dsChat);
     ok("e2e sessions.list: a DeepSeek chat, with its spend", item?.engine === "deepseek" && item.spend > 0, JSON.stringify(item && { engine: item.engine, spend: item.spend }));
     const st = await cl.call("deepseek.status", {});
