@@ -16,7 +16,10 @@ const EXCLUDE = [".claude/.credentials.json", ".claude/shell-snapshots", ".claud
   ".l2s.*",   // proot's stand-ins for hard links: the linked files are stored by content instead (-h)
   // Keys and credentials never go to shared storage, at any depth: the APK signing key and the release key
   // (back them up somewhere private, see docs/RELEASES.md), PEM/PKCS12 files, Claude logins, git credentials.
-  "*.keystore", "*.jks", "*.p12", "*.pem", ".credentials.json", ".git-credentials"];
+  "*.keystore", "*.jks", "*.p12", "*.pem", ".credentials.json", ".git-credentials",
+  // Not in ITEMS anyway (only prefs.json is taken from ~/.pocket-agent), but a later change mustn't add them by accident:
+  // provider keys (the DeepSeek key) and the DeepSeek spend record.
+  "secrets", "deepseek-spend.json"];
 const NAME = /^pocket-agent-backup-[\w-]+\.tgz$/;
 
 const sizeOf = f => { try { return fs.statSync(f).size; } catch { return 0; } };
