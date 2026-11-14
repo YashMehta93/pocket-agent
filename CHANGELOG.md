@@ -4,13 +4,16 @@ Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 
 ## Unreleased
 
+## 1.2.0-beta.1
+
 - **Usage limits** (#35): a ring in the chat header and a meter in the chats drawer show how much of your 5-hour and weekly Claude limits you've used and when they reset. A line above the message box warns from 90%. Tap either for the Usage sheet: this chat's context window, every limit including per-model ones, and a warning when your pace would run out before the reset.
 - **Steps in one line** (#37): a reply's tool steps collapse into one line ("Ran 2 commands, read 3 files ›"). Tap it for a timeline, then a step for its input and output, with Copy and Prettify. Settings → Appearance switches back to cards. While Claude works, the box says "Queue a message…".
 - The model chip names the real model (for example "Opus 5.5") instead of "Default" (#36).
 - **Picks up after Android kills the app** (#40): replies cut off by a swipe or memory pressure continue on their own when the app comes back, with a message in the chat saying so. Tip: lock Pocket Agent in recents so a swipe doesn't stop it.
 - **Close and back within reach** (#41): every sheet has a close button, pages have a back button at the bottom, and back from a step returns to its timeline.
+- **See the agents Claude starts** (#43): a line above the message box ("1 agent working · 2 commands done ›") opens a list with what each is doing, then an agent's own conversation, live, with Stop.
 - Thoughts stay in the chat and open with one tap (#37). The Usage sheet shows the context window for any chat (#35).
-- Fixed: the stop button disappeared while Claude was still working after a restart (#38); a row of bare timings ("431ms") after a restart (#39).
+- Fixed: the stop button disappeared while Claude was still working after a restart (#38); a row of bare timings ("431ms") after a restart (#39); Settings → Restart Claude's server did nothing (#42, needs this version's app); the model sheet now ticks Default when a chat uses it.
 
 - **Releases:** every release now ships as a beta first; a final release is the last beta plus only the version and changelog, approved by an approver. Work is tracked in issues and milestones.
 - After installing an app update (APK), Pocket Agent no longer offers a second, pointless "An update is ready".
