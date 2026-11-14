@@ -134,6 +134,13 @@ try {
     ok("an unknown code is refused", bad.status === 403);
     const { default: WebSocket } = await import(path.join(REPO, "server/node_modules/ws/index.js"));
     const token = fs.readFileSync(path.join(process.env.PA_DATA, "token"), "utf8").trim();
+    // A token of the right length in characters but not in bytes used to throw inside the comparison:
+    // a hung request over HTTP, and a dead server over the WebSocket upgrade.
+    const odd = encodeURIComponent("é".repeat(token.length));
+    ok("a non-ASCII token is refused over HTTP", (await fetch(`http://127.0.0.1:8769/bundle/info?token=${odd}`, { signal: AbortSignal.timeout(5000) }).catch(() => ({}))).status === 401);
+    await new Promise(res => { const w = new WebSocket(`ws://127.0.0.1:8769/ws?token=${odd}`); w.on("error", res); w.on("close", res); w.on("open", res); });
+    await new Promise(r => setTimeout(r, 300));
+    ok("a non-ASCII token over the WebSocket doesn't stop the server", await fetch("http://127.0.0.1:8769/health").then(r => r.ok, () => false));
     const ws = new WebSocket(`ws://127.0.0.1:8769/ws?token=${token}`); await new Promise(r => ws.on("open", r));
     const cmd = await new Promise(res => { ws.on("message", raw => { const m = JSON.parse(raw); if (m.t === "reply" && m.id === 1) res(m.command); }); ws.send(JSON.stringify({ t: "termux.installCommand", id: 1 })); });
     ws.close();
