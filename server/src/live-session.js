@@ -211,6 +211,7 @@ export class LiveSession {
 
   // ───── permissions ─────
   askPermission(toolName, input, opts) {
+    if (toolName === "mcp__pocket__worker_results") return Promise.resolve({ behavior: "allow", updatedInput: input });   // reading reports starts nothing, so it never asks
     // Our own tools always ask (permission_policy always_ask), even in Bypass. The person's mode rules still apply:
     // Bypass, or "always" earlier in this chat, means yes. The approval is recorded for delegate.js either way.
     if (ownTool(toolName, opts) && opts?.toolUseID && (this.permissionMode === "bypassPermissions" || this.allowAlways.has(toolName))) {

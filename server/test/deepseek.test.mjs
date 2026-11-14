@@ -12,6 +12,7 @@ import path from "node:path";
 import http from "node:http";
 import { spawn, execFileSync } from "node:child_process";
 import { startMock, parseDirectives } from "./mock-deepseek.mjs";
+import { createQueue } from "../src/workqueue.js";
 
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
 const SERVER_PORT = 8771, MOCK_PORT = 8772;
@@ -122,7 +123,7 @@ async function unitTests() {
   const toolNames = s => dg.pocketTools(s).map(t => t.name).join(",");
   await step("tools without a key", async () => {
     ok("no key: Claude chats get no deepseek_task (and no pocket server)", toolNames(fake()) === "" && dg.toolsFor(fake()) === undefined);
-    ok("no key: DeepSeek chats still get claude_task", toolNames(fake({ engine: "deepseek" })) === "claude_task");
+    ok("no key: DeepSeek chats still get claude_task (with worker_results for its jobs)", toolNames(fake({ engine: "deepseek" })) === "claude_task,worker_results");
   });
 
   // ───── the key file ─────
@@ -224,17 +225,54 @@ async function unitTests() {
 
   // ───── the delegation tools ─────
   await step("tools with a key", async () => {
-    ok("with a key: Claude chats get deepseek_task, DeepSeek chats claude_task, workers nothing", toolNames(fake()) === "deepseek_task" && toolNames(fake({ engine: "deepseek" })) === "claude_task"
+    ok("with a key: Claude chats get deepseek_task and worker_results, DeepSeek chats claude_task and worker_results, workers nothing",
+      toolNames(fake()) === "deepseek_task,worker_results" && toolNames(fake({ engine: "deepseek" })) === "claude_task,worker_results"
       && toolNames(fake({ link: { parent: "p" } })) === "" && toolNames(fake({ engine: "deepseek", link: { parent: "p" } })) === "");
     const cfg = dg.toolsFor(fake())?.pocket;
-    ok("the pocket server runs in-process and every call asks first", cfg?.type === "sdk" && cfg.name === "pocket" && JSON.stringify(cfg.tools) === JSON.stringify([{ name: "deepseek_task", permission_policy: "always_ask" }]));
+    ok("the pocket server runs in-process and every call asks first, worker_results never does",
+      cfg?.type === "sdk" && cfg.name === "pocket" && JSON.stringify(cfg.tools) === JSON.stringify([{ name: "deepseek_task", permission_policy: "always_ask" }]));
     const def = dg.pocketTools(fake())[0];
     ok("deepseek_task: destructive (so Auto mode asks), with the documented inputs", def.annotations?.destructiveHint === true && def.annotations.readOnlyHint === false
-      && ["task", "title", "cwd", "model", "continue_chat"].every(k => k in def.inputSchema));
+      && ["task", "title", "cwd", "model", "continue_chat", "wait"].every(k => k in def.inputSchema));
+    const wr = dg.pocketTools(fake()).find(t => t.name === "worker_results");
+    ok("worker_results: read-only, with jobs and wait inputs", wr?.annotations?.readOnlyHint === true && wr.annotations.destructiveHint === false
+      && wr.annotations.openWorldHint === false && "jobs" in wr.inputSchema && "wait" in wr.inputSchema);
+    ok("worker_results: nothing to collect yet", resultText(await wr.handler({}, {})) === "No workers to collect.");
     ds.setDsSettings({ toDeepseek: false }); const off1 = toolNames(fake());
     ds.setDsSettings({ toDeepseek: true, toClaude: false }); const off2 = toolNames(fake({ engine: "deepseek" }));
     ds.setDsSettings({ toClaude: true });
-    ok("Settings turn each direction off", off1 === "" && off2 === "" && toolNames(fake()) === "deepseek_task");
+    ok("Settings turn each direction off", off1 === "" && off2 === "" && toolNames(fake()) === "deepseek_task,worker_results");
+  });
+
+  // ───── the worker queue (#63): at most 3 at once, the rest wait their turn, never refused ─────
+  await step("worker queue", async () => {
+    const q2 = createQueue(2);
+    let now = 0, high = 0;
+    const finished = [];
+    const runs = [1, 2, 3, 4, 5].map(i => q2.run(async () => { now++; high = Math.max(high, now); await sleep(30); finished.push(i); now--; return i; }));
+    const got = await Promise.all(runs);
+    await sleep(0);   // the last slot frees in a microtask after its run resolves
+    ok("queue: at most 2 run at once, results in the order given, nothing left running or waiting",
+      high === 2 && got.join() === "1,2,3,4,5" && finished.join() === "1,2,3,4,5" && q2.running === 0 && q2.waiting === 0, JSON.stringify({ high, got, finished }));
+    const q3 = createQueue(3);
+    let active = 0, most = 0;
+    const four = [1, 2, 3, 4].map(i => q3.run(async () => { active++; most = Math.max(most, active); await sleep(20); active--; return i; }));
+    const fourGot = await Promise.all(four);
+    ok("queue: a 4th run waits for a free slot, then succeeds", most === 3 && fourGot.join() === "1,2,3,4", JSON.stringify({ most, fourGot }));
+    const q1 = createQueue(1);
+    const posRuns = ["a", "b", "c"].map(t => q1.run(() => sleep(30), t));
+    ok("queue: position() counts the waiting runs from 1; a running one is 0", q1.position("a") === 0 && q1.position("b") === 1 && q1.position("c") === 2);
+    await Promise.all(posRuns);
+    const qc = createQueue(1);
+    const firstRun = qc.run(() => sleep(30), "x");
+    const yRuns = [1, 2].map(() => qc.run(() => sleep(30), "y"));
+    const ySettled = yRuns.map(p => p.then(() => "resolved", e => e.message));   // handlers first: no unhandled rejection
+    ok("queue: cancel removes every waiting run with the tag", qc.cancel(t => t === "y") === 2 && qc.waiting === 0);
+    const messages = await Promise.all(ySettled);
+    await firstRun;
+    await sleep(0);   // the slot frees in a microtask after its run resolves
+    ok("queue: cancelled runs reject with \"stopped before it began\"; the rest still run",
+      messages.join() === "stopped before it began,stopped before it began" && qc.running === 0, JSON.stringify(messages));
   });
 
   await step("approval gate", async () => {
@@ -254,11 +292,14 @@ async function unitTests() {
     ok("a chat in Bypass needs no OK (owner's rule)", /Folder not found/.test(resultText(r)));
     r = await call(fake({ permissionMode: "bypassPermissions" }), { task: "Again.", continue_chat: "cccccccc-0000-4000-8000-000000000003" });
     ok("continue_chat reaches only this chat's own workers", /isn't one of this chat's workers/.test(resultText(r)));
+    r = await call(fake({ permissionMode: "bypassPermissions" }), { task: "Again.", continue_chat: "cccccccc-0000-4000-8000-000000000003", wait: false });
+    ok("wait:false can't continue a worker", /can't be used with wait:false/.test(resultText(r)), resultText(r));
+    // Three workers already busy no longer refuse a fourth: it joins the queue instead (the queue tests show it waiting, then running)
     const { live } = await import("../src/live-session.js");
     const fakes = [1, 2, 3].map(i => `busy-worker-${i}`);
     for (const id of fakes) live.set(id, { sessionId: id, link: { parent: "p" }, state: "running" });
-    try { r = await call(fake({ permissionMode: "bypassPermissions" }), { task: "One more." }); } finally { for (const id of fakes) live.delete(id); }
-    ok("at most three workers at once", /Three workers/.test(resultText(r)));
+    try { r = await call(fake({ permissionMode: "bypassPermissions" }), { task: "One more.", cwd: path.join(T, "no-such-folder") }); } finally { for (const id of fakes) live.delete(id); }
+    ok("a fourth worker is queued, never refused", !/Three workers/.test(resultText(r)) && /Folder not found/.test(resultText(r)), resultText(r));
     const kept = dg.pocketTools(fake({ permissionMode: "bypassPermissions" }))[0];   // a chat keeps the tools it started with…
     ds.setDsSettings({ toDeepseek: false });
     try { r = await kept.handler({ task: "Do it.", cwd: path.join(T, "no-such-folder") }); } finally { ds.setDsSettings({ toDeepseek: true }); }
@@ -270,6 +311,21 @@ async function unitTests() {
     await until(() => opened.every(s => !live.has(s.sessionId)), 5000, "the worker to close").catch(() => {});
     ok("stopped before the worker began: nothing sent, the worker closes", /Stopped before the worker began/.test(resultText(r)) && opened.every(s => !live.has(s.sessionId) && !s.buffer.some(e => e.ev.type === "pa_user")),
       resultText(r));
+  });
+
+  // ───── wait:false workers (#63): a job id now, the report from worker_results later ─────
+  await step("background workers", async () => {
+    const s = fake({ permissionMode: "bypassPermissions" });
+    const call = args => dg.pocketTools(s).find(t => t.name === "deepseek_task").handler(args, {});
+    const started = resultText(await call({ task: "Probe.", title: "Probe", cwd: path.join(T, "no-such-folder"), wait: false }));
+    const id = /^Job: ([0-9a-f]{8})$/m.exec(started)?.[1];
+    ok("wait:false: returns at once with a job id and the queue state", /^DeepSeek worker: (started|queued)$/m.test(started) && /^Title: Probe$/m.test(started)
+      && !!id && /^Queue: \d+ running, \d+ waiting$/m.test(started) && /worker_results/.test(started), started);
+    const collect = args => dg.pocketTools(s).find(t => t.name === "worker_results").handler(args, {});
+    const collected = resultText(await collect({ jobs: [id] }));
+    ok("worker_results: waits for the job, returns its report and marks it collected",
+      /^Workers: 1 done, 0 not finished/.test(collected) && /Folder not found/.test(collected), collected);
+    ok("worker_results: nothing left to collect", resultText(await collect({})) === "No workers to collect.");
   });
 
   await step("report", async () => {

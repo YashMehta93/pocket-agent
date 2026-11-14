@@ -6,6 +6,7 @@
 // Workers get no tools of their own (depth 1), so they can't start chains of workers.
 import fs from "node:fs";
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
@@ -14,20 +15,26 @@ import { broadcastAll } from "./hub.js";
 import { openSession, live, setToolProvider } from "./live-session.js";
 import { engineOf, linkOf, updateLink } from "./engines.js";
 import { ready as dsReady, chatSpend, dsSettings, dsModel } from "./deepseek.js";
+import { createQueue } from "./workqueue.js";
 
 export const DS_TOOL = "mcp__pocket__deepseek_task", CLAUDE_TOOL = "mcp__pocket__claude_task";
 const MAX_RUNNING = 3, REPORT_MAX = 6000, CHANGED_MAX = 30;
 const NAME = { deepseek: "DeepSeek", claude: "Claude" };
+const queue = createQueue(MAX_RUNNING);
+const jobs = new Map();   // id -> a wait:false run, collected later by worker_results
 
 const DS_DESC = "Hand a self-contained piece of work to a DeepSeek worker: a separate chat that runs Claude Code on DeepSeek (cheaper), in this chat's folder unless you name another. Use it when the person asks for DeepSeek or agrees to it. The worker can't see this chat, so write the task to stand alone: the goal, the files, exact steps, and how to check the result. The person approves each call on their phone and can watch or stop the worker. Returns the worker's report, the files it changed and its chat id. To send that worker a follow-up, pass the id as continue_chat.";
 const CLAUDE_DESC = "Ask Claude (Opus by default) to plan, review or solve something hard, in a separate chat that uses the person's Claude plan. Use it when the person asks or agrees. Claude can't see this chat, so include everything it needs. The person approves each call on their phone and can watch or stop it. Returns Claude's answer, the files it changed and its chat id; pass the id as continue_chat for a follow-up.";
-const CLAUDE_SIDE = "Pocket Agent tools. deepseek_task runs work on DeepSeek in a separate chat the person can watch. When asked to plan with Claude and build with DeepSeek: write a short plan of steps, send one step per call with exact files and a command that checks it, read each report (and the changed files) before the next step, and re-send or fix a step whose check fails. Don't use it unless the person asked for DeepSeek or agreed.";
-const DEEPSEEK_SIDE = "Pocket Agent tools. claude_task asks Claude (Opus) in a separate chat: good for a plan before big work, a review of finished work, or a problem you're stuck on. Use it when the person asks or agrees; Claude can't see this chat, so include what it needs.";
+const CLAUDE_SIDE = "Pocket Agent tools. deepseek_task runs work on DeepSeek in a separate chat the person can watch. When asked to plan with Claude and build with DeepSeek: write a short plan of steps, send one step per call with exact files and a command that checks it, read each report (and the changed files) before the next step, and re-send or fix a step whose check fails. Don't use it unless the person asked for DeepSeek or agreed. For several independent tasks, send each with wait:false (up to 3 run at once; the rest queue and start as slots free, so never drop a task to fit the limit), then call worker_results to wait for all the reports. Check every report before you rely on it.";
+const DEEPSEEK_SIDE = "Pocket Agent tools. claude_task asks Claude (Opus) in a separate chat: good for a plan before big work, a review of finished work, or a problem you're stuck on. Use it when the person asks or agrees; Claude can't see this chat, so include what it needs. For several independent tasks, send each with wait:false (up to 3 run at once; the rest queue and start as slots free, so never drop a task to fit the limit), then call worker_results to wait for all the reports. Check every report before you rely on it.";
+const WORKER_RESULTS_DESC = "Collect the reports of workers you started with wait:false. By default waits until all of this chat's uncollected workers finish and returns every report. Pass jobs to pick some; wait:false returns at once with what has finished.";
+const READ_ANNOTATIONS = { title: "Collect worker reports", readOnlyHint: true, destructiveHint: false, openWorldHint: false };
 
 const common = {
   task: z.string().min(1).max(40000).describe("Complete instructions for the worker."),
   title: z.string().max(80).optional().describe("A short name for the worker's chat."),
   cwd: z.string().optional().describe("Absolute folder to work in. Default: this chat's folder."),
+  wait: z.boolean().optional().describe("false: start it and return at once with a job id; up to 3 run at once and the rest queue. Collect reports with worker_results. Default true: wait for this worker's report."),
 };
 const followUp = what => z.string().regex(/^[0-9a-f-]{36}$/).optional().describe(`Chat id from an earlier ${what} result, to send that worker a follow-up.`);
 // destructiveHint: Auto mode asks too (its classifier can't wave a delegation through)
@@ -46,7 +53,29 @@ export function pocketTools(s) {
       model: z.enum(["flash", "pro"]).optional().describe("flash (default): fast and cheap, sees images. pro: stronger, about 3-4x the price."),
       continue_chat: followUp("deepseek_task") }, (args, extra) => run(s, "deepseek", args, extra), { annotations: annotations("Send work to DeepSeek") }));
   }
+  if (out.length) out.push(workerResults(s));   // only chats that can start workers collect their reports
   return out;
+}
+
+/** worker_results: one definition, bound to the chat whose jobs it reads. */
+function workerResults(s) {
+  return tool("worker_results", WORKER_RESULTS_DESC, {
+    jobs: z.array(z.string()).optional().describe("Job ids from the wait:false replies. Default: all of this chat's uncollected jobs."),
+    wait: z.boolean().optional().describe("true (default): wait for them to finish. false: return what has finished now."),
+  }, async (args, extra) => {
+    const sel = [...jobs.values()].filter(j => j.parent === s.sessionId && !j.collected && (!args.jobs || args.jobs.includes(j.id)));
+    if (!sel.length) return { content: [{ type: "text", text: "No workers to collect." }] };
+    if (args.wait !== false) await Promise.race([Promise.all(sel.map(j => j.promise.catch(() => {}))),
+      new Promise(r => { if (extra?.signal?.aborted) r(); extra?.signal?.addEventListener("abort", r, { once: true }); })]);
+    const parts = [];
+    let done = 0;
+    for (const j of sel) {
+      if (j.state === "done") { parts.push(j.report); j.collected = true; done++; }
+      else parts.push(NAME[j.engine] + " worker: " + j.state + "\nJob: " + j.id + "\nTitle: " + j.title);
+    }
+    const first = "Workers: " + done + " done, " + (sel.length - done) + " not finished";
+    return { content: [{ type: "text", text: [first, ...parts].join("\n\n=====\n\n") }] };
+  }, { annotations: READ_ANNOTATIONS });
 }
 
 /** mcpServers for a new chat (LiveSession asks through setToolProvider), or undefined when it gets none. */
@@ -58,7 +87,8 @@ export function toolsFor(s) {
       instructions: s.engine === "deepseek" ? DEEPSEEK_SIDE : CLAUDE_SIDE, tools });
     // always_ask: Claude Code asks our canUseTool before every call, even where an allow rule or Auto mode would let it
     // through. live-session.js allows it at once in Bypass or after "always" in this chat; otherwise the phone is asked.
-    return { pocket: { ...server, tools: tools.map(t => ({ name: t.name, permission_policy: "always_ask" })) } };
+    // worker_results never asks: reading reports starts nothing. The rest always ask.
+    return { pocket: { ...server, tools: tools.filter(t => t.name !== "worker_results").map(t => ({ name: t.name, permission_policy: "always_ask" })) } };
   } catch (e) {
     log("pocket tools failed", e?.message);   // the chat still opens, just without them
     return undefined;
@@ -88,7 +118,7 @@ function workerMode(parent, engine) {
 }
 
 async function run(parent, engine, args, extra) {
-  const toolName = engine === "deepseek" ? DS_TOOL : CLAUDE_TOOL, who = NAME[engine];
+  const toolName = engine === "deepseek" ? DS_TOOL : CLAUDE_TOOL;
   // A chat keeps the tools it started with; a direction turned off since then is still off.
   if (engine === "deepseek" ? dsSettings().toDeepseek === false : dsSettings().toClaude === false)
     return fail(engine === "deepseek" ? "Sending work to DeepSeek is turned off (Settings → DeepSeek)." : "Asking Claude is turned off (Settings → DeepSeek).");
@@ -96,7 +126,40 @@ async function run(parent, engine, args, extra) {
   const approved = takeApprovalFor(parent, toolName, callId);
   // Defence in depth: Claude Code only runs this after canUseTool allowed it. Without a recorded OK, only a chat in Bypass may go on.
   if (!approved && parent.permissionMode !== "bypassPermissions") return fail("This needs your OK on the phone, and there wasn't one.");
-  if ([...live.values()].filter(x => x.link && busy(x)).length >= MAX_RUNNING) return fail("Three workers are already running. Wait for one to finish.");
+  if (args.wait === false && args.continue_chat) return fail("continue_chat can't be used with wait:false.");
+  if (args.wait === false) return startJob(parent, engine, args, callId, approved);
+  // A normal call waits its turn in the queue; extra's stop signal still ends the worker.
+  return queue.run(() => runWorker(parent, engine, args, extra, callId, approved, () => {}), parent.sessionId);
+}
+
+/** Start a wait:false worker now: it queues like any other run, and its report waits in `jobs` for worker_results. */
+async function startJob(parent, engine, args, callId, approved) {
+  const job = { id: randomBytes(4).toString("hex"), parent: parent.sessionId, engine, title: oneLine(args.title) || firstLine(args.task),
+    state: "queued", chat: null, report: null, collected: false };
+  jobs.set(job.id, job);
+  job.promise = queue.run(() => { job.state = "running"; return runWorker(parent, engine, args, null, callId, approved, id => { job.chat = id; }); }, parent.sessionId)
+    .then(r => { job.report = r.content[0].text; }, e => { job.report = NAME[engine] + " worker: stopped\nJob: " + job.id + "\n---\n" + (e?.message || e); })
+    .finally(() => { job.state = "done"; });
+  await Promise.resolve();   // lets a free slot start it at once
+  return { content: [{ type: "text", text: [NAME[engine] + " worker: " + (job.state === "running" ? "started" : "queued"), "Job: " + job.id,
+    "Title: " + job.title, "Queue: " + queue.running + " running, " + queue.waiting + " waiting", "---", "Collect its report with worker_results."].join("\n") }] };
+}
+
+/** The person stopped a chat: drop the workers it had waiting for a slot and interrupt the ones it started. */
+export function stopJobsOf(parentId) {
+  let n = queue.cancel(tag => tag === parentId);
+  for (const job of jobs.values()) {
+    if (job.parent !== parentId || job.state !== "running" || !job.chat) continue;
+    const w = live.get(job.chat);
+    try { w?.q?.interrupt()?.catch?.(() => {}); } catch {}
+    n++;
+  }
+  return n;
+}
+
+/** One worker run: open or reopen its chat, send the task, wait for its turn and report. onChat gets the worker's chat id. */
+async function runWorker(parent, engine, args, extra, callId, approved, onChat) {
+  const toolName = engine === "deepseek" ? DS_TOOL : CLAUDE_TOOL, who = NAME[engine];
   const mode = workerMode(parent, engine);
   let worker;
   try {
@@ -114,6 +177,7 @@ async function run(parent, engine, args, extra) {
         permissionMode: mode, link: { parent: parent.sessionId, via: toolName, toolUseId: callId || approved } });
     }
   } catch (e) { return fail(e?.message || String(e)); }   // no key, a blocked folder, a chat open elsewhere…
+  onChat(worker.sessionId);
   const linkEv = { t: "link", parent: parent.sessionId, child: worker.sessionId, engine, title: worker.title, toolUseId: callId || approved };
   // this run: no outcome yet (a follow-up clears the last one); the app's Agents tab reads it after a restart
   updateLink(worker.sessionId, { runAt: Date.now(), toolUseId: linkEv.toolUseId, result: null, steps: null, ms: null, usd: null, endedAt: null });

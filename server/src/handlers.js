@@ -91,7 +91,12 @@ export const handlers = {
     ws.subs.add(s.sessionId);
     return { sessionId: s.sessionId, uuid: s.send(m) };
   },
-  async interrupt({ sessionId }) { await getLive(sessionId).q.interrupt(); return {}; },
+  async interrupt({ sessionId }) {
+    await getLive(sessionId).q.interrupt();
+    const { stopJobsOf } = await import("./delegate.js");   // dynamic: delegate.js imports live-session.js, which imports this
+    stopJobsOf(sessionId);
+    return {};
+  },
   async "session.close"({ sessionId }) { live.get(sessionId)?.close(); return {}; },
   async "permission.reply"(m) { return { ok: getLive(m.sessionId).answer(m) }; },
   async set(m) {
