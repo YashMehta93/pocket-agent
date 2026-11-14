@@ -118,6 +118,25 @@ const compare = (remote, local, allowOlder = false) => {
 export const bundleStream = () => tarStream(ROOT, BUNDLE_PATHS);
 
 /**
+ * An APK install carries VERSION at server/VERSION only (Linux.syncBundle copies the APK's server folder),
+ * while releases also have it at the top. Without the top one, the installed code never hashes like its
+ * release, and every APK install is followed by a pointless "An update is ready". Copies it up when the APK
+ * was the last thing installed: bundle.json is written by the APK install, applied.json by code updates,
+ * both with the phone's own clock (archive times inside a release can't be trusted for this).
+ */
+export function syncVersionFile(root = ROOT) {
+  const top = path.join(root, "VERSION"), fromApk = path.join(root, "server/VERSION"), marker = path.join(root, "bundle.json");
+  if (!fs.existsSync(fromApk) || !fs.existsSync(marker)) return false;   // not installed from an APK
+  let appliedAt = 0;
+  try { appliedAt = Date.parse(JSON.parse(fs.readFileSync(path.join(root, "applied.json"), "utf8")).at) || 0; } catch {}
+  if (appliedAt > fs.statSync(marker).mtimeMs) return false;   // a code update came after the APK: its VERSION is right
+  const want = fs.readFileSync(fromApk, "utf8");
+  if (fs.existsSync(top) && fs.readFileSync(top, "utf8") === want) return false;
+  fs.writeFileSync(top, want);
+  return true;
+}
+
+/**
  * What a local folder offers as an update. A git checkout offers its last commit, not edits in progress,
  * so half-finished work never reaches the app: committing is "ship it". Snapshotted once per commit.
  * A folder without git offers its files as they are.
@@ -155,19 +174,41 @@ function ghHeaders(token, accept = "application/vnd.github+json") {
   if (token) h.Authorization = "Bearer " + token;
   return h;
 }
+// GitHub allows anonymous callers 60 API requests an hour per internet connection (phones on one Wi-Fi
+// share them). So release info is cached briefly (an app open asks twice, and reconnects ask again), and
+// without a token, release files come from their public download links, which aren't API requests.
+const CACHE_MS = 2 * 60_000, ghCache = new Map();
+export const clearReleaseCache = () => ghCache.clear();
+/** fetch, retried once after a network error (not after an HTTP error): mobile networks drop requests. */
+async function fetchRetry(url, opts) {
+  try { return await fetch(url, opts); }
+  catch { await new Promise(r => setTimeout(r, 1500)); return fetch(url, opts); }
+}
+async function ghGet(url, token) {
+  const key = (token ? "token " : "") + url, hit = ghCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.res;
+  const r = await fetchRetry(url, { headers: ghHeaders(token) });
+  const res = { status: r.status, ok: r.ok, json: r.ok ? await r.json() : null };
+  if (res.ok) ghCache.set(key, { at: Date.now(), res });
+  return res;
+}
+function ghError(r) {
+  if (r.status === 401) return new Error("GitHub rejected the token (expired or mistyped?)");
+  if (r.status === 403 || r.status === 429) return new Error("GitHub is limiting requests from this connection for now. Pocket Agent checks again later.");
+  return new Error(`GitHub answered ${r.status}`);
+}
 export async function latestRelease({ github, token }) {
-  const r = await fetch(`${GH_API}/repos/${github}/releases/latest`, { headers: ghHeaders(token) });
+  const r = await ghGet(`${GH_API}/repos/${github}/releases/latest`, token);
   if (r.status === 404) throw new Error(token ? `No release in ${github} yet, or the token can't see that repo` : `Can't see ${github}. If it's private, add a GitHub token in Settings.`);
-  if (r.status === 401) throw new Error("GitHub rejected the token (expired or mistyped?)");
-  if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
-  return r.json();
+  if (!r.ok) throw ghError(r);
+  return r.json;
 }
 /** Every published release, newest first: tag, name, notes, and whether it's a pre-release (beta). */
 export async function listReleases({ github, token }) {
-  const r = await fetch(`${GH_API}/repos/${github}/releases?per_page=50`, { headers: ghHeaders(token) });
+  const r = await ghGet(`${GH_API}/repos/${github}/releases?per_page=50`, token);
   if (r.status === 404) throw new Error(`Can't see ${github}. If it's private, add a GitHub token in Settings.`);
-  if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
-  return (await r.json()).filter(x => !x.draft);
+  if (!r.ok) throw ghError(r);
+  return r.json.filter(x => !x.draft);
 }
 /**
  * The release to follow, by track (prefs.updateTrack):
@@ -186,11 +227,16 @@ export async function pickRelease(ch, track = prefs.updateTrack) {
 }
 const pinned = (track = prefs.updateTrack) => track?.track === "pin";
 
-/** Fetch response for a release file (follows GitHub's redirect to its download host). */
+/**
+ * Fetch response for a release file (follows GitHub's redirect to its download host). With a token, through
+ * the API (private repos need that); without one, from the public download link, which isn't an API request.
+ */
 export async function releaseAsset(ch, rel, name) {
   const a = (rel.assets || []).find(x => x.name === name);
   if (!a) throw new Error(`Release ${rel.tag_name} has no ${name}`);
-  const r = await fetch(a.url, { headers: ghHeaders(ch.token, "application/octet-stream") });
+  const r = !ch.token && a.browser_download_url
+    ? await fetchRetry(a.browser_download_url, { headers: { "User-Agent": "pocket-agent" } })
+    : await fetchRetry(a.url, { headers: ghHeaders(ch.token, "application/octet-stream") });
   if (!r.ok) throw new Error(`Downloading ${name} failed (${r.status})`);
   return r;
 }

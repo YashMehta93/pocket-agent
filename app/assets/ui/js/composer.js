@@ -9,10 +9,16 @@ function currentSettings() {
   return { model: li?.model ?? cur.model ?? state.defaults.model ?? null, effort: li?.effort ?? cur.effort ?? state.defaults.effort ?? null,
     permissionMode: li?.permissionMode ?? cur.permissionMode ?? state.defaults.permissionMode ?? "default" };
 }
+/** claude-opus-5-5 → "Opus 5.5" (also with a date or [1m] suffix). */
+function prettyModel(id) {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2})(?!\d))?/.exec(id || "");
+  return m ? m[1][0].toUpperCase() + m[1].slice(1) + " " + m[2] + (m[3] ? "." + m[3] : "") : (id || "").replace(/^claude-/, "");
+}
+/** The model's real name, never "Default": the default resolves to the model it stands for. */
 function modelLabel(id) {
-  if (!id) return "Default model";
-  const m = state.models.find(x => x.value === id || x.resolvedModel === id);
-  return m ? m.displayName : id.replace(/^claude-/, "").replace(/-/g, " ");
+  if (!id || id === "default") { const def = state.models.find(x => x.value === "default"); if (!def?.resolvedModel) return "Model"; id = def.resolvedModel; }
+  const m = state.models.find(x => x.value !== "default" && (x.value === id || x.resolvedModel === id));
+  return m ? m.displayName : prettyModel(id);
 }
 function updateComposer() {
   const s = currentSettings();
@@ -21,6 +27,7 @@ function updateComposer() {
   $("#chip-model").textContent = modelLabel(s.model) + (s.effort ? " · " + s.effort : "");
   const st = sessionState(state.current?.sessionId);
   const running = st === "running" || st === "waiting";
+  input.placeholder = running ? "Queue a message…" : "Message Claude…";
   const send = $("#btn-send");
   const hasText = input.value.trim() || attachments.length;
   send.classList.toggle("stop", running && !hasText);
@@ -28,6 +35,7 @@ function updateComposer() {
   send.disabled = !running && !hasText;
   send.setAttribute("aria-label", running && !hasText ? "Stop" : "Send");
   renderActivity();
+  if (typeof renderAgentsLine === "function") renderAgentsLine();
 }
 function setStatus(text, spin = true) {
   const el = $("#status-line");
@@ -47,7 +55,10 @@ $("#btn-send").onclick = () => {
 };
 async function interrupt() {
   haptic("tick");
-  try { await conn.call("interrupt", { sessionId: state.current.sessionId }); } catch (e) { toast(e.message); }
+  try { await conn.call("interrupt", { sessionId: state.current.sessionId }); }
+  catch (e) {   // not running any more (e.g. the server restarted): show it as stopped instead of an error
+    if (/not (running|live|open)|no live/i.test(e.message)) { delete state.liveInfo[state.current.sessionId]; updateComposer(); toast("Already stopped"); } else toast(e.message);
+  }
 }
 async function send(textOverride) {
   const cur = state.current;
@@ -68,7 +79,9 @@ async function send(textOverride) {
     hideEmpty();
     const s = currentSettings();
     const msg = { sessionId: cur.sessionId, text, images };
-    if (cur.isNew) Object.assign(msg, { cwd: cur.cwd, model: s.model || undefined, effort: s.effort || undefined, permissionMode: s.permissionMode });
+    // A new chat, or one whose process was closed (idle, restart): start it with what the composer shows.
+    if (cur.isNew || !state.liveInfo[cur.sessionId]) Object.assign(msg, { model: s.model || undefined, effort: s.effort || undefined, permissionMode: s.permissionMode });
+    if (cur.isNew) msg.cwd = cur.cwd;
     if (cur.isNew) { cur.isNew = false; cur.title = text.slice(0, 60); updateHeader(); }
     await conn.call("send", msg);
     scrollToBottom(true);
@@ -224,8 +237,10 @@ $("#chip-model").onclick = () => {
   const cur = currentSettings();
   const models = state.models.length ? state.models : [{ value: "", displayName: "Default", description: "Start a chat once to load the model list" }];
   const b = sheet.open(`<h2>Model</h2><div id="models"></div><h2 style="margin-top:16px">Effort</h2><div class="sub">Higher effort thinks longer and uses more of your limits.</div><div class="seg" id="efforts"></div>`);
+  // no model chosen = the default; an open chat reports the resolved id (claude-…), which ticks its named entry
+  const curVal = cur.model || "default", exact = models.some(m => m.value === curVal);
   for (const m of models) {
-    const on = (cur.model || "") === (m.value || "") || (cur.model && m.resolvedModel === cur.model);
+    const on = m.value === curVal || (!exact && m.value !== "default" && m.resolvedModel === curVal) || (!state.models.length && !m.value);
     const o = h(`<button class="opt ${on ? "on" : ""}">${icon(on ? "ccheck" : "circle")}<div class="ot"><div>${esc(m.displayName)}</div><div class="od">${esc(m.description || "")}</div></div></button>`);
     o.onclick = () => { sheet.close(true); applySetting({ model: m.value || null }); };
     b.querySelector("#models").append(o);
@@ -242,7 +257,8 @@ $("#chip-model").onclick = () => {
 async function applySetting(patch) {
   const cur = state.current;
   Object.assign(cur, patch);
-  if (state.liveInfo[cur.sessionId]) {
+  // Running chats change at once; closed ones are remembered by the server for when they reopen.
+  if (!cur.isNew) {
     try { const r = await conn.call("set", { sessionId: cur.sessionId, ...patch }); if (r.info) state.liveInfo[cur.sessionId] = r.info; } catch (e) { toast(e.message); }
   }
   updateComposer();

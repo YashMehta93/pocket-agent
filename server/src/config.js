@@ -69,4 +69,10 @@ function loadToken() {
 /** "owner/repo" from however a GitHub repo was written: owner/repo, github.com/…, https://…(.git), git@github.com:… */
 export const githubRepo = s => String(s || "").trim().replace(/^(https?:\/\/)?(www\.)?github\.com[/:]/i, "").replace(/^git@github\.com:/i, "").replace(/\.git$|\/+$/g, "");
 export const log = (...a) => console.log(new Date().toISOString(), ...a);
-export const safeEq = (a, b) => typeof a === "string" && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+/** Constant-time string comparison. Lengths are compared in bytes: timingSafeEqual throws on a mismatch, and
+ *  a token of the right length in characters but not in bytes (non-ASCII) must be refused, not crash the server. */
+export const safeEq = (a, b) => {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const x = Buffer.from(a), y = Buffer.from(b);
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+};

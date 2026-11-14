@@ -42,6 +42,45 @@ await until(() => $$("#messages > *").length > 0, 20000, "history render");
 ok(`history rendered: ${$$(".user-msg").length} user msgs, ${$$(".tool").length} tool cards, ${$$("#messages .md").length} text blocks`, $$(".user-msg").length > 0);
 ok("title set", $("#chat-title").textContent !== "New chat");
 
+// result lines: a turn that showed nothing (Claude Code noting stopped background tasks) gets none
+const lines0 = $$(".result-line").length;
+ev(`chat.event({ type: "result", subtype: "success", duration_ms: 431 })`);
+ok("a turn that showed nothing adds no result line", $$(".result-line").length === lines0);
+ev(`chat.event({ type: "assistant", uuid: "u-test-1", message: { id: "m-test-1", content: [{ type: "text", text: "Done." }] } }); chat.event({ type: "result", subtype: "success", duration_ms: 1200 })`);
+ok("a turn with a reply gets its result line", $$(".result-line").length === lines0 + 1);
+
+// thoughts stay in the chat (one tap opens them); a run of tool calls continues past them into one line
+ev(`chat.event({ type: "assistant", uuid: "u-t-2", message: { id: "m-t-2", content: [{ type: "tool_use", id: "tu-a", name: "Bash", input: { command: "ls", description: "List files" } }] } });
+  chat.event({ type: "assistant", uuid: "u-t-3", message: { id: "m-t-3", content: [{ type: "thinking", thinking: "Now check the size of each file." }] } });
+  chat.event({ type: "assistant", uuid: "u-t-4", message: { id: "m-t-4", content: [{ type: "tool_use", id: "tu-b", name: "Bash", input: { command: "du -sh *", description: "Check sizes" } }] } })`);
+const lastGroup = [...$$("#messages > .steps")].pop();
+ok("thoughts stay in the chat, not inside the steps line", $$("#messages .steps .thinking").length === 0 && $$("#messages > .thinking").length > 0);
+ev(`chat.event({ type: "assistant", uuid: "u-t-5", message: { id: "m-t-5", content: [{ type: "thinking", thinking: "Sizes look fine; summarise next." }] } })`);
+const th = [...$$("#messages > .thinking")].pop();
+ok("back-to-back thoughts share one block: " + th?.querySelector("summary").textContent, th?.querySelectorAll(".th-body > .md").length === 2 && /2 times/.test(th.querySelector("summary").textContent));
+ok("tool calls on both sides of a thought share one line: " + lastGroup?.querySelector(".sl-t").textContent, lastGroup?.querySelectorAll(".steps-list > .tool").length === 2);
+
+// grouped steps: one line per run of tool calls, a timeline sheet, a page per step that hands the card back
+const grp = $("#messages .steps.has-tools");
+if (grp) {
+  ok(`steps grouped into one line: "${grp.querySelector(".sl-t").textContent}"`, w.getComputedStyle(grp.querySelector(".steps-line")).display !== "none" && w.getComputedStyle(grp.querySelector(".steps-list")).display === "none" && grp.querySelector(".sl-t").textContent.length > 3);
+  grp.querySelector(".steps-line").click();
+  const nSteps = grp.querySelectorAll(".steps-list > *").length;
+  ok(`the line opens a timeline of its ${nSteps} steps`, ev("sheet.key") === "steps" && $$("#sheet .step-row").length === nSteps);
+  $("#sheet .step-row").click();
+  ok("a step opens its own page with the details", !$("#page").hidden && $("#page-body .in-page") !== null);
+  ev("page.back()");
+  ok("leaving the page puts the step back in the chat", $("#page").hidden && grp.querySelectorAll(".steps-list > *").length === nSteps && !grp.querySelector(".in-page"));
+  ok("back from a step returns to its timeline", ev("sheet.key") === "steps");
+  $("#sheet-x").click();
+  ok("the close button closes a sheet", !ev("sheet.isOpen"));
+  ev("openSettings()"); ev(`document.querySelector('[data-sec="look"]').click()`); $("#page-back2").click();
+  ok("the bottom back button goes back one page", !$("#page").hidden && $$(".set-cat").length >= 7); ev("page.close()");
+  ev("settings.groupSteps = false; applySettings()");
+  ok("the setting shows cards instead", w.getComputedStyle(grp.querySelector(".steps-list")).display !== "none");
+  ev("settings.groupSteps = true; applySettings()");
+} else console.log("  (this chat has no tool steps; grouping not checked)");
+
 // drawer search
 ev(`state.filter = "zzzz-no-match"; renderSessions()`);
 ok("search filter empties list", $$("#session-list .sess").length === 0);
@@ -54,9 +93,44 @@ ok(`slash popup shows ${$$("#popup button").length} commands`, $$("#popup button
 ev(`input.value = ""; document.querySelector("#popup").hidden = true`);
 
 // pages
-ev("openSettings()"); ok("settings page opens", !$("#page").hidden && $$(".set-row").length > 5); ev("page.close()");
+ev("openSettings()"); ok(`settings home shows categories (${$$(".set-cat").length})`, !$("#page").hidden && $$(".set-cat").length >= 7 && $$("#page-body .set-row").length === 0);
+ev(`const q = document.querySelector("#set-q"); q.value = "theme"; q.dispatchEvent(new window.Event("input"))`);
+ok("search finds a setting across categories", $$("#set-results .set-item:not([hidden])").length >= 1 && $("#set-results").textContent.includes("Theme") && $("#set-home").hidden);
+ev(`const q = document.querySelector("#set-q"); q.value = "zzz-nothing"; q.dispatchEvent(new window.Event("input"))`);
+ok("search says when nothing matches", /No setting matches/.test($("#set-results").textContent));
+ev(`document.querySelector("#set-q").value = ""; document.querySelector("#set-q").dispatchEvent(new window.Event("input")); document.querySelector('[data-sec="look"]').click()`);
+ok("a category opens its own page with its controls", ev("document.querySelector('#page-title').textContent") === "Appearance" && $$("#page-body .set-row").length >= 3 && $$("#page-body #s-theme button").length === 3);
+ev(`document.querySelector('#s-theme button[data-v="dark"]').click()`); ok("a setting works from its category page", ev("settings.theme") === "dark"); ev(`settings.theme = "system"; saveSettings()`);
+ev("page.close()");
+// background agents: a line above the message box, a sheet listing them, a page per agent
+ev(`state.liveInfo[state.current.sessionId] = { ...(state.liveInfo[state.current.sessionId] || {}), tasks: [
+  { id: "a1234567890abcdef", kind: "agent", agentType: "general-purpose", description: "Research DeepSeek", status: "running", activity: "Reading the API docs", tokens: 23548, tools: 4, startedAt: Date.now() - 90000 },
+  { id: "box1", kind: "command", description: "Run the tests", status: "completed", summary: "Run the tests", startedAt: Date.now() - 60000, endedAt: Date.now() } ] }; renderAgentsLine()`);
+ok("a line shows the agents at work", !$("#agents-line").hidden && /1 agent working · 1 command done/.test($("#agents-line").textContent));
+$("#agents-line").click();
+ok("tapping it lists each with what it's doing now", ev("sheet.key") === "agents" && $$("#sheet .ag-row").length === 2 && $("#sheet").textContent.includes("Reading the API docs") && $("#sheet").textContent.includes("23.5k tokens"));
+ev("sheet.close(true)");
+ev(`delete state.liveInfo[state.current.sessionId].tasks; renderAgentsLine()`);
+ok("no agents, no line", $("#agents-line").hidden);
+
+// usage limits: drawer meter, the note above the message box from 90%, the details sheet, the settings row
+ev(`state.usage = { windows: { five_hour: { used: 91, resetsAt: Date.now() + 3 * 3600e3 + 50 * 60e3, status: "allowed_warning" }, seven_day: { used: 64, resetsAt: Date.now() + 4 * 86400e3, status: "allowed" } }, models: [{ name: "Fable", used: 40, resetsAt: Date.now() + 4 * 86400e3 }], at: Date.now() }; renderUsage()`);
+ok("drawer shows the 5-hour and weekly limits", !$("#usage-meter").hidden && $$("#usage-meter .u-row").length === 2 && /91%.*resets in 3h \d+m/.test($("#usage-meter").textContent) && $("#usage-meter .u-row.warn") !== null);
+ok("a ring in the chat header shows the fuller limit", !$("#btn-usage").hidden && /5-hour limit 91% used/.test($("#btn-usage").getAttribute("aria-label")) && $("#btn-usage").classList.contains("warn"));
+ok("a note above the message box warns from 90%", !$("#usage-note").hidden && /91% of your 5-hour limit used · resets in 3h/.test($("#usage-note").textContent));
+ev("openUsage()"); ok("tapping opens every limit, per model too", ev("sheet.key") === "usage" && $$("#sheet .u-row").length === 3 && $("#sheet").textContent.includes("Week · Fable")); ev("sheet.close(true)");
+ev(`state.usage.windows.five_hour.resetsAt = Date.now() - 1000; renderUsage()`);
+ok("once a window resets, it shows 0% and the note goes", $("#usage-note").hidden && /5-hour\s*0%/.test($("#usage-meter").textContent));
+ev("openSettings()"); ev(`const q = document.querySelector("#set-q"); q.value = "usage"; q.dispatchEvent(new window.Event("input"))`);
+ok("settings search finds the usage limits", $("#set-results").textContent.includes("Usage limits") && $("#set-results").textContent.includes("Week 64%")); ev("page.close()");
+ev(`state.usage = null; renderUsage()`);
+
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");
+ev(`state.models = [{ value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)" }, { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5" }]`);
+ev(`document.querySelector("#chip-model").click()`);
+ok("the model sheet ticks Default when the chat uses the default", $$("#sheet .opt.on").length === 1 && $("#sheet .opt.on").textContent.includes("Default")); ev("sheet.close(true)");
+ok("the model chip names the real model, never Default", ev('modelLabel(null)') === "Opus 5.5" && ev('modelLabel("default")') === "Opus 5.5" && ev('modelLabel("claude-haiku-4-5-20251001")') === "Haiku 4.5" && ev('modelLabel("claude-sonnet-5-5[1m]")') === "Sonnet 5.5");
 ev(`document.querySelector("#chip-model").click()`); ok("model sheet opens", ev("sheet.isOpen")); ev("sheet.close(true)");
 ev(`document.querySelector("#btn-more").click()`); ok("overflow menu opens", $$("#sheet .menu-item").length > 3); ev("sheet.close(true)");
 

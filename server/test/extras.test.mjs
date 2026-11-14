@@ -11,6 +11,10 @@ const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../.
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "pa-extras-"));
 const HOME = path.join(T, "home");
 Object.assign(process.env, { HOME, PA_DATA: path.join(HOME, ".pocket-agent"), PA_BACKUP_DIR: path.join(T, "sdcard/Pocket Agent"), PA_PORT: "8769" });
+// A stand-in for Claude Code, so nothing here can start the real one (config.js would find it on PATH).
+const FAKE_CLAUDE = path.join(T, "fake-claude");
+fs.writeFileSync(FAKE_CLAUDE, "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
+process.env.PA_CLAUDE = FAKE_CLAUDE;
 delete process.env.PA_MODE; delete process.env.PA_SUPERVISED;
 fs.mkdirSync(process.env.PA_DATA, { recursive: true });
 
@@ -39,7 +43,8 @@ try {
   const b = await createBackup();
   const names = sh(`tar tzf '${b.file}'`).split("\n");
   ok("backup written to phone storage", fs.existsSync(b.file) && b.bytes > 0, b.file.replace(T, ""));
-  ok("backup has chats, memory, projects, keystore, prefs", [".claude/projects/-root/chat1.jsonl", ".claude/projects/-root/memory/MEMORY.md", "projects/app/main.js", "projects/app/pocket-agent.keystore", ".pocket-agent/prefs.json"].every(n => names.includes(n)));
+  ok("backup has chats, memory, projects, prefs", [".claude/projects/-root/chat1.jsonl", ".claude/projects/-root/memory/MEMORY.md", "projects/app/main.js", ".pocket-agent/prefs.json"].every(n => names.includes(n)));
+  ok("backup has no signing keys at any depth (keystore, release key)", !names.some(n => /\.keystore$|release-key|\.pem$/.test(n)));
   ok("backup has no sign-in, tokens, release-signing key or node_modules", !names.some(n => /credentials|github-token|node_modules|release-key/.test(n)));
   ok("backup is listed", (await listBackups()).some(x => x.file === b.file));
   fs.rmSync(path.join(HOME, ".claude/projects"), { recursive: true });
@@ -91,6 +96,26 @@ try {
   const bare = path.join(T, "bare"); fs.mkdirSync(path.join(bare, "server"), { recursive: true });
   ok("without the file, the built-in keys are trusted", trustedKeys(bare).length === DEFAULT_TRUSTED_KEYS.keys.length && trustedKeys(bare).length > 0);
   ok("a missing keys file is restored byte for byte", ensureTrustedKeys(bare) === true && fs.readFileSync(path.join(bare, "server/trusted-keys.json"), "utf8") === keyFile && ensureTrustedKeys(bare) === false);
+  // VERSION after an APK install: copied up only when the APK was the last install
+  const { syncVersionFile } = await import("../src/transfer.js");
+  const inst = (top, apk, appliedAtMs, markerMs) => {
+    const d = fs.mkdtempSync(path.join(T, "inst-")); fs.mkdirSync(path.join(d, "server"));
+    if (top) fs.writeFileSync(path.join(d, "VERSION"), top);
+    if (apk) fs.writeFileSync(path.join(d, "server/VERSION"), apk);
+    if (markerMs) { fs.writeFileSync(path.join(d, "bundle.json"), "{}"); fs.utimesSync(path.join(d, "bundle.json"), markerMs / 1000, markerMs / 1000); }
+    if (appliedAtMs) fs.writeFileSync(path.join(d, "applied.json"), JSON.stringify({ at: new Date(appliedAtMs).toISOString() }));
+    return d;
+  };
+  const top = d => { try { return fs.readFileSync(path.join(d, "VERSION"), "utf8"); } catch { return null; } };
+  const now = Date.now();
+  let d = inst(null, "1.1.2\n", 0, now);
+  ok("fresh APK install: VERSION copied to the top", syncVersionFile(d) === true && top(d) === "1.1.2\n");
+  d = inst("1.1.0\n", "1.1.2\n", now - 3600e3, now);
+  ok("APK installed after a code update: the APK's VERSION wins", syncVersionFile(d) === true && top(d) === "1.1.2\n");
+  d = inst("1.2.0\n", "1.1.2\n", now, now - 3600e3);
+  ok("code update after the APK: its VERSION stays", syncVersionFile(d) === false && top(d) === "1.2.0\n");
+  d = inst("1.0.0\n", null, 0, 0);
+  ok("not installed from an APK (Termux, a computer): untouched", syncVersionFile(d) === false && top(d) === "1.0.0\n");
   const { githubRepo } = await import("../src/config.js");
   ok("any way of writing a GitHub repo becomes owner/repo", ["me/pa", "github.com/me/pa", "https://github.com/me/pa.git", "https://www.github.com/me/pa/", "git@github.com:me/pa.git", " me/pa.git "].every(x => githubRepo(x) === "me/pa"));
 
@@ -106,6 +131,16 @@ try {
   gh.close();
   ok("open-pr.sh opens a PR into the newest vN.x", got?.url === "/repos/me/pa/pulls" && got.body.base === "v10.x" && got.body.head === "feat/thing" && got.auth === "Bearer t0k" && /pull\/1/.test(out), out.trim().split("\n").pop());
 
+  // ───── opening a chat ─────
+  {
+    const { openSession, live } = await import("../src/live-session.js");
+    const id = "11111111-2222-4333-8444-555555555555";
+    const [a, b2] = await Promise.all([openSession({ sessionId: id, cwd: HOME }), openSession({ sessionId: id, cwd: HOME })]);
+    ok("two opens of one chat at once share one Claude process", a === b2 && live.get(id) === a);
+    ok("a later open returns the live one", await openSession({ sessionId: id }) === a);
+    a.close();
+  }
+
   // ───── Termux setup routes ─────
   const server = spawn("node", [path.join(REPO, "server/src/index.js"), "--port", "8769"], { env: process.env, stdio: "ignore" });
   try {
@@ -114,6 +149,13 @@ try {
     ok("an unknown code is refused", bad.status === 403);
     const { default: WebSocket } = await import(path.join(REPO, "server/node_modules/ws/index.js"));
     const token = fs.readFileSync(path.join(process.env.PA_DATA, "token"), "utf8").trim();
+    // A token of the right length in characters but not in bytes used to throw inside the comparison:
+    // a hung request over HTTP, and a dead server over the WebSocket upgrade.
+    const odd = encodeURIComponent("é".repeat(token.length));
+    ok("a non-ASCII token is refused over HTTP", (await fetch(`http://127.0.0.1:8769/bundle/info?token=${odd}`, { signal: AbortSignal.timeout(5000) }).catch(() => ({}))).status === 401);
+    await new Promise(res => { const w = new WebSocket(`ws://127.0.0.1:8769/ws?token=${odd}`); w.on("error", res); w.on("close", res); w.on("open", res); });
+    await new Promise(r => setTimeout(r, 300));
+    ok("a non-ASCII token over the WebSocket doesn't stop the server", await fetch("http://127.0.0.1:8769/health").then(r => r.ok, () => false));
     const ws = new WebSocket(`ws://127.0.0.1:8769/ws?token=${token}`); await new Promise(r => ws.on("open", r));
     const cmd = await new Promise(res => { ws.on("message", raw => { const m = JSON.parse(raw); if (m.t === "reply" && m.id === 1) res(m.command); }); ws.send(JSON.stringify({ t: "termux.installCommand", id: 1 })); });
     ws.close();
@@ -127,6 +169,66 @@ try {
     fs.writeFileSync(path.join(T, "b.tgz"), tgz);
     const list = sh(`tar tzf '${T}/b.tgz'`);
     ok("the code downloads the server bundle", list.includes("server/src/index.js") && list.includes("app/assets/ui/index.html"));
+
+    // a chat's own model and permission mode survive its process closing and the server restarting
+    const ws2 = new WebSocket(`ws://127.0.0.1:8769/ws?token=${token}`); await new Promise(r => ws2.on("open", r));
+    let n2 = 0; const call2 = (t, m = {}) => new Promise(res => { const id = ++n2; const h = raw => { const x = JSON.parse(raw); if (x.t === "reply" && x.id === id) { ws2.off("message", h); res(x); } }; ws2.on("message", h); ws2.send(JSON.stringify({ t, id, ...m })); });
+    await call2("set", { sessionId: "chat-closed-1", model: "claude-opus-5-5", permissionMode: "bypassPermissions" });
+    await call2("set", { sessionId: "chat-closed-1", effort: "high" });
+    const sub = await call2("subscribe", { sessionId: "chat-closed-1", after: 0 });
+    ok("a closed chat's model, effort and mode are remembered", sub.settings?.model === "claude-opus-5-5" && sub.settings.permissionMode === "bypassPermissions" && sub.settings.effort === "high");
+    const onDisk = JSON.parse(fs.readFileSync(path.join(process.env.PA_DATA, "prefs.json"), "utf8")).sessionSettings?.["chat-closed-1"];
+    ok("and saved to disk, so they survive a restart", onDisk?.permissionMode === "bypassPermissions");
+    const other = await call2("subscribe", { sessionId: "chat-never-set", after: 0 });
+    ok("a chat with nothing remembered gets no settings (the defaults apply)", other.settings === null);
+    ws2.close();
+
+    // usage limits: from the rate_limit_event every reply carries (0–1, Unix seconds) and from Claude Code's /usage data (0–100, ISO)
+    const { noteRateLimit, refreshUsage, getUsage } = await import("../src/usage.js");
+    noteRateLimit({ status: "allowed_warning", resetsAt: 1794658200, rateLimitType: "five_hour", utilization: 0.91,
+      unifiedWindows: { five_hour: { utilization: 0.91, resetsAt: 1794658200, status: "allowed_warning" }, seven_day: { utilization: 0.64, resetsAt: 1794909600, status: "allowed" } } });
+    const ev1 = getUsage();
+    ok("a rate-limit event gives both windows in percent, with reset times", ev1?.windows?.five_hour?.used === 91 && ev1.windows.five_hour.resetsAt === 1794658200000
+      && ev1.windows.five_hour.status === "allowed_warning" && ev1.windows.seven_day?.used === 64 && ev1.status === "allowed_warning");
+    let calls = 0;
+    const fakeQ = { usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => (calls++, { subscription_type: "max", rate_limits_available: true, rate_limits: {
+      five_hour: { utilization: 93, resets_at: "2026-11-14T15:30:00Z" }, seven_day: { utilization: 65, resets_at: "2026-11-20T09:00:00Z" }, seven_day_opus: null,
+      model_scoped: [{ display_name: "Fable", utilization: 40, resets_at: "2026-11-20T09:00:00Z" }] } }) };
+    const fresh = await refreshUsage(fakeQ, { asked: true });
+    ok("Claude Code's usage data adds per-model limits and keeps the warning", fresh?.windows?.five_hour?.used === 93 && fresh.windows.five_hour.resetsAt === Date.parse("2026-11-14T15:30:00Z")
+      && fresh.windows.five_hour.status === "allowed_warning" && fresh.models?.[0]?.name === "Fable" && fresh.models[0].used === 40 && fresh.plan === "max" && !("seven_day_opus" in fresh.windows));
+    await refreshUsage(fakeQ, { asked: true });
+    ok("asking again within 30 seconds doesn't fetch again", calls === 1);
+    ok("without the call (older Claude Code), the saved numbers stay", (await refreshUsage({}, { asked: true }))?.windows?.seven_day?.used === 65);
+
+    // after an unexpected stop, chats that were mid-reply continue: only right after it, once an hour, and not when turned off
+    const { continueInterrupted, clearWorking } = await import("../src/live-session.js");
+    const { prefs: P } = await import("../src/config.js");
+    const W = path.join(process.env.PA_DATA, "working.json");
+    fs.writeFileSync(W, JSON.stringify({ ids: ["chat-old"], at: Date.now() - 3 * 3600e3 }));
+    ok("a stop hours ago continues nothing, and the list is cleared", (await continueInterrupted()).length === 0 && !fs.existsSync(W));
+    P.continued = { "chat-again": [Date.now() - 60e3, Date.now() - 30e3, Date.now()] };
+    fs.writeFileSync(W, JSON.stringify({ ids: ["chat-again"], at: Date.now() }));
+    ok("a chat continued 3 times in 30 minutes isn't continued again (no crash loops)", (await continueInterrupted()).length === 0);
+    P.autoContinue = false;
+    fs.writeFileSync(W, JSON.stringify({ ids: ["chat-new"], at: Date.now() }));
+    ok("turned off, nothing continues", (await continueInterrupted()).length === 0);
+    delete P.autoContinue;
+    fs.writeFileSync(W, "{}"); clearWorking();
+    ok("a restart on purpose clears the list", !fs.existsSync(W));
+
+    // a background agent's own conversation is read from Claude Code's subagents folder
+    const { taskTranscript } = await import("../src/live-session.js");
+    const subDir = path.join(HOME, ".claude/projects/-tmp-x/chat-with-agents/subagents"); fs.mkdirSync(subDir, { recursive: true });
+    fs.writeFileSync(path.join(subDir, "agent-a0123456789abcdef.jsonl"), [
+      JSON.stringify({ type: "user", uuid: "u1", message: { role: "user", content: "Research the API" } }),
+      JSON.stringify({ type: "progress", data: {} }),
+      JSON.stringify({ type: "assistant", uuid: "u2", message: { role: "assistant", content: [{ type: "text", text: "Found it." }] } })].join("\n"));
+    const tr = taskTranscript("chat-with-agents", "a0123456789abcdef");
+    ok("an agent's conversation is found and read", tr?.length === 2 && tr[1].message.content[0].text === "Found it.");
+    ok("an unknown agent has none", taskTranscript("chat-with-agents", "a999") === null);
+    let refused = false; try { taskTranscript("../x", "a1"); } catch { refused = true; }
+    ok("ids with path characters are refused", refused);
   } finally { server.kill(); }
 } catch (e) { console.log("FAIL", e.stack); fails++; }
 finally { fs.rmSync(T, { recursive: true, force: true }); }

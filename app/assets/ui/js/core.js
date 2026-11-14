@@ -79,7 +79,7 @@ function shareText(t, title) { if (native) nativeCall("share", t, title || ""); 
 // ───────────── settings (per device) ─────────────
 const SETTINGS_KEY = "pa.settings";
 const settings = Object.assign({
-  theme: "system", fontSize: 15.5, enterToSend: false, haptics: true, showThinking: true, autoExpandTools: false,
+  theme: "system", fontSize: 15.5, enterToSend: false, haptics: true, showThinking: true, autoExpandTools: false, groupSteps: true,
   server: "", token: "", notifyDone: true, notifyApproval: true,
 }, (() => {
   // In the app, settings live natively: the built-in server, Termux and a PC are different web
@@ -92,6 +92,7 @@ function applySettings() {
   const dark = settings.theme === "dark" || (settings.theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.dataset.theme = dark ? "dark" : "light";
   document.documentElement.style.setProperty("--fs", settings.fontSize + "px");
+  document.body.classList.toggle("steps-cards", settings.groupSteps === false);
   $("#hl-theme").href = dark ? "lib/hl-dark.css" : "lib/hl-light.css";
   nativeCall("setTheme", dark ? "dark" : "light", getComputedStyle(document.documentElement).getPropertyValue("--bg").trim());
 }
@@ -99,7 +100,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applySet
 
 // ───────────── app state ─────────────
 const state = {
-  home: "", hostName: "", sessions: [], pinned: [], commands: [], models: [], account: null, defaults: {},
+  home: "", hostName: "", sessions: [], pinned: [], commands: [], models: [], account: null, usage: null, defaults: {},
   liveInfo: {},     // sessionId -> info from server (state, model, mode, pending…)
   pending: [],      // permission requests (all sessions)
   current: null,    // { sessionId, cwd, title, isNew, lastSeq, … }
@@ -183,27 +184,29 @@ const sheet = {
   get isOpen() { return document.body.classList.contains("sheet-open"); },
 };
 $("#sheet-scrim").addEventListener("click", () => sheet.close());
+$("#sheet-x").addEventListener("click", () => sheet.close());
 
 const page = {
   stack: [],
-  open(title, render, actions = "") {
+  open(title, render, actions = "", leave = null) {
     $("#page").hidden = false;
     $("#page-title").textContent = title;
     $("#page-actions").innerHTML = actions; hydrateIcons($("#page-actions"));
     const body = $("#page-body"); body.innerHTML = ""; body.scrollTop = 0;
-    this.stack.push({ title, render, actions });
+    this.stack.push({ title, render, actions, leave });
     render(body);
     nativeCall("setBackHandler", true);
   },
   back() {
-    this.stack.pop();
+    this.stack.pop()?.leave?.("back");
     const prev = this.stack.pop();
-    if (prev) this.open(prev.title, prev.render, prev.actions); else this.close();
+    if (prev) this.open(prev.title, prev.render, prev.actions, prev.leave); else this.close();
   },
-  close() { this.stack = []; $("#page").hidden = true; $("#page-body").innerHTML = ""; },
+  close() { for (const s of this.stack.splice(0)) s.leave?.("close"); $("#page").hidden = true; $("#page-body").innerHTML = ""; },
   get isOpen() { return !$("#page").hidden; },
 };
 $("#page-back").addEventListener("click", () => page.back());
+$("#page-back2").addEventListener("click", () => page.back());   // the same, within thumb reach
 
 // Android back button: close the top-most layer. Returns true if handled.
 window.paBack = function () {
