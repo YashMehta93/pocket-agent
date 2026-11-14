@@ -148,14 +148,14 @@ export function brief({ who, other, parent, cwd, task, approved }) {
     + `When you finish, end with a short report: what you changed (files), how you checked it, and anything left open.\n\n${task}`;
 }
 
-/** The tool's result. Stable: the app reads the first line and the "Chat:" line. */
+/** The tool's result. Stable: the app reads the first line and the "Chat:" line. `text` defaults to the result's own text. */
 export function report({ who, worker, r, before, after, ms, usd, parentStopped, text }) {
   const sub = r?.subtype || "closed";
   const status = parentStopped || sub === "error_during_execution" ? "stopped"
     : sub !== "success" ? `failed (${sub})` : r.is_error ? "failed (error)" : "done";
   const model = String(worker.model || "default").replace(/\[1m\]$/i, "");
   const cost = usd == null ? "" : usd < 0.001 ? " · under $0.001" : ` · about $${usd.toFixed(usd < 1 ? 3 : 2)}`;
-  let body = String(text || "").trim() || "(no reply)";
+  let body = String((text ?? r?.result) || "").trim() || "(no reply)";
   if (body.length > REPORT_MAX) body = body.slice(0, REPORT_MAX) + "\n…(cut; the full text is in the worker's chat)";
   const lines = [`${who} worker: ${status}`, `Chat: ${worker.sessionId}`, `Title: ${oneLine(worker.title)}`,
     `Folder: ${worker.cwd}`, `Model: ${model} · ${duration(ms)}${cost}`, changed(before, after), "---", body];

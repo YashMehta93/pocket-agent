@@ -4,6 +4,7 @@
 // No key, no Claude account, no network: a throwaway HOME / PA_DATA; test-mode Claude chats talk to the fake too, and
 // anything Claude Code aims at another host goes to the fake's refusing proxy and fails the test.
 //   npm run test:deepseek     On the phone, one Claude Code test at a time: flock /tmp/pa-claude-test.lock npm run test:deepseek
+//   npm run test:deepseek -- --unit     the unit part only
 // Ports: 8771 (the test server), 8772 (the fake DeepSeek).
 import fs from "node:fs";
 import os from "node:os";
@@ -17,6 +18,7 @@ const SERVER_PORT = 8771, MOCK_PORT = 8772;
 const KEY = "sk-test-deepseek";                 // the "real" DeepSeek key: only the server and the fake may ever see it
 const CLAUDE_KEY = "sk-test-claude-engine";     // what test-mode Claude chats send to the fake (PA_TEST_ANTHROPIC_KEY)
 const DS_TOOL = "mcp__pocket__deepseek_task", CLAUDE_TOOL = "mcp__pocket__claude_task";
+const UNIT_ONLY = process.argv.includes("--unit");
 const CLAUDE_BIN = findClaude();                // before HOME changes: Claude Code lives in the real home
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "pa-deepseek-"));
 // Nothing from the shell that runs us may reach the servers or Claude Code: inside Pocket Agent that's the app's own
@@ -55,7 +57,8 @@ for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, async () => { await sto
 try {
   mock = await startMock({ port: MOCK_PORT, key: KEY, alsoAccept: [CLAUDE_KEY] });
   await unitTests();
-  if (!CLAUDE_BIN) console.log("SKIP e2e: no Claude Code binary");
+  if (UNIT_ONLY) console.log("SKIP e2e: --unit");
+  else if (!CLAUDE_BIN) console.log("SKIP e2e: no Claude Code binary");
   else await e2eTests();
 } catch (e) { ok("the test ran to the end", false, e?.stack || e); }
 finally {
