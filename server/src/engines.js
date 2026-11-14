@@ -66,8 +66,8 @@ function tailEngine(id) {
 export function engineList() { return [{ id: "claude", label: "Claude", ready: true }, { id: "deepseek", label: "DeepSeek", ready: ready() }]; }
 
 // ───── query() options per engine ─────
-// Credentials and provider switches a DeepSeek chat must not inherit (it gets its own below).
-const STRIP = /^(ANTHROPIC_|CLAUDE_CODE_OAUTH_TOKEN$|CLAUDE_CONFIG_DIR$|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)$|AWS_BEARER_TOKEN)/;
+// Credentials and provider switches a DeepSeek chat must not inherit (it gets its own below), including test mode's.
+const STRIP = /^(ANTHROPIC_|CLAUDE_CODE_OAUTH_TOKEN$|CLAUDE_CONFIG_DIR$|CLAUDE_CODE_USE_(BEDROCK|VERTEX|FOUNDRY)$|AWS_BEARER_TOKEN|PA_TEST_ANTHROPIC_)/;
 
 /**
  * Extra query() options for a chat's engine (`s` is the LiveSession; for DeepSeek this issues `s.proxyToken`):
