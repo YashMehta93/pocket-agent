@@ -178,9 +178,23 @@ export function getLive(sessionId) {
   return s;
 }
 
-/** Opens (or returns) the live session for a chat; resumes it if it exists on disk. */
-export async function openSession({ sessionId, cwd, model, effort, permissionMode, title }) {
-  if (sessionId && live.has(sessionId)) return live.get(sessionId);
+/** Opens being started right now: sessionId -> Promise<LiveSession>. */
+const opening = new Map();
+
+/**
+ * Opens (or returns) the live session for a chat; resumes it if it exists on disk.
+ * Two requests for the same chat at once (a double tap, a send racing a reconnect) share one open:
+ * otherwise both pass the "is it live?" check, and two Claude processes write to the same transcript.
+ */
+export function openSession(m) {
+  const id = m.sessionId;
+  if (id && live.has(id)) return Promise.resolve(live.get(id));
+  if (id && opening.has(id)) return opening.get(id);
+  const p = startSession(m);
+  if (id) { opening.set(id, p); p.then(() => opening.delete(id), () => opening.delete(id)); }
+  return p;
+}
+async function startSession({ sessionId, cwd, model, effort, permissionMode, title }) {
   let resume = false;
   if (sessionId) {
     const info = await getSessionInfo(sessionId).catch(() => undefined);
