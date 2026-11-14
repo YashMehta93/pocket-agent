@@ -453,8 +453,10 @@ pre.has-btns { position: relative; padding-top: 34px; }
 :root { --ds: #4B44A8; --ds-bg: #ECEBFA; }
 :root[data-theme="dark"] { --ds: #B9B4F4; --ds-bg: #28263C; }
 .chip.engine-ds { color: var(--ds); background: var(--ds-bg); border-color: transparent; }
-/* the chips take the room between the clip and the mic; with large text they wrap to a second line instead of being cut */
-#composer .chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+/* the chips take the room between the clip and the mic; with large text they wrap inside their own group instead of being cut */
+#composer .chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+/* when the chips take a second line, the clip, mic and send stay on the first one, at the row's ends */
+#composer .row > #btn-attach, #composer .row > #btn-mic, #composer .row > #btn-send { align-self: flex-start; }
 .chip.danger { color: var(--red); background: var(--red-bg); border-color: transparent; }
 /* the approval sheet for a handoff */
 .dl-title { font-size: 15px; font-weight: 500; color: var(--text); margin: -6px 0 2px; overflow-wrap: anywhere; }
@@ -508,6 +510,8 @@ body.tab-agents #chat, body.tab-agents #composer, body.tab-agents #todo-bar, bod
 .ag-st.needs { color: var(--yellow); font-weight: 500; } .ag-st.bad { color: var(--red); }
 .ag-meta { display: block; margin-top: 3px; font: 11.5px/1.5 var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
 .ag-meta span, .ag-hmeta span { white-space: nowrap; }
+/* a meta line breaks only between its parts, never inside one, and the " · " stays on the line before */
+.meta-part { white-space: nowrap; }
 /* an agent's page: what it's doing and its numbers stay on top, with Stop and Open as chat; then its conversation */
 #page-title.ltr { direction: ltr; }
 .ag-page .ag-head { position: sticky; top: 0; z-index: 1; padding: 10px 18px 10px; border-bottom: 1px solid var(--line); background: var(--bg); }

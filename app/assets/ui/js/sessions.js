@@ -69,7 +69,7 @@ function kidsBlock(parent, arr) {
   const open = state.openKids.has(parent), states = arr.map(s => sessionState(s.sessionId));
   const needs = states.filter(x => x === "waiting").length, busy = states.filter(x => x === "running" || x === "starting").length;
   const box = h(`<div class="sess-kids${open ? " open" : ""}"><button class="kids-toggle" aria-expanded="${open}"><span class="kt-chev" aria-hidden="true">›</span>
-    <span class="kt-n">${arr.length} worker${arr.length === 1 ? "" : "s"}</span>${needs ? `<span class="kt-st needs"> · ${needs} need${needs === 1 ? "s" : ""} you</span>` : busy ? `<span class="kt-st"> · ${busy} working</span>` : ""}</button>
+    <span class="meta-part kt-n">${arr.length} worker${arr.length === 1 ? "" : "s"}</span>${needs ? `<span class="meta-sep"> · </span><span class="meta-part kt-st needs">${needs} need${needs === 1 ? "s" : ""} you</span>` : busy ? `<span class="meta-sep"> · </span><span class="meta-part kt-st">${busy} working</span>` : ""}</button>
     <div class="kids-list"></div></div>`);
   if (open) for (const s of arr) box.querySelector(".kids-list").append(sessRow(s, true));
   box.querySelector(".kids-toggle").onclick = () => { if (state.openKids.has(parent)) state.openKids.delete(parent); else state.openKids.add(parent); renderSessions(); };

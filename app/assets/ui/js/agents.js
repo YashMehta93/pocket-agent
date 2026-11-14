@@ -82,7 +82,7 @@ function agentMetaParts(a) {
 }
 const agentMeta = a => agentMetaParts(a).join(" · ");
 /** The same as HTML: each item stays on one line, so a long line wraps between them. */
-const agentMetaHtml = (a, extra = []) => agentMetaParts(a).concat(extra).map(x => `<span>${esc(x)}</span>`).join(" · ");
+const agentMetaHtml = (a, extra = []) => agentMetaParts(a).concat(extra).map(x => `<span class="meta-part">${esc(x)}</span>`).join(`<span class="meta-sep"> ·</span> `);
 function agentGlyph(a) {
   return AG_ACTIVE.has(a.status) && a.status !== "needs you" ? '<span class="spark"></span>' : a.status === "needs you" ? '<i class="ag-dot"></i>' : icon(a.status === "done" ? "check" : "x");
 }
