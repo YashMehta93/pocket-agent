@@ -172,7 +172,8 @@ try {
 
     // a chat's own model and permission mode survive its process closing and the server restarting
     const ws2 = new WebSocket(`ws://127.0.0.1:8769/ws?token=${token}`); await new Promise(r => ws2.on("open", r));
-    let n2 = 0; const call2 = (t, m = {}) => new Promise(res => { const id = ++n2; const h = raw => { const x = JSON.parse(raw); if (x.t === "reply" && x.id === id) { ws2.off("message", h); res(x); } }; ws2.on("message", h); ws2.send(JSON.stringify({ t, id, ...m })); });
+    // args before the request id: an argument of its own called "id" (accounts.*) must not overwrite it
+    let n2 = 0; const call2 = (t, m = {}) => new Promise(res => { const id = ++n2; const h = raw => { const x = JSON.parse(raw); if (x.t === "reply" && x.id === id) { ws2.off("message", h); res(x); } }; ws2.on("message", h); ws2.send(JSON.stringify({ ...m, t, id })); });
     await call2("set", { sessionId: "chat-closed-1", model: "claude-opus-5-5", permissionMode: "bypassPermissions" });
     await call2("set", { sessionId: "chat-closed-1", effort: "high" });
     const sub = await call2("subscribe", { sessionId: "chat-closed-1", after: 0 });
@@ -181,10 +182,32 @@ try {
     ok("and saved to disk, so they survive a restart", onDisk?.permissionMode === "bypassPermissions");
     const other = await call2("subscribe", { sessionId: "chat-never-set", after: 0 });
     ok("a chat with nothing remembered gets no settings (the defaults apply)", other.settings === null);
+
+    // several Claude accounts: each chat runs on one, and its choice is saved
+    const acctList0 = await call2("accounts.list");
+    ok("accounts.list has only the default account", acctList0.accounts?.length === 1 && acctList0.accounts[0].id === "default" && acctList0.defaultAccount === "default");
+    const added = await call2("accounts.add", { name: "Work" });
+    const acct = added.account?.id;
+    ok("a new account gets a slugged id", typeof acct === "string" && acct.startsWith("work-"), acct || "");
+    const acctList1 = await call2("accounts.list");
+    ok("accounts.list now has two, with their usage", acctList1.accounts?.length === 2 && acctList1.accounts.some(a => a.id === acct) && !!acctList1.usageByAccount);
+    const acctSet = await call2("chat.account", { sessionId: "chat-acct-1", account: acct });
+    ok("a chat can run on another account", !acctSet.error, acctSet.error || "");
+    const prefsNow = JSON.parse(fs.readFileSync(path.join(process.env.PA_DATA, "prefs.json"), "utf8"));
+    ok("the chat's account is saved for a restart", prefsNow.chatAccount?.["chat-acct-1"] === acct);
+    const acctSub = await call2("subscribe", { sessionId: "chat-acct-1", after: 0 });
+    ok("a chat that isn't open yet says its account", acctSub.account === acct, acctSub.account || "");
+    const acctDefault = await call2("accounts.setDefault", { account: acct });
+    ok("new chats can default to the account", acctDefault.accounts?.find(a => a.id === acct)?.default === true, acctDefault.error || "");
+    const acctList2 = await call2("accounts.list");
+    ok("accounts.list says which account new chats use", acctList2.defaultAccount === acct);
+    const acctRemoved = await call2("accounts.remove", { account: acct });
+    const acctList3 = await call2("accounts.list");
+    ok("removing an account leaves the default one", acctRemoved.accounts?.length === 1 && acctList3.accounts.length === 1 && acctList3.defaultAccount === "default");
     ws2.close();
 
     // usage limits: from the rate_limit_event every reply carries (0–1, Unix seconds) and from Claude Code's /usage data (0–100, ISO)
-    const { noteRateLimit, refreshUsage, getUsage } = await import("../src/usage.js");
+    const { noteRateLimit, refreshUsage, getUsage, getAllUsage } = await import("../src/usage.js");
     noteRateLimit({ status: "allowed_warning", resetsAt: 1794658200, rateLimitType: "five_hour", utilization: 0.91,
       unifiedWindows: { five_hour: { utilization: 0.91, resetsAt: 1794658200, status: "allowed_warning" }, seven_day: { utilization: 0.64, resetsAt: 1794909600, status: "allowed" } } });
     const ev1 = getUsage();
@@ -214,6 +237,11 @@ try {
     const u2 = await refreshUsage(q2, { asked: true });
     ok("no 5-hour window from the service shows as 0%, the week as reported", u2?.windows?.five_hour?.used === 0 && u2.windows.seven_day.used === 72 && u2.account === "two@example.com");
     delete C.account;
+
+    // usage is per account: an extra account's numbers never mix with the default one's
+    noteRateLimit({ status: "allowed", unifiedWindows: { seven_day: { utilization: 0.3, resetsAt: 1795024800, status: "allowed" } } }, "acct-x");
+    ok("a rate limit updates the account it came from", getUsage("acct-x")?.windows?.seven_day?.used === 30, JSON.stringify(getUsage("acct-x")?.windows?.seven_day));
+    ok("getAllUsage lists every account's numbers", !!getAllUsage()["acct-x"] && !!getAllUsage().default);
 
     // after an unexpected stop, chats that were mid-reply continue: only right after it, once an hour, and not when turned off
     const { continueInterrupted, clearWorking } = await import("../src/live-session.js");

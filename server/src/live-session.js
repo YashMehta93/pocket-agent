@@ -32,6 +32,7 @@ import { noteRateLimit, refreshUsage, accountChanged } from "./usage.js";
 import { phoneContext } from "./devtools.js";
 import { engineOptions, engineOf, recordEngine, linkOf, recordLink, detectEngine } from "./engines.js";
 import { ready as dsReady, revokeToken, requireReady, checkFolder, dsModel, isDeepseekModel, dsSettings, chatSpend } from "./deepseek.js";
+import { accountOf, accountEnv, setChatAccount } from "./accounts.js";
 
 let toolProvider = () => undefined;
 /** delegate.js registers Pocket Agent's own MCP tools here, which keeps the import one-way (no cycle). */
@@ -81,6 +82,7 @@ export class LiveSession {
     if (effort) options.effort = effort;
     if (resume) options.resume = sessionId; else { options.sessionId = sessionId; if (title) options.title = title; }
     Object.assign(options, engineOptions(this));   // DeepSeek: its config dir, env, model, the tripwire (engines.js)
+    if (this.engine !== "deepseek") { this.account = accountOf(sessionId); if (this.account !== "default") options.env = accountEnv(this.account); }   // an extra Claude account: its own login folder
     try { const servers = toolProvider(this); if (servers) options.mcpServers = servers; }
     catch (e) { log("pocket tools not added:", e?.message); }
     this.q = query({ prompt: this.inbox, options });
@@ -116,7 +118,8 @@ export class LiveSession {
     return { sessionId: this.sessionId, cwd: this.cwd, state: this.state, seq: this.seq, model: this.model, effort: this.effort,
       permissionMode: this.permissionMode, title: this.title, pending: [...this.pending.values()].map(p => p.info),
       activity: this.activity.snapshot(), tasks: [...this.tasks.values()],
-      engine: this.engine, parent: this.link?.parent || null, ...(this.engine === "deepseek" ? { spend: chatSpend(this.sessionId)?.usd ?? 0 } : {}),
+      engine: this.engine, parent: this.link?.parent || null, account: this.account || "default",
+      ...(this.engine === "deepseek" ? { spend: chatSpend(this.sessionId)?.usd ?? 0 } : {}),
       ...(this.allowAll ? { allowAll: true } : {}) };
   }
   /** Resolves with the result that ends the current (or next) turn; { type: "result", subtype: "closed" } if the chat closes first. */
@@ -149,7 +152,12 @@ export class LiveSession {
         } else if (m.type === "system" && /^task_(started|progress|notification)$/.test(m.subtype || "")) {
           this.noteTask(m);
         } else if (m.type === "rate_limit_event") {
-          if (this.engine !== "deepseek") noteRateLimit(m.rate_limit_info);
+          if (this.engine !== "deepseek") {
+            noteRateLimit(m.rate_limit_info, this.account || "default");
+            // the account is at its limit: the app offers "continue on another account"
+            if (m.rate_limit_info?.status === "rejected") broadcastAll({ t: "account.limit", sessionId: this.sessionId, account: this.account || "default",
+              limit: m.rate_limit_info.rateLimitType || null, resetsAt: m.rate_limit_info.resetsAt ? m.rate_limit_info.resetsAt * 1000 : null });
+          }
         } else if (m.type === "result") {
           this.allowAll = false;   // "Allow all for this worker" lasts until the worker's turn ends; a follow-up asks again
           if (this.state !== "waiting") this.setState("idle");
@@ -182,12 +190,15 @@ export class LiveSession {
     try {
       const [commands, models] = await Promise.all([this.q.supportedCommands(), this.q.supportedModels()]);
       Object.assign(cache, { commands, models });
-      const before = cache.account?.email || null;
-      try { cache.account = await this.q.accountInfo(); } catch {}
-      if (before && cache.account?.email && before !== cache.account.email) accountChanged();   // signed in to another Claude account
+      // cache.account is the default login's: another account's email must not hide (or clear) the default's usage
+      if ((this.account || "default") === "default") {
+        const before = cache.account?.email || null;
+        try { cache.account = await this.q.accountInfo(); } catch {}
+        if (before && cache.account?.email && before !== cache.account.email) accountChanged();   // signed in to another Claude account
+      }
       saveCache();
       broadcastAll({ t: "meta", commands: cache.commands, models: cache.models, account: cache.account });
-      refreshUsage(this.q).catch(() => {});
+      refreshUsage(this.q, { account: this.account || "default" }).catch(() => {});
     } catch (e) { log("meta failed", e?.message); }
   }
 
@@ -325,7 +336,7 @@ export function checkEngine(actual, wanted) {
   const name = e => e === "deepseek" ? "DeepSeek" : "Claude";
   throw Object.assign(new Error(`This chat runs on ${name(actual)}. Start a new chat to use ${name(wanted)}.`), { code: "ENGINE_FIXED" });
 }
-async function startSession({ sessionId, cwd, model, effort, permissionMode, title, engine, link }) {
+async function startSession({ sessionId, cwd, model, effort, permissionMode, title, engine, link, account }) {
   if (engine != null && engine !== "claude" && engine !== "deepseek") throw new Error(`Unknown engine: ${String(engine).slice(0, 20)}`);
   let resume = false;
   if (sessionId) {
@@ -335,6 +346,7 @@ async function startSession({ sessionId, cwd, model, effort, permissionMode, tit
     if (busy) throw busyError(sessionId, busy);
   }
   sessionId = sessionId || crypto.randomUUID();
+  if (account) setChatAccount(sessionId, account);   // the chat's account, before its process starts on it
   cwd = cwd || prefs.defaults.cwd || HOME;
   if (!fs.existsSync(cwd)) throw new Error(`Folder not found: ${cwd}`);
   const d = prefs.defaults, kept = chatSettings(sessionId) || {};

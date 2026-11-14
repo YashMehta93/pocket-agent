@@ -102,6 +102,26 @@ The `deepseek` object (`hello`, `deepseek.*` replies, `deepseek` events):
 
 **Pocket Agent's own tools** (`mcp__pocket__…`, `mcpServer.source: "sdk"`, e.g. handing work to the other engine) ask in every permission mode except Bypass, where they're allowed without a `permission.request`. `permission.reply` with `always: true` on one means that chat doesn't ask for that tool again until it closes.
 
+## Accounts
+
+Several Claude logins in one app: each chat runs on one account, and they share the chat list, settings, skills and memory. `default` is `~/.claude`; the others are folders in the data directory with their own login (`server/src/accounts.js`).
+
+| `t` | Args | Reply |
+|---|---|---|
+| `accounts.list` | | `accounts[{ id, name, email, plan, default }]` (default first), `defaultAccount`, `usageByAccount` (each account's usage, as `hello.usage`) |
+| `accounts.add` | `name` | `account: { id, name, email, plan }`; the id is slugged from the name (`work-1a2b`) |
+| `accounts.login.start` | `account` | `url`: Claude's sign-in link; open it, then send the code back |
+| `accounts.login.code` | `account, code` | `status: { loggedIn, email, plan }` |
+| `accounts.status` | `account` | `status: { loggedIn, email, plan }` |
+| `accounts.rename` | `account, name` | `accounts[]` |
+| `accounts.setDefault` | `account` | `accounts[]`: the account new chats use |
+| `accounts.remove` | `account` | `accounts[]`; its chats fall back to the default account |
+| `chat.account` | `sessionId, account` | moves the chat to that account: a running chat closes and reopens there on the next message (the transcript is shared) |
+
+The account id goes in `account`, because over the WebSocket `id` is the request id (the handlers also accept `id` as an alias when called directly, e.g. from tests).
+
+`hello` adds `accounts`, `defaultAccount` and `usageByAccount` (and keeps `usage`: the default account's). A `{ t: "usage", usage, account }` event says which account's numbers changed. `{ t: "accounts", accounts, defaultAccount }` says the list changed (after add, sign-in, rename, setDefault or remove). `{ t: "account.limit", sessionId, account, limit: five_hour|seven_day|null, resetsAt }` (`resetsAt` in ms) means the account hit a limit, so the app can offer continuing the chat on another one. `info` and the `subscribe` reply include the chat's `account`.
+
 ## SSE `/events?v=2&api=<n>&token=` (Android background service)
 
 The app is a generic shell: the server decides what to show and do.

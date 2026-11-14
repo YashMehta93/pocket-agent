@@ -14,11 +14,16 @@ import { runMigration, migrationStatus } from "./migrate.js";
 import { createBackup, listBackups, restoreBackup, BACKUP_DIR } from "./backup.js";
 import { installCommand } from "./termux.js";
 import { listServices, addService, removeService, setServiceEnabled, restartService, serviceLogs } from "./services.js";
-import { getUsage, refreshUsage } from "./usage.js";
+import { getUsage, getAllUsage, refreshUsage } from "./usage.js";
+import { listAccounts, addAccount, renameAccount, removeAccount, setDefaultAccount, setChatAccount, loginStart, loginCode, authStatus, accountOf } from "./accounts.js";
 import { engineOf, copyEngine, forget, linkOf, engineList } from "./engines.js";
 import { status as dsStatus, balance as dsBalance, setKey as dsSetKey, removeKey as dsRemoveKey, setDsSettings, chatSpend, isDeepseekModel, dsModel } from "./deepseek.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
+/** The account list for a reply or the "accounts" broadcast (each account's usage is a separate, slower question). */
+const accountsInfo = () => ({ accounts: listAccounts(), defaultAccount: prefs.defaultAccount || "default" });
+/** An account's id in a request: `account` over the WebSocket, where `id` is the request id (`id` works for direct calls). */
+const acctId = m => m.account || m.id;
 /** A worker's latest run, from its link record (delegate.js): when it started, toolUseId, and once it ended, how. */
 const workerRun = l => ({ at: l.at || null, toolUseId: l.toolUseId || null, runAt: l.runAt || null, result: l.result || null,
   steps: l.steps ?? null, ms: l.ms ?? null, usd: l.usd ?? null, endedAt: l.endedAt || null });
@@ -38,6 +43,7 @@ export const handlers = {
     if (Number.isFinite(tzOffset) && tzOffset >= -900 && tzOffset <= 900 && prefs.tzOffset !== tzOffset) { prefs.tzOffset = tzOffset; savePrefs(); }
     return { version: VERSION, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
       defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account, usage: getUsage(),
+      accounts: listAccounts(), defaultAccount: prefs.defaultAccount || "default", usageByAccount: getAllUsage(),
       updateChannel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null,
       updateKind: prefs.updateChannel ? (prefs.updateChannel.github ? "github" : prefs.updateChannel.path ? "path" : "server") : null,
       githubToken: !!prefs.updateChannel?.token, defaultRepo: DEFAULT_REPO, mode: process.env.PA_MODE || "server", devRepo: devRepo(), updateTrack: prefs.updateTrack || { track: "stable" },
@@ -71,9 +77,27 @@ export const handlers = {
 
   // ───── usage limits ─────
   async "usage.get"({ refresh } = {}) {
-    const s = [...live.values()].find(x => x.q && x.state !== "closed" && x.engine !== "deepseek");   // a DeepSeek chat has no Claude login
-    return { usage: refresh ? await refreshUsage(s?.q, { asked: true }) : getUsage(), live: !!s };
+    // the chat must run on the default account: another account's login answers with its own numbers
+    const s = [...live.values()].find(x => x.q && x.state !== "closed" && x.engine !== "deepseek" && (x.account || "default") === "default");
+    return { usage: refresh ? await refreshUsage(s?.q, { asked: true, account: "default" }) : getUsage(), live: !!s };
   },
+
+  // ───── Claude accounts: each chat runs on one, each has its own usage ─────
+  async "accounts.list"() { return { ...accountsInfo(), usageByAccount: getAllUsage() }; },
+  async "accounts.add"({ name } = {}) { return { account: addAccount(String(name || "")) }; },
+  /** Sign-in runs in the server (accounts.js), so it needs no APK: the app opens the URL, then sends the code. */
+  async "accounts.login.start"(m = {}) { return { url: await loginStart(acctId(m)) }; },
+  async "accounts.login.code"(m = {}) {
+    const status = await loginCode(acctId(m), String(m.code || ""));
+    broadcastAll({ t: "accounts", ...accountsInfo() });
+    return { status };
+  },
+  async "accounts.status"(m = {}) { return { status: await authStatus(acctId(m)) }; },
+  async "accounts.rename"(m = {}) { renameAccount(acctId(m), m.name); broadcastAll({ t: "accounts", ...accountsInfo() }); return { accounts: listAccounts() }; },
+  async "accounts.setDefault"(m = {}) { setDefaultAccount(acctId(m)); broadcastAll({ t: "accounts", ...accountsInfo() }); return { accounts: listAccounts() }; },
+  async "accounts.remove"(m = {}) { removeAccount(acctId(m)); broadcastAll({ t: "accounts", ...accountsInfo() }); return { accounts: listAccounts() }; },
+  /** Continue a chat on another account: its process closes, and the next message reopens it there (history is shared). */
+  async "chat.account"({ sessionId, account } = {}) { setChatAccount(sessionId, account); live.get(sessionId)?.close(); return {}; },
 
   // ───── live sessions ─────
   // (`link` is the server's own: only delegate.js makes worker chats)
@@ -82,7 +106,8 @@ export const handlers = {
     ws.subs.add(sessionId);
     const s = live.get(sessionId);
     return { sessionId, info: s ? s.info() : null, events: s ? s.buffer.filter(e => e.seq > after) : [], settings: chatSettings(sessionId),
-      engine: s?.engine || engineOf(sessionId) || "claude", parent: s?.link?.parent || linkOf(sessionId)?.parent || null };
+      engine: s?.engine || engineOf(sessionId) || "claude", parent: s?.link?.parent || linkOf(sessionId)?.parent || null,
+      account: accountOf(sessionId) };
   },
   async unsubscribe({ sessionId }, ws) { ws.subs.delete(sessionId); return {}; },
   async send(m, ws) {
