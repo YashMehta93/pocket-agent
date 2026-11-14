@@ -352,16 +352,17 @@ function linkRow(id, l) {
     + `<span class="lk-st ${st.replace(" ", "-")}"><span class="lk-sep"> · </span>${esc(st)}</span><span class="chev" aria-hidden="true">›</span></button>`;
 }
 /** Below the header: the workers this chat started, or, in a worker, the chat that started it. Kept short: a row for each
- *  worker at work (two at most) or else the latest one, and one "+N more" row for the rest, which lists them all. */
+ *  worker at work (two at most) or else the latest one, and one row for the rest: that one, or "+N more", which lists them all. */
 function renderLinksBar() {
   const bar = $("#links-bar");
   if (!bar) return;
   const cur = state.current, rows = [];
   if (cur && !cur.isNew) {
     const links = dsLinks(), mine = links[cur.sessionId];
-    if (mine) rows.push(`<button class="lk-row lk-from" data-open="${esc(mine.parent)}"><span class="lk-ic">${icon("back")}</span><span class="lk-t">From: <span class="lk-ti">${esc(dsChatTitle(mine.parent) || "the chat that started it")}</span></span><span class="chev" aria-hidden="true">›</span></button>`);
+    if (mine) rows.push(`<button class="lk-row lk-from" data-open="${esc(mine.parent)}"><span class="lk-ic">${icon("undo")}</span><span class="lk-t">From: <span class="lk-ti">${esc(dsChatTitle(mine.parent) || "the chat that started it")}</span></span><span class="chev" aria-hidden="true">›</span></button>`);
     const kids = dsKids(cur.sessionId, links), busy = kids.filter(([id, l]) => LINK_RANK[dsLinkState(id, l)] < 3);
-    const shown = busy.length ? busy.slice(0, 2) : kids.slice(0, 1);
+    let shown = busy.length ? busy.slice(0, 2) : kids.slice(0, 1);
+    if (kids.length === shown.length + 1) shown = kids.slice(0, shown.length + 1);
     for (const [id, l] of shown) rows.push(linkRow(id, l));
     if (kids.length > shown.length) rows.push(`<button class="lk-row lk-more" data-more="1"><span class="lk-ic">${icon("list")}</span><span class="lk-t">+${kids.length - shown.length} more worker chat${kids.length - shown.length === 1 ? "" : "s"}</span><span class="chev" aria-hidden="true">›</span></button>`);
   }
@@ -405,19 +406,19 @@ function dsWorkerMode(parent, ds) {
 function delegationSheet(p) {
   const inp = p.input || {}, ds = p.toolName === DS_TOOL, parent = state.liveInfo[p.sessionId] || {};
   const folder = shortPath(inp.cwd || parent.cwd || state.current?.cwd || ""), mode = dsWorkerMode(parent, ds);
-  const sp = state.deepseek?.spend;
+  const sp = state.deepseek?.spend, title = inp.title && inp.title !== dsFirstLine(inp.task) ? inp.title : "";
   let line = inp.continue_chat ? `Follow-up to ${dsChatTitle(inp.continue_chat) || "a worker chat"} · ${mode}`
     : ds ? ["New DeepSeek chat", folder, dsShortModel(inp.model === "pro" ? "deepseek-v4-pro" : inp.model === "flash" ? "deepseek-flash" : dsDefaultModel()), mode].join(" · ")
     : ["New Claude chat", folder, (inp.model || "opus")[0].toUpperCase() + (inp.model || "opus").slice(1), mode, "uses your Claude plan"].join(" · ");
   if (ds && sp) line += ` · today ${dsMoney(sp.today || 0)}${sp.cap ? " of " + dsCap(sp.cap) : ""}`;
   const b = sheet.open(`<h2>${ds ? "Send this to DeepSeek?" : "Ask Claude?"}</h2><div class="sub" id="dl-line"></div>
-    ${inp.title ? `<div class="dl-title" id="dl-title"></div>` : ""}<div class="perm-detail md dl-task" id="dl-task"></div>
+    ${title ? `<div class="dl-title" id="dl-title"></div>` : ""}<div class="perm-detail md dl-task" id="dl-task"></div>
     <div class="btns"><button class="btn primary" data-a="allow">${ds ? "Send to DeepSeek" : "Ask Claude"}</button>
     <button class="btn" data-a="always">${ds ? "Send" : "Ask"}, and don't ask again in this chat</button>
     <div class="btns row2" style="margin-top:0"><button class="btn danger" data-a="deny">Deny</button><button class="btn ghost" data-a="tell">Deny & say why</button></div></div>`,
   { key: "perm:" + p.requestId });
   b.querySelector("#dl-line").textContent = line;
-  if (inp.title) b.querySelector("#dl-title").textContent = inp.title;
+  if (title) b.querySelector("#dl-title").textContent = title;
   setMd(b.querySelector("#dl-task"), inp.task || "");
   const reply = async (behavior, extra = {}) => {
     haptic("tick"); sheet.close(true);

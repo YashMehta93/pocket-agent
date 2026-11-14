@@ -151,7 +151,7 @@ ev(`newChat(state.home); state.current.isNew = false; state.current.sessionId = 
   showNextPermission()`);
 ok(`the sheet asks "${text("#sheet h2")}"`, text("#sheet h2") === "Send this to DeepSeek?" && ev("sheet.key") === "perm:r-ds-1");
 ok(`it says where and how the worker runs: "${text("#dl-line")}"`, text("#dl-line") === "New DeepSeek chat · ~/projects/demo · Flash · Auto-edit · today $0.12");
-ok("the task is shown as Markdown", $("#dl-task h1")?.textContent === "Add the CONTRIBUTORS file" && $$("#dl-task li").length === 2 && $("#dl-task code") !== null);
+ok("the task is shown as Markdown, its title once", !$("#dl-title") && $("#dl-task h1")?.textContent === "Add the CONTRIBUTORS file" && $$("#dl-task li").length === 2 && $("#dl-task code") !== null);
 ev("sheet.close(true); state.liveInfo[state.current.sessionId].permissionMode = 'auto'; showNextPermission()");
 ok("a DeepSeek worker of an Auto chat runs in Auto-edit (DeepSeek has no Auto)", / · Flash · Auto-edit · /.test(text("#dl-line")));
 ev("sheet.close(true); state.liveInfo[state.current.sessionId].permissionMode = 'bypassPermissions'; state.deepseek.settings.workerMode = 'default'; showNextPermission()");

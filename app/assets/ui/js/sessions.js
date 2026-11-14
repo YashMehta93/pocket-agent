@@ -40,7 +40,7 @@ function renderSessions() {
       row.querySelector(".t div").textContent = s.title || s.firstPrompt || "Untitled";
       // DeepSeek chats and worker chats (started by another chat) say so
       const eng = s.parent ? ` · ${s.engine === "deepseek" ? "DeepSeek" : "Claude"} worker` : s.engine === "deepseek" ? " · DeepSeek" : "";
-      row.querySelector(".meta").textContent = `${baseName(s.cwd)} · ${relTime(s.lastModified)}${eng}${st === "waiting" ? " · needs approval" : st === "running" ? " · working" : s.elsewhere ? " · open in Termux" : ""}`;
+      row.querySelector(".meta").textContent = `${baseName(s.cwd)} · ${relTime(s.lastModified)}${st === "waiting" ? " · needs approval" : st === "running" ? " · working" : s.elsewhere ? " · open in Termux" : ""}${eng}`;
       row.onclick = () => { closeDrawer(); openSession(s.sessionId); };
       longPress(row, () => sessionMenu(s));
       list.append(row);

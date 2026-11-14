@@ -97,8 +97,8 @@ async function openUsage() {
         + usageRow(["Context window", { used: Math.round(ctx.percentage), level: ctx.percentage >= 90 ? "warn" : "", resetsAt: null }], true).replace("</small>", ` ${icon("down")}</small>`)
         + `<span class="u-sub">${fmtTok(ctx.totalTokens)} of ${fmtTok(ctx.maxTokens)} tokens${ctx.estimated ? " · from the last reply" : ""}</span></button>`
         + (open ? `<div class="u-cats">${cats.map(c => `<div class="ctx-row"><span><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span><span>${fmtTok(c.tokens)}</span></div>`).join("")}<button class="chip" id="u-compact">Compact this chat now</button></div>` : "") : "")
-      + (pace ? `<p class="u-pace">${icon("info")}<span>Heads up. ${esc(pace)}</span></p>` : "")
       + (ds ? dsUsageHtml(cur) : "")
+      + (pace ? `<p class="u-pace">${icon("info")}<span>Heads up. ${esc(pace)}</span></p>` : "")
       + `<h3 class="u-sec">Plan limits</h3>`
       + (rows.length ? `<div class="u-list">${rows.map(r => usageRow(r, true)).join("")}</div>` : `<p class="u-foot">Nothing yet: the numbers come with Claude's replies. Send a message, then look again.</p>`)
       + `<p class="u-foot">Limits count everything on this Claude account: this phone, your computers and claude.ai.</p>`;
