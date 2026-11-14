@@ -6,7 +6,7 @@ import path from "node:path";
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, deleteSession, forkSession } from "@anthropic-ai/claude-agent-sdk";
 import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache, saveCache, githubRepo } from "./config.js";
 import { broadcastAll, callNative } from "./hub.js";
-import { live, getLive, openSession, busyElsewhere, runClaude, chatSettings, rememberChatSettings, clearWorking, taskTranscript } from "./live-session.js";
+import { live, getLive, openSession, busyElsewhere, runClaude, chatSettings, rememberChatSettings, clearWorking, taskTranscript, restartContinuing } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
 import { importSessions, checkUpdate, applyUpdate, sourceName, pickRelease, listReleases, releaseAsset, bundleInfo, clearReleaseCache } from "./transfer.js";
 import { runDevSetup, devSetupStatus, devRepo } from "./devtools.js";
@@ -55,6 +55,8 @@ export const handlers = {
 
   /** Before a restart on purpose: replies it stops shouldn't continue afterwards. */
   async "working.clear"() { clearWorking(); return {}; },
+  /** Inside the app only (it restarts us): restart now; replies in progress continue afterwards. */
+  async "server.restartContinuing"() { if (!process.env.PA_SUPERVISED) throw new Error("Only inside the app"); restartContinuing(); return {}; },
 
   // ───── usage limits ─────
   async "usage.get"({ refresh } = {}) {

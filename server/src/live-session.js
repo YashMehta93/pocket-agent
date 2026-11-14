@@ -302,12 +302,19 @@ export const anyBusy = () => [...live.values()].some(s => s.state === "running" 
 // Those chats get a message asking Claude to continue: at most once per chat an hour, and only right after the stop.
 const WORKING = path.join(DATA, "working.json");
 export const CONTINUE_TEXT = "[Pocket Agent] The app was closed while you were working (Android stopped it), so your last step and any background agents you started were cut off. Continue where you left off; restart background agents if they're still needed.";
+let holdWorking = false;   // set by restartContinuing(): the list must survive this shutdown
 function saveWorking() {
+  if (holdWorking) return;
   const ids = [...live.values()].filter(s => s.state === "running" || s.state === "waiting").map(s => s.sessionId);
   try { fs.writeFileSync(WORKING, JSON.stringify({ ids, at: Date.now() })); } catch {}
 }
 /** A stop on purpose (Settings → Restart, SIGTERM): nothing should continue afterwards. */
-export function clearWorking() { try { fs.rmSync(WORKING, { force: true }); } catch {} }
+export function clearWorking() { if (holdWorking) return; try { fs.rmSync(WORKING, { force: true }); } catch {} }
+/** Restart now, and continue the chats that are mid-reply once the server is back (e.g. to apply an update while Claude works). */
+export function restartContinuing() {
+  saveWorking(); holdWorking = true;
+  setTimeout(() => process.kill(process.pid, "SIGTERM"), 300);
+}
 export async function continueInterrupted() {
   let w; try { w = JSON.parse(fs.readFileSync(WORKING, "utf8")); } catch { return []; }
   fs.rmSync(WORKING, { force: true });
