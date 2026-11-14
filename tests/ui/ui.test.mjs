@@ -54,7 +54,15 @@ ok(`slash popup shows ${$$("#popup button").length} commands`, $$("#popup button
 ev(`input.value = ""; document.querySelector("#popup").hidden = true`);
 
 // pages
-ev("openSettings()"); ok("settings page opens", !$("#page").hidden && $$(".set-row").length > 5); ev("page.close()");
+ev("openSettings()"); ok(`settings home shows categories (${$$(".set-cat").length})`, !$("#page").hidden && $$(".set-cat").length >= 7 && $$("#page-body .set-row").length === 0);
+ev(`const q = document.querySelector("#set-q"); q.value = "theme"; q.dispatchEvent(new window.Event("input"))`);
+ok("search finds a setting across categories", $$("#set-results .set-item:not([hidden])").length >= 1 && $("#set-results").textContent.includes("Theme") && $("#set-home").hidden);
+ev(`const q = document.querySelector("#set-q"); q.value = "zzz-nothing"; q.dispatchEvent(new window.Event("input"))`);
+ok("search says when nothing matches", /No setting matches/.test($("#set-results").textContent));
+ev(`document.querySelector("#set-q").value = ""; document.querySelector("#set-q").dispatchEvent(new window.Event("input")); document.querySelector('[data-sec="look"]').click()`);
+ok("a category opens its own page with its controls", ev("document.querySelector('#page-title').textContent") === "Appearance" && $$("#page-body .set-row").length >= 3 && $$("#page-body #s-theme button").length === 3);
+ev(`document.querySelector('#s-theme button[data-v="dark"]').click()`); ok("a setting works from its category page", ev("settings.theme") === "dark"); ev(`settings.theme = "system"; saveSettings()`);
+ev("page.close()");
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");
 ev(`document.querySelector("#chip-model").click()`); ok("model sheet opens", ev("sheet.isOpen")); ev("sheet.close(true)");
