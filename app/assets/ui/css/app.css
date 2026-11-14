@@ -120,11 +120,22 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 .u-row.big + .u-row.big { margin-top: 18px; }
 .u-row.big .u-top { font-size: 15px; color: var(--text); } .u-row.big .u-top small { font-size: 13px; }
 .u-row.big .u-bar { height: 6px; border-radius: 3px; margin-top: 8px; }
-.u-list { margin: 18px 0 6px; }
 .u-foot { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 18px 0 4px; }
 #usage-note { max-width: 760px; width: 100%; margin: 0 auto 8px; padding: 0 4px; font: 12px/1.4 var(--mono); color: var(--text2); display: flex; gap: 8px; align-items: center; text-align: left; }
 #usage-note svg { width: 14px; height: 14px; flex: none; color: var(--yellow); }
 #usage-note.full svg { color: var(--red); }
+.u-head { display: flex; align-items: center; justify-content: space-between; } .u-head .icon-btn { margin-right: -10px; }
+.u-sec { font: 600 11px/1.4 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 22px 0 10px; }
+.u-ctx { display: block; width: 100%; text-align: left; } .u-ctx small svg { width: 13px; height: 13px; vertical-align: -2px; transition: transform .15s; }
+.u-ctx.open small svg { transform: rotate(180deg); }
+.u-sub { display: block; margin-top: 6px; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.u-cats { margin-top: 8px; } .u-cats .chip { margin-top: 12px; }
+.u-pace { display: flex; gap: 10px; align-items: flex-start; margin: 18px 0 0; padding: 11px 13px; border-radius: 8px; background: var(--yellow-bg); color: var(--text2); font-size: 13.5px; line-height: 1.45; }
+.u-pace svg { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--yellow); }
+.u-list { margin: 0 0 6px; }
+.usage-ring svg { width: 22px; height: 22px; } .usage-ring circle { fill: none; stroke-width: 2.6; }
+.usage-ring .track { stroke: var(--line2); } .usage-ring .fill { stroke: var(--muted); stroke-linecap: round; }
+.usage-ring.warn .fill { stroke: var(--yellow); } .usage-ring.full .fill { stroke: var(--red); }
 
 /* ───── main ───── */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; padding-top: var(--safe-t); position: relative; }

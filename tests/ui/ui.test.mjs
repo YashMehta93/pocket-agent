@@ -66,6 +66,7 @@ ev("page.close()");
 // usage limits: drawer meter, the note above the message box from 90%, the details sheet, the settings row
 ev(`state.usage = { windows: { five_hour: { used: 91, resetsAt: Date.now() + 3 * 3600e3 + 50 * 60e3, status: "allowed_warning" }, seven_day: { used: 64, resetsAt: Date.now() + 4 * 86400e3, status: "allowed" } }, models: [{ name: "Fable", used: 40, resetsAt: Date.now() + 4 * 86400e3 }], at: Date.now() }; renderUsage()`);
 ok("drawer shows the 5-hour and weekly limits", !$("#usage-meter").hidden && $$("#usage-meter .u-row").length === 2 && /91%.*resets in 3h \d+m/.test($("#usage-meter").textContent) && $("#usage-meter .u-row.warn") !== null);
+ok("a ring in the chat header shows the fuller limit", !$("#btn-usage").hidden && /5-hour limit 91% used/.test($("#btn-usage").getAttribute("aria-label")) && $("#btn-usage").classList.contains("warn"));
 ok("a note above the message box warns from 90%", !$("#usage-note").hidden && /91% of your 5-hour limit used · resets in 3h/.test($("#usage-note").textContent));
 ev("openUsage()"); ok("tapping opens every limit, per model too", ev("sheet.key") === "usage" && $$("#sheet .u-row").length === 3 && $("#sheet").textContent.includes("Week · Fable")); ev("sheet.close(true)");
 ev(`state.usage.windows.five_hour.resetsAt = Date.now() - 1000; renderUsage()`);

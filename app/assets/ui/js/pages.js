@@ -9,7 +9,7 @@ $("#btn-more").onclick = () => {
   menuSheet(null, [
     !cur.isNew && { label: "Rename", icon: "edit", run: () => renameSession(cur.sessionId, cur.title) },
     !cur.isNew && { label: state.pinned.includes(cur.sessionId) ? "Unpin" : "Pin", icon: "pin", run: async () => { const r = await conn.call("session.pin", { sessionId: cur.sessionId, pinned: !state.pinned.includes(cur.sessionId) }); state.pinned = r.pinned; renderSessions(); } },
-    live && { label: "Context usage", icon: "chart", run: showContext },
+    { label: "Usage and context", icon: "chart", run: openUsage },
     { label: "Commands & skills", icon: "bolt", run: showCommands },
     !cur.isNew && { label: "Fork this chat", icon: "fork", run: () => forkSession(cur.sessionId) },
     !cur.isNew && { label: "Export / share chat", icon: "share", run: () => shareText(`# ${cur.title}\n\n${chat.toMarkdown()}`, cur.title) },
@@ -19,17 +19,6 @@ $("#btn-more").onclick = () => {
   ]);
 };
 $("#title-wrap").onclick = () => { if (!state.current.isNew) renameSession(state.current.sessionId, state.current.title); };
-async function showContext() {
-  try {
-    const { usage: u } = await conn.call("session.context", { sessionId: state.current.sessionId });
-    const cats = (u.categories || []).filter(c => c.tokens > 0);
-    const b = sheet.open(`<h2>Context: ${Math.round(u.percentage)}% used</h2><div class="sub">${fmtTok(u.totalTokens)} of ${fmtTok(u.maxTokens)} tokens · ${esc(u.model || "")}</div>
-      <div class="ctx-bar">${cats.filter(c => c.kind !== "free").map(c => `<i style="width:${(c.tokens / u.maxTokens * 100).toFixed(2)}%;background:${esc(c.color)}"></i>`).join("")}</div>
-      ${cats.map(c => `<div class="ctx-row"><span><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span><span>${fmtTok(c.tokens)}</span></div>`).join("")}
-      <div class="btns"><button class="btn" id="ctx-compact">Compact conversation now</button></div>`);
-    b.querySelector("#ctx-compact").onclick = () => { sheet.close(true); send("/compact"); };
-  } catch (e) { toast(e.message); }
-}
 function showCommands() {
   page.open("Commands & skills", body => {
     const list = state.commands.slice().sort((a, b) => a.name.localeCompare(b.name));
