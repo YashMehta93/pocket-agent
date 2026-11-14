@@ -45,7 +45,7 @@ fi
 if [ "${PA_RELEASE_RULES_OFF:-}" = 1 ]; then echo "!! release rules SKIPPED (PA_RELEASE_RULES_OFF=1)"
 else GH="$(command -v gh || echo "$HOME/.local/bin/gh")" node scripts/release-policy.mjs "$VERSION" "$REPO" $($DRY && echo --report) || exit 1; fi
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && [ "$(git rev-list -n1 "$TAG")" != "$(git rev-parse HEAD)" ]; then
-  echo "$TAG already exists on another commit. Bump VERSION first (docs/RELEASES.md)."; exit 1; fi
+  echo "$TAG already exists on another commit. Bump VERSION first (docs/RELEASES.md)."; $DRY || exit 1; fi
 grep -q "^## $VERSION$" CHANGELOG.md || { echo "CHANGELOG.md has no '## $VERSION' section: add one in the release PR first."; $DRY || exit 1; }
 echo "== build $TAG"
 PA_RELEASE=1 bash build.sh >/dev/null
