@@ -16,7 +16,9 @@ import { startMock, parseDirectives } from "./mock-deepseek.mjs";
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
 const SERVER_PORT = 8771, MOCK_PORT = 8772;
 const KEY = "sk-test-deepseek";                 // the "real" DeepSeek key: only the server and the fake may ever see it
-const CLAUDE_KEY = "sk-test-claude-engine";     // what test-mode Claude chats send to the fake (PA_TEST_ANTHROPIC_KEY)
+// What test-mode Claude chats send to the fake (PA_TEST_ANTHROPIC_KEY). Not the DeepSeek key, as the spec had it: DeepSeek
+// chats inherit PA_TEST_ANTHROPIC_KEY, and their environment must be free of the DeepSeek key for the check below to mean anything.
+const CLAUDE_KEY = "sk-test-claude-engine";
 const DS_TOOL = "mcp__pocket__deepseek_task", CLAUDE_TOOL = "mcp__pocket__claude_task";
 const UNIT_ONLY = process.argv.includes("--unit");
 const CLAUDE_BIN = findClaude();                // before HOME changes: Claude Code lives in the real home
