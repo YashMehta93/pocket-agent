@@ -11,6 +11,7 @@ import { ensureDefaults } from "./devtools.js";
 import { startUpdateChecks } from "./autoupdate.js";
 import { ensureTrustedKeys } from "./signing.js";
 import { ROOT } from "./transfer.js";
+import { startServices, stopServices } from "./services.js";
 
 const server = createServer();
 if (ensureTrustedKeys(ROOT)) log("restored server/trusted-keys.json");   // see trusted-keys.default.js
@@ -20,9 +21,12 @@ if (process.env.PA_SUPERVISED) {
   if (prefs.updateChannel === undefined && DEFAULT_REPO) { prefs.updateChannel = { github: DEFAULT_REPO, token: "" }; savePrefs(); }
   startUpdateChecks();   // a notification when a new release is out (autoupdate.js)
 }
-server.listen(PORT, HOST, () => log(`pocket-agent server ${VERSION} on http://${HOST}:${PORT}`));
+server.listen(PORT, HOST, () => {
+  log(`pocket-agent server ${VERSION} on http://${HOST}:${PORT}`);
+  startServices();   // background services Android's process kills took down (services.js)
+});
 
-function shutdown() { for (const s of live.values()) s.close(); process.exit(0); }
+function shutdown() { stopServices(); for (const s of live.values()) s.close(); process.exit(0); }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 process.on("unhandledRejection", e => log("unhandled", e?.message || e));

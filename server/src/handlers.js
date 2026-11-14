@@ -13,6 +13,7 @@ import { runDevSetup, devSetupStatus, devRepo } from "./devtools.js";
 import { runMigration, migrationStatus } from "./migrate.js";
 import { createBackup, listBackups, restoreBackup, BACKUP_DIR } from "./backup.js";
 import { installCommand } from "./termux.js";
+import { listServices, addService, removeService, setServiceEnabled, restartService, serviceLogs } from "./services.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
 
@@ -149,6 +150,13 @@ export const handlers = {
     setTimeout(() => process.kill(process.pid, "SIGUSR2"), 500);   // reload restored preferences: restart when idle
     return r;
   },
+  // ───── background services kept running across app restarts (services.js) ─────
+  async "services.list"() { return { services: listServices() }; },
+  async "services.add"(m) { return { service: addService(m) }; },
+  async "services.remove"(m) { return removeService(m); },
+  async "services.enable"(m) { return setServiceEnabled(m); },
+  async "services.restart"(m) { return restartService(m); },
+  async "services.logs"(m) { return serviceLogs(m); },
   // ───── Termux (termux.js) ─────
   async "termux.installCommand"() { return installCommand(); },
 

@@ -2,6 +2,10 @@
 
 Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 
+## Unreleased
+
+- **Background services**: dev and preview servers started from chats used to die whenever Android killed the app. `pa-service add <name> -- <command>` registers one; Pocket Agent starts it with the server, restarts it (with backoff) if it exits, and stops it cleanly on shutdown. Claude is told to use it instead of `nohup`/`&`.
+
 ## 1.1.1
 
 - Updating from 1.0.0 through "An update is ready" left out the new trusted-keys file (1.0.0 copied only the files it knew), so the update was offered again and again, and signed releases were refused. The app now restores that file on start-up, updates copy every file the new code brings, and when an app update (APK) is available it's the only banner shown, since it includes the code.
