@@ -7,7 +7,7 @@
 function currentSettings() {
   const cur = state.current || {}; const li = state.liveInfo[cur.sessionId];
   return { model: li?.model ?? cur.model ?? state.defaults.model ?? null, effort: li?.effort ?? cur.effort ?? state.defaults.effort ?? null,
-    permissionMode: li?.permissionMode ?? cur.permissionMode ?? state.defaults.permissionMode ?? "default" };
+    permissionMode: li?.permissionMode ?? cur.permissionMode ?? state.defaults.permissionMode ?? "default", engine: typeof chatEngine === "function" ? chatEngine() : "claude" };
 }
 /** claude-opus-5-5 → "Opus 5.5" (also with a date or [1m] suffix). */
 function prettyModel(id) {
@@ -16,6 +16,7 @@ function prettyModel(id) {
 }
 /** The model's real name, never "Default": the default resolves to the model it stands for. */
 function modelLabel(id) {
+  if (/^deepseek-/i.test(id || "") && typeof dsModelName === "function") return dsModelName(id);   // "DeepSeek Flash"
   if (!id || id === "default") { const def = state.models.find(x => x.value === "default"); if (!def?.resolvedModel) return "Model"; id = def.resolvedModel; }
   const m = state.models.find(x => x.value !== "default" && (x.value === id || x.resolvedModel === id));
   return m ? m.displayName : prettyModel(id);
@@ -24,10 +25,15 @@ function updateComposer() {
   const s = currentSettings();
   const mode = MODES.find(m => m.id === s.permissionMode) || MODES[0];
   const chipMode = $("#chip-mode"); chipMode.textContent = mode.short; chipMode.classList.toggle("warn", !!mode.warn || mode.id === "auto");
-  $("#chip-model").textContent = modelLabel(s.model) + (s.effort ? " · " + s.effort : "");
+  // in a DeepSeek chat the engine chip already says DeepSeek, so the model chip says just "Flash" (the row stays short)
+  const dsChat = s.engine === "deepseek" && typeof dsShortModel === "function";
+  $("#chip-model").textContent = (dsChat ? dsShortModel(s.model || dsDefaultModel()) : modelLabel(s.model)) + (s.effort ? " · " + s.effort : "");
+  if (dsChat) $("#chip-model").setAttribute("aria-label", "Model: " + modelLabel(s.model || dsDefaultModel()) + (s.effort ? ", effort " + s.effort : ""));
+  else $("#chip-model").removeAttribute("aria-label");
+  if (typeof renderEngineChip === "function") renderEngineChip();
   const st = sessionState(state.current?.sessionId);
   const running = st === "running" || st === "waiting";
-  input.placeholder = running ? "Queue a message…" : "Message Claude…";
+  input.placeholder = running ? "Queue a message…" : s.engine === "deepseek" ? "Message DeepSeek…" : "Message Claude…";
   const send = $("#btn-send");
   const hasText = input.value.trim() || attachments.length;
   send.classList.toggle("stop", running && !hasText);
@@ -67,6 +73,7 @@ async function send(textOverride) {
   if (!conn.ok) return toast("Not connected to the server yet");
   haptic("tick");
   const images = attachments.filter(a => a.kind === "image").map(a => ({ mediaType: a.mediaType, data: a.data }));
+  let wasNew = false;
   const files = attachments.filter(a => a.kind === "file");
   try {
     if (files.length) {
@@ -81,13 +88,18 @@ async function send(textOverride) {
     const msg = { sessionId: cur.sessionId, text, images };
     // A new chat, or one whose process was closed (idle, restart): start it with what the composer shows.
     if (cur.isNew || !state.liveInfo[cur.sessionId]) Object.assign(msg, { model: s.model || undefined, effort: s.effort || undefined, permissionMode: s.permissionMode });
-    if (cur.isNew) msg.cwd = cur.cwd;
+    if (cur.isNew) { msg.cwd = cur.cwd; msg.engine = s.engine || "claude"; }
+    wasNew = cur.isNew;
     if (cur.isNew) { cur.isNew = false; cur.title = text.slice(0, 60); updateHeader(); }
     await conn.call("send", msg);
     scrollToBottom(true);
     debouncedRefresh();
   } catch (e) {
     if (e.code === "BUSY_ELSEWHERE") return busySheet(e, text, images);
+    if (/^(NO_DEEPSEEK_KEY|ENGINE_FIXED|FOLDER_BLOCKED)$/.test(e.code || "")) {
+      if (wasNew && cur === state.current) { cur.isNew = true; cur.title = "New chat"; updateHeader(); showEmpty(); }
+      restoreDraft(text); return toast(e.message, 5000);
+    }
     toast(e.message); chat.note("Couldn't send: " + e.message, true);
   }
 }
@@ -147,8 +159,9 @@ async function addFiles(files) {
     attachments.push({ kind: isImg ? "image" : "file", name: f.name, mediaType: f.type || "application/octet-stream", data, size: f.size });
   }
   renderAttachments(); updateComposer();
+  if (typeof dsImageNote === "function") dsImageNote();
 }
-callbacks.photo = p => { if (p?.data) { attachments.push({ kind: "image", name: p.name || "photo.jpg", mediaType: p.mediaType || "image/jpeg", data: p.data }); renderAttachments(); updateComposer(); } };
+callbacks.photo = p => { if (p?.data) { attachments.push({ kind: "image", name: p.name || "photo.jpg", mediaType: p.mediaType || "image/jpeg", data: p.data }); renderAttachments(); updateComposer(); if (typeof dsImageNote === "function") dsImageNote(); } };
 function renderAttachments() {
   const box = $("#attachments"); box.innerHTML = ""; box.hidden = !attachments.length;
   attachments.forEach((a, i) => {
@@ -222,18 +235,19 @@ function popupKey(e) {
 
 // ───────────── mode / model pickers ─────────────
 $("#chip-mode").onclick = () => {
-  const cur = currentSettings();
-  const b = sheet.open(`<h2>Permission mode</h2><div class="sub">How much Claude can do without asking.</div><div id="modes"></div>`);
-  for (const m of MODES) {
-    const o = h(`<button class="opt ${m.id === cur.permissionMode ? "on" : ""}">${icon(m.id === cur.permissionMode ? "ccheck" : "circle")}<div class="ot"><div>${esc(m.label)}</div><div class="od">${esc(m.desc)}</div></div></button>`);
+  const cur = currentSettings(), who = cur.engine === "deepseek" ? "DeepSeek" : "Claude";
+  const b = sheet.open(`<h2>Permission mode</h2><div class="sub">How much ${who} can do without asking.</div><div id="modes"></div>`);
+  for (const m of MODES.filter(m => m.id !== "auto" || cur.engine !== "deepseek")) {
+    const o = h(`<button class="opt ${m.id === cur.permissionMode ? "on" : ""}">${icon(m.id === cur.permissionMode ? "ccheck" : "circle")}<div class="ot"><div>${esc(m.label)}</div><div class="od">${esc(m.desc.replace(/^Claude\b/, who))}</div></div></button>`);
     o.onclick = async () => {
-      if (m.id === "bypassPermissions" && !await confirmSheet({ title: "Bypass all permissions?", text: "Claude will run any command and edit any file without asking.", ok: "Bypass", danger: true })) return;
+      if (m.id === "bypassPermissions" && !await confirmSheet({ title: "Bypass all permissions?", text: `${who} will run any command and edit any file without asking.`, ok: "Bypass", danger: true })) return;
       sheet.close(true); applySetting({ permissionMode: m.id });
     };
     b.querySelector("#modes").append(o);
   }
 };
 $("#chip-model").onclick = () => {
+  if (currentSettings().engine === "deepseek" && typeof dsModelSheet === "function") return dsModelSheet();
   const cur = currentSettings();
   const models = state.models.length ? state.models : [{ value: "", displayName: "Default", description: "Start a chat once to load the model list" }];
   const b = sheet.open(`<h2>Model</h2><div id="models"></div><h2 style="margin-top:16px">Effort</h2><div class="sub">Higher effort thinks longer and uses more of your limits.</div><div class="seg" id="efforts"></div>`);
