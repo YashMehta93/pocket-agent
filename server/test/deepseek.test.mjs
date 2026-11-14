@@ -135,6 +135,17 @@ async function unitTests() {
   });
 
   // ───── the key keeper ─────
+  await step("SSE usage parser", async () => {
+    const ev = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const sse = ": keep-alive\n\n" + ev("message_start", { type: "message_start", message: { usage: { input_tokens: 5, cache_read_input_tokens: 20, output_tokens: 1 } } })
+      + ev("ping", { type: "ping" }) + ev("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "héllo ✓ 你好" } })
+      + ev("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 42 } }) + ev("message_stop", { type: "message_stop" });
+    const usage = (text, size) => { const p = ds.sseUsage(), b = Buffer.from(text); for (let i = 0; i < b.length; i += size) p.push(b.subarray(i, i + size)); return { u: p.end(), stopped: p.stopped }; };
+    const whole = usage(sse, 1e9), bytes = usage(sse, 1), crlf = usage(sse.replace(/\n/g, "\r\n"), 3);
+    ok("SSE usage parser: the same usage whole, one byte at a time (UTF-8 cut too) and with CRLF", whole.u?.output_tokens === 42 && whole.u.input_tokens === 5 && whole.u.cache_read_input_tokens === 20
+      && JSON.stringify(bytes.u) === JSON.stringify(whole.u) && JSON.stringify(crlf.u) === JSON.stringify(whole.u) && whole.stopped && bytes.stopped && crlf.stopped, JSON.stringify([whole, bytes, crlf]));
+  });
+
   await step("key keeper", async () => {
     const proxySrv = http.createServer((req, res) => { const url = new URL(req.url, "http://x"); if (url.pathname.startsWith("/deepseek/")) return ds.proxy(req, res, url); res.writeHead(404); res.end(); });
     await new Promise(r => proxySrv.listen(SERVER_PORT, "127.0.0.1", r));
