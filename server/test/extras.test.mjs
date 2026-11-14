@@ -43,7 +43,8 @@ try {
   const b = await createBackup();
   const names = sh(`tar tzf '${b.file}'`).split("\n");
   ok("backup written to phone storage", fs.existsSync(b.file) && b.bytes > 0, b.file.replace(T, ""));
-  ok("backup has chats, memory, projects, keystore, prefs", [".claude/projects/-root/chat1.jsonl", ".claude/projects/-root/memory/MEMORY.md", "projects/app/main.js", "projects/app/pocket-agent.keystore", ".pocket-agent/prefs.json"].every(n => names.includes(n)));
+  ok("backup has chats, memory, projects, prefs", [".claude/projects/-root/chat1.jsonl", ".claude/projects/-root/memory/MEMORY.md", "projects/app/main.js", ".pocket-agent/prefs.json"].every(n => names.includes(n)));
+  ok("backup has no signing keys at any depth (keystore, release key)", !names.some(n => /\.keystore$|release-key|\.pem$/.test(n)));
   ok("backup has no sign-in, tokens, release-signing key or node_modules", !names.some(n => /credentials|github-token|node_modules|release-key/.test(n)));
   ok("backup is listed", (await listBackups()).some(x => x.file === b.file));
   fs.rmSync(path.join(HOME, ".claude/projects"), { recursive: true });

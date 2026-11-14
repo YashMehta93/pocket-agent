@@ -18,11 +18,11 @@ Changes to the screens (`app/assets/ui`) and the server (`server/`) reach your a
 
 Java changes need a new APK. Your builds are signed with **your own** `pocket-agent.keystore` (made on your first build, ignored by git), and Android only installs an update signed with the same key as the installed app. So while you're on the official app, the update banner says *"signed with a different key"* instead of installing. To switch to your own build, once:
 
-1. Settings → **Back up to phone storage** (chats, memory, settings, projects; never your sign-in or tokens).
+1. Settings → **Back up to phone storage** (chats, memory, settings, projects; never your sign-in, tokens or signing keys). Copy `pocket-agent.keystore` somewhere private yourself.
 2. Uninstall Pocket Agent and install `Download/claude apps/pocket-agent.apk` (every build copies it there).
 3. Set it up and sign in, then Settings → **Restore a backup**, and run *Build Pocket Agent yourself* again (it reuses your code).
 
-From then on, your own builds update your app with one tap. Official releases then reach you through git: merge `origin/v1.x` into your branch. **Back up `pocket-agent.keystore`** (the backup includes it): without it, you're back to reinstalling.
+From then on, your own builds update your app with one tap. Official releases then reach you through git: merge `origin/v1.x` into your branch. **Back up `pocket-agent.keystore` separately**, somewhere private like a password manager. The app's backup leaves keys out on purpose, because phone storage is readable by other apps. Without it, you're back to reinstalling.
 
 ### On a computer instead
 
