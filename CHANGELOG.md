@@ -2,6 +2,11 @@
 
 Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 
+## 1.1.2
+
+- After installing an app update (APK), Pocket Agent no longer offers a second, pointless "An update is ready".
+- Update checks use far fewer GitHub requests (GitHub limits them per internet connection, and phones on the same Wi-Fi share that limit), and retry once when the network drops a request. *Check for updates* still asks GitHub right away.
+
 ## 1.1.1
 
 - Updating from 1.0.0 through "An update is ready" left out the new trusted-keys file (1.0.0 copied only the files it knew), so the update was offered again and again, and signed releases were refused. The app now restores that file on start-up, updates copy every file the new code brings, and when an app update (APK) is available it's the only banner shown, since it includes the code.

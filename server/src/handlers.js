@@ -8,7 +8,7 @@ import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache,
 import { broadcastAll, callNative } from "./hub.js";
 import { live, getLive, openSession, busyElsewhere, runClaude } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
-import { importSessions, checkUpdate, applyUpdate, sourceName, pickRelease, listReleases, releaseAsset, bundleInfo } from "./transfer.js";
+import { importSessions, checkUpdate, applyUpdate, sourceName, pickRelease, listReleases, releaseAsset, bundleInfo, clearReleaseCache } from "./transfer.js";
 import { runDevSetup, devSetupStatus, devRepo } from "./devtools.js";
 import { runMigration, migrationStatus } from "./migrate.js";
 import { createBackup, listBackups, restoreBackup, BACKUP_DIR } from "./backup.js";
@@ -109,10 +109,10 @@ export const handlers = {
   async "update.channel"({ url, token, path: p, github }) {
     prefs.updateChannel = github ? { github: githubRepo(github), token: token || "" }
       : p ? { path: p } : url ? { url: url.replace(/\/$/, ""), token } : null;
-    savePrefs();
+    savePrefs(); clearReleaseCache();
     return { channel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null };
   },
-  async "update.check"(m) { const ch = m.url || m.path || m.github ? m : prefs.updateChannel; if (!ch) return { available: false, channel: null }; return { ...(await checkUpdate(ch)), channel: sourceName(ch) }; },
+  async "update.check"(m) { if (m.fresh) clearReleaseCache(); const ch = m.url || m.path || m.github ? m : prefs.updateChannel; if (!ch) return { available: false, channel: null }; return { ...(await checkUpdate(ch)), channel: sourceName(ch) }; },
   // ───── release tracks (GitHub releases): stable, beta, or one pinned version ─────
   async "releases.list"() {
     const ch = prefs.updateChannel;
@@ -127,7 +127,7 @@ export const handlers = {
     if (track === "pin" && !tag) throw new Error("Pick a version to pin");
     prefs.updateTrack = track === "pin" ? { track, tag } : { track };
     delete prefs.notifiedRelease;   // tell about the new track's newest release again
-    savePrefs();
+    savePrefs(); clearReleaseCache();
     return { track: prefs.updateTrack };
   },
   /** Pulls the update, then restarts once no chat is mid-reply (SIGUSR2, see index.js). */

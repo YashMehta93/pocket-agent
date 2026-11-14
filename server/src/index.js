@@ -10,10 +10,11 @@ import { prefs, savePrefs, DEFAULT_REPO } from "./config.js";
 import { ensureDefaults } from "./devtools.js";
 import { startUpdateChecks } from "./autoupdate.js";
 import { ensureTrustedKeys } from "./signing.js";
-import { ROOT } from "./transfer.js";
+import { ROOT, syncVersionFile } from "./transfer.js";
 
 const server = createServer();
 if (ensureTrustedKeys(ROOT)) log("restored server/trusted-keys.json");   // see trusted-keys.default.js
+if (syncVersionFile(ROOT)) log("VERSION copied up from the installed APK");   // see transfer.js
 // Inside the app: first-start defaults, and follow the project's GitHub releases unless told otherwise.
 if (process.env.PA_SUPERVISED) {
   ensureDefaults();
