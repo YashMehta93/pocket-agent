@@ -7,6 +7,12 @@ Read `docs/ARCHITECTURE.md` before larger changes. `CONTRIBUTING.md` says where 
 ## Whose code is this
 
 - **`me/<github-name>`**: the person's own version of the app (`git config --get pocketagent.me` names it). Commit to it freely and push it (`git push -u origin HEAD`): that backs it up, and friends can borrow from it. Never push to someone else's `me/…` branch; the pre-push hook refuses.
+- **Tracking (docs/RELEASES.md):**
+  - Work starts from an issue.
+  - Every commit message mentions it (`… (#19)`), and every PR says `Closes #N` with a `type: …` label and the milestone.
+  - No issue yet? Create one with `gh issue create` (labels from `.github/labels.json`).
+  - Add a `CHANGELOG.md` line under `## Unreleased` for anything users notice.
+  - Releases are beta first (`X.Y.Z-beta.N`), batched by milestone, and only the owner's phone publishes them.
 - **`v1.x`**: the shared line everyone's releases come from. **`master`**: everything the owner approved. **`v1.0`**: frozen. Never commit or push to these. They change only when the owner merges a pull request. Never merge a PR yourself.
 
 ### Typical requests

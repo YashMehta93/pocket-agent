@@ -12,23 +12,90 @@
 
 GitHub enforces these: `master` and `v1.x` accept changes only through pull requests (no force-push or deletion), and `v1.0` is locked read-only; the owner can override in an emergency. Locally, `.githooks/pre-push` refuses the same pushes before they leave your phone (enabled with `git config core.hooksPath .githooks`; *Build Pocket Agent yourself* does this). Its emergency override: `PA_ALLOW_PROTECTED_PUSH=1 git push …`.
 
+## Tracking: issues, labels, milestones
+
+- **Every piece of work starts as an issue**, using the Bug or Feature form. The issue is where the *why* lives.
+- **Labels** follow one scheme, defined in `.github/labels.json`:
+  - `type: …`: bug, feature, security, docs, chore, test, release. Exactly one per issue and PR.
+  - `area: …`: server, ui, android, release, ci, termux, accessibility.
+  - `priority: high/low`.
+  - `status: needs-triage / needs-verification / blocked`.
+  - To change the scheme, edit the file in a PR; GitHub's labels follow on merge (`scripts/sync-labels.sh`).
+- **Milestones are releases.** `1.2.0` holds everything planned for 1.2.0, and `Backlog` holds what's wanted but not scheduled. A release ships when its milestone is done, not when a PR merges.
+- **Links:**
+  - every PR says `Closes #N` (or `Refs #N` / `Part of #N`);
+  - every commit message mentions its issue, e.g. `Fix the double open (#19)`.
+
 ## Day-to-day flow
 
-1. `git switch v1.x && git pull --ff-only && git switch -c feat/short-name`
-2. Commit, push the branch, and open a pull request **into `v1.x`**: `bash scripts/open-pr.sh "Title"` (or `gh pr create --base v1.x`).
-3. The owner reviews and merges it on GitHub. **Merging is the approval.**
-4. `git switch v1.x && git pull --ff-only`.
+1. Pick or open an issue. Give it labels and a milestone.
+2. `git switch v1.x && git pull --ff-only && git switch -c fix/short-name` (or `feat/…`, `chore/…`).
+3. Commit, mentioning the issue in every message, and add a line to `CHANGELOG.md` under `## Unreleased` for anything users notice.
+4. Push and open a PR **into `v1.x`**: `bash scripts/open-pr.sh "Title"` or `gh pr create --base v1.x`. The template asks for the issue link, labels and testing.
+5. Checks run on GitHub (`.github/workflows/`):
+   - **CI / tests**: server and screen test suites.
+   - **CI / apk**: the Java compiles, and a release dry run with the update and upgrade tests.
+   - **PR policy**: issue link, type label, issue in every commit.
+6. **An approver approves**: anyone in `.github/CODEOWNERS` (you can't approve your own PR). The owner can also merge with the admin bypass.
+7. Merge. Then `git switch v1.x && git pull --ff-only`. The issue closes itself.
+
+A PR is not a release: merged work waits in `v1.x` until its milestone's release.
+
+## Releases: always a beta first
+
+Approvers (`.github/release-policy.json` → `approvers`): **YashMehta93, bhavyadhoru, JetErorr**.
+
+```
+v1.x:  PRs ──► PRs ──► [release PR: 1.2.0-beta.1] ──► beta.1 on the Beta track
+                        fixes ──► [release PR: 1.2.0-beta.2] ──► beta.2
+                        [release PR: 1.2.0 + changelog only] ──► 1.2.0 on Stable, PR v1.x → master
+```
+
+1. **Beta.**
+   - A release PR (label `type: release`) sets `VERSION` to `1.2.0-beta.1` and renames `## Unreleased` in `CHANGELOG.md` to `## 1.2.0-beta.1`. That section becomes the release notes.
+   - An approver approves or merges it.
+   - The key holder (today, the owner's phone) runs `bash scripts/release.sh` on the updated `v1.x`. It publishes a pre-release, which only Beta-track phones get.
+2. **More betas** as needed: fix PRs, then a release PR for `1.2.0-beta.2`.
+3. **Final.**
+   - A release PR sets `VERSION` to `1.2.0` and writes `## 1.2.0` in the changelog (usually all the betas' notes together).
+   - It may change **only** the version, the changelog and docs. Any code change means another beta first.
+   - Once approved, `release.sh` publishes it to Stable and opens the `v1.x` → `master` PR.
+4. **Patches** (`1.2.1`) follow the same path: `1.2.1-beta.1`, then `1.2.1`.
+
+`release.sh` refuses unless these rules hold (it runs `scripts/release-policy.mjs`):
+- `VERSION` is `X.Y.Z` or `X.Y.Z-beta.N`;
+- the PR that set `VERSION` was approved or merged by an approver;
+- for a final: a beta of the same version exists, nothing but `finalMayChange` paths changed since the last beta, and it's at least `minBetaDays` old (0 today);
+- plus the older checks: run on a release line that matches GitHub, a changelog section exists, the tag is new, and the lock files are current.
+
+`bash scripts/release.sh --dry-run` shows which rules hold, without failing on them.
+
+**Hotfix while new work is on `v1.x`:** branch `v1.2-maint` from the `v1.2.0` tag, fix there with the same PR flow, and release `1.2.1-beta.1` → `1.2.1` from it (add it to `releaseBranches`). Merge the fix into `v1.x` too.
 
 ## Who can release
 
-Only the owner approves code into `v1.x` and `master`, and only the owner cuts releases. Four layers make sure of it:
-
-1. **Approval**: `v1.x` and `master` need a pull request approved by the owner (`.github/CODEOWNERS`), and pushing new commits after an approval needs approving again. The owner merges their own PRs with the admin bypass.
-2. **Release tags**: only the owner can create, move or delete `v*` tags (a GitHub ruleset), so nobody else can publish a release.
+1. **Approval**: `v1.x` and `master` need a PR approved by a code owner (`.github/CODEOWNERS`: the three approvers), and new pushes after an approval need approving again. The owner can merge with the admin bypass.
+2. **Release tags**: only admins can create, move or delete `v*` tags (a GitHub ruleset), so only the owner's account can publish.
 3. **Immutable releases**: a published release's files can't be changed afterwards.
-4. **Signed code** (the one that protects phones even if GitHub is compromised): `release.sh` signs `bundle.tgz` with `release-key.pem` and uploads `bundle.sig`. Apps install release code only if it's signed, for that exact tag, by a key in `server/trusted-keys.json`. That file ships with the app, and changing it needs the owner's approval like any other code. APKs are already protected the same way by Android: an update must be signed with `pocket-agent.keystore`.
+4. **Signed code** (protects phones even if GitHub is compromised): `release.sh` signs `bundle.tgz` with `release-key.pem`, and apps install release code only if it's signed, for that exact tag, by a key in `server/trusted-keys.json`. APKs are protected the same way by Android: updates must be signed with `pocket-agent.keystore`.
 
-To trust another person's releases later: they run `node scripts/release-key.mjs new <github-name>` on their phone and open a PR with the changed `server/trusted-keys.json`; the owner merges it. To stop trusting a key, remove it the same way.
+Approvers decide *whether* to release. The key holder publishes. To let another person publish too, they make a release key (`node scripts/release-key.mjs new <github-name>`) and add it to `server/trusted-keys.json` in a PR. They'd also need admin rights for tags and a copy of the APK keystore, so think before sharing those.
+
+## Changing this system
+
+Everything above lives in files, so it changes through a normal PR:
+
+| To change… | Edit |
+|---|---|
+| Who approves releases; beta rules; soak time; what a final may change | `.github/release-policy.json` |
+| Who approves PRs | `.github/CODEOWNERS` (keep it in step with the approvers) |
+| Labels | `.github/labels.json` |
+| PR checks (issue links, labels) | `.github/workflows/pr-policy.yml` |
+| Which tests run on GitHub | `.github/workflows/ci.yml` |
+| Issue and PR forms | `.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md` |
+| Required checks, approvals, tag rules | GitHub → Settings → Branches / Rules (owner) |
+
+Emergency switches: the `policy: exempt` label skips the issue-link checks on one PR; `PA_RELEASE_RULES_OFF=1 bash scripts/release.sh` skips the release rules once (say why in the release notes); the owner's admin bypass merges past failing checks.
 
 ## Personal versions: `me/<github-name>`
 
@@ -48,18 +115,6 @@ feat/voice-notes ●   one feature, cherry-picked from me/ana onto v1.x, opened 
 - **Borrow from a friend**: `git fetch` and cherry-pick from `origin/me/<friend>`.
 
 In the app, Settings → **Improve Pocket Agent** starts a chat in your copy, and Claude follows these rules from `CLAUDE.md`. Ask it "share this with everyone" or "get the latest from everyone".
-
-## Cutting a release (from `v1.x`)
-
-1. Open a PR into `v1.x` that sets `VERSION` (e.g. `1.1.0`) and adds a `CHANGELOG.md` entry (`## 1.1.0`). That entry becomes the release notes people read on GitHub and in the app's Versions page, so write it for them; `release.sh` refuses without it. The owner merges it.
-2. On the updated `v1.x`: `bash scripts/release.sh`. It:
-   - refuses unless `v1.x` matches GitHub exactly and `VERSION` belongs to `v1.x`;
-   - builds the APK and code bundle, tags `v1.1.0` (pushing only the tag), and publishes the GitHub release friends' apps update from;
-   - opens a PR `v1.x` → `master`; the owner merges it.
-
-## Beta releases
-
-To let testers try something first: set `VERSION` to a pre-release like `1.2.0-beta.1` in the release PR, and run `bash scripts/release.sh` as usual. A version with a dash is published as a GitHub *pre-release*. Only apps on the **Beta** track (Settings → Updates & chats) get it; Stable apps wait for `1.2.0`.
 
 ## Versions
 

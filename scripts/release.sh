@@ -40,6 +40,10 @@ if ! $DRY && [ "${PA_RELEASE_BRANCH_OK:-}" != 1 ]; then
   git fetch -q origin "$BRANCH"
   [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$BRANCH")" ] || { echo "$BRANCH differs from GitHub. Merge your PR there, then: git pull --ff-only"; exit 1; }
 fi
+# Release rules (.github/release-policy.json): an approved release PR, and a beta before every final release.
+# A dry run only reports them. PA_RELEASE_RULES_OFF=1 skips them in an emergency (say why in the release notes).
+if [ "${PA_RELEASE_RULES_OFF:-}" = 1 ]; then echo "!! release rules SKIPPED (PA_RELEASE_RULES_OFF=1)"
+else GH="$(command -v gh || echo "$HOME/.local/bin/gh")" node scripts/release-policy.mjs "$VERSION" "$REPO" $($DRY && echo --report) || exit 1; fi
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && [ "$(git rev-list -n1 "$TAG")" != "$(git rev-parse HEAD)" ]; then
   echo "$TAG already exists on another commit. Bump VERSION first (docs/RELEASES.md)."; exit 1; fi
 grep -q "^## $VERSION$" CHANGELOG.md || { echo "CHANGELOG.md has no '## $VERSION' section: add one in the release PR first."; $DRY || exit 1; }

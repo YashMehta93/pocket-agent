@@ -53,7 +53,12 @@ Updating the bundled proot: `bash app/native/prepare-proot.sh` (downloads Termux
 
 ## Branches and releases
 
-Read [docs/RELEASES.md](docs/RELEASES.md): work happens on feature branches with PRs into `v1.x`; `master` and the `v1.x` line change only by merging PRs; `v1.0` is frozen.
+Read [docs/RELEASES.md](docs/RELEASES.md). In short:
+- Every change starts as an issue.
+- Work happens on a branch, with a PR into `v1.x` that says `Closes #N`, has a `type: …` label, and mentions the issue in every commit message. GitHub checks all of this, and runs the tests.
+- An approver (`.github/CODEOWNERS`) approves.
+- Releases are batched by milestone and always ship as a beta before the final.
+- `master` and `v1.x` change only by merging PRs; `v1.0` is frozen.
 
 ## Releases (what friends' apps update from)
 
