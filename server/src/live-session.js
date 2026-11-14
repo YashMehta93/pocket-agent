@@ -55,6 +55,7 @@ export class LiveSession {
     this.tasks = new Map();     // task_id -> background agent or command (noteTask)
     this.inbox = new Inbox();
     this.activity = new Activity(snap => this.publishActivity(snap));
+    if (this.engine === "deepseek") this.activity.who = "DeepSeek";
 
     const options = {
       pathToClaudeCodeExecutable: CLAUDE,

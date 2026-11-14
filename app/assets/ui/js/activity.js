@@ -33,7 +33,7 @@ function renderActivity() {
   bar.querySelector("b").textContent = phase === "waiting" && running && a.phase !== "waiting" ? "Working" : a.label;
   bar.querySelector(".a-meta").textContent = `${elapsed(a)}${tok}`;
   bar.querySelector(".a-detail").textContent = a.detail || (phase === "approval" ? "Tap to review" : "");
-  bar.onclick = () => phase === "approval" ? showNextPermission() : openActivityLog();
+  bar.onclick = () => { if (Date.now() - (sheet.closedAt || 0) < 500) return; phase === "approval" ? showNextPermission() : openActivityLog(); };
   if (busy || phase === "approval") startActivityTick(); else stopActivityTick();
   if (sheet.key === "activity") renderActivityLog();
 }

@@ -65,6 +65,7 @@ function lastSentence(text) {
 }
 
 export class Activity {
+  who = "Claude";   // the engine's name in labels; LiveSession sets "DeepSeek" for DeepSeek chats
   constructor(onChange) {
     this.onChange = onChange;
     this.timer = null;
@@ -105,7 +106,7 @@ export class Activity {
   }
 
   approval(toolName, input) { this.set("approval", "Waiting for your approval", `${ASK_VERBS[toolName] || toolVerb(toolName)}: ${toolDetail(toolName, input)}`); this.changed(true); }
-  approvalDone(allowed) { if (this.s.phase === "approval") this.set("waiting", allowed ? "Approved, continuing" : "Denied, telling Claude"); }
+  approvalDone(allowed) { if (this.s.phase === "approval") this.set("waiting", allowed ? "Approved, continuing" : `Denied, telling ${this.who}`); }
 
   /** Feed every SDK message through here. */
   feed(m) {
@@ -134,12 +135,12 @@ export class Activity {
 
   system(m) {
     switch (m.subtype) {
-      case "init": if (this.s.phase === "starting" || this.s.phase === "sending") this.set("waiting", "Waiting for Claude"); break;
+      case "init": if (this.s.phase === "starting" || this.s.phase === "sending") this.set("waiting", `Waiting for ${this.who}`); break;
       case "status":
         if (m.status === "compacting") this.set("compacting", "Compacting the conversation", "Summarizing older messages to free up context");
-        else if (m.status === "requesting" && !["thinking", "writing", "tool"].includes(this.s.phase)) this.set("waiting", "Waiting for Claude");
+        else if (m.status === "requesting" && !["thinking", "writing", "tool"].includes(this.s.phase)) this.set("waiting", `Waiting for ${this.who}`);
         break;
-      case "api_retry": this.set("retrying", "Claude is busy, retrying", `Attempt ${m.attempt} of ${m.max_retries}${m.error_status ? ` (HTTP ${m.error_status})` : ""}, next try in ${Math.round((m.retry_delay_ms || 0) / 1000)}s`); break;
+      case "api_retry": this.set("retrying", `${this.who} is busy, retrying`, `Attempt ${m.attempt} of ${m.max_retries}${m.error_status ? ` (HTTP ${m.error_status})` : ""}, next try in ${Math.round((m.retry_delay_ms || 0) / 1000)}s`); break;
       case "thinking_tokens": this.s.tokens.thinking = m.estimated_tokens || this.s.tokens.thinking; if (this.s.phase === "thinking") this.changed(); break;
       case "task_started": {
         const st = this.step("subagent", m.description || "Subagent", m.subagent_type || "");
@@ -169,7 +170,7 @@ export class Activity {
   stream(m) {
     const e = m.event; if (!e) return;
     const sub = !!m.parent_tool_use_id;
-    if (e.type === "message_start") { this.blocks.clear(); if (!sub && this.s.phase !== "approval") this.set("waiting", "Waiting for Claude"); return; }
+    if (e.type === "message_start") { this.blocks.clear(); if (!sub && this.s.phase !== "approval") this.set("waiting", `Waiting for ${this.who}`); return; }
     if (e.type === "content_block_start") {
       const b = e.content_block || {};
       const blk = { kind: b.type, text: "", toolId: b.id, name: b.name, json: "" };
@@ -219,7 +220,7 @@ export class Activity {
       this.finish(this.toolSteps.get(b.tool_use_id), b.is_error ? "err" : "ok");
       any = true;
     }
-    if (any && !m.parent_tool_use_id && this.s.phase !== "approval") this.set("waiting", "Waiting for Claude", "Reading the results");
+    if (any && !m.parent_tool_use_id && this.s.phase !== "approval") this.set("waiting", `Waiting for ${this.who}`, "Reading the results");
     else if (any) this.changed();
   }
 }
