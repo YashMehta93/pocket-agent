@@ -175,7 +175,7 @@ async function accountAction(id, act) {
   if (act === "remove") return removeAccountPrompt(id);
 }
 async function makeAccountDefault(id) {
-  try { const r = await conn.call("accounts.setDefault", { id }); applyAccounts({ accounts: r.accounts, defaultAccount: id }); }
+  try { const r = await conn.call("accounts.setDefault", { account: id }); applyAccounts({ accounts: r.accounts, defaultAccount: id }); }
   catch (e) { return toast(e.message, 4000); }
   openSettingsRefresh();
   toast("New chats use " + accountName(id));
@@ -184,14 +184,14 @@ async function renameAccountPrompt(id) {
   const a = accountById(id) || { id, name: "" };
   const name = await promptSheet({ title: "Rename account", value: a.name });
   if (name === null) return;
-  try { applyAccounts({ accounts: (await conn.call("accounts.rename", { id, name })).accounts }); }
+  try { applyAccounts({ accounts: (await conn.call("accounts.rename", { account: id, name })).accounts }); }
   catch (e) { return toast(e.message, 4000); }
   openSettingsRefresh();
 }
 async function removeAccountPrompt(id) {
   const a = accountById(id) || { id, name: "this account" };
   if (!await confirmSheet({ title: "Remove " + a.name + "?", text: "Its Claude login is deleted from this phone. Its chats move to the default account.", ok: "Remove", danger: true })) return;
-  try { applyAccounts({ accounts: (await conn.call("accounts.remove", { id })).accounts }); }
+  try { applyAccounts({ accounts: (await conn.call("accounts.remove", { account: id })).accounts }); }
   catch (e) { return toast(e.message, 4000); }
   if (state.defaultAccount === id) state.defaultAccount = "default";
   if (state.newChatAccount === id) state.newChatAccount = null;
@@ -226,7 +226,7 @@ function accountLoginSheet(a) {
   b.querySelector('[data-a="cancel"]').onclick = () => sheet.close(true);
   open.onclick = async () => {
     open.disabled = true; open.textContent = "Opening…"; err.hidden = true;
-    try { openAccountUrl((await conn.call("accounts.login.start", { id: a.id })).url); }
+    try { openAccountUrl((await conn.call("accounts.login.start", { account: a.id })).url); }
     catch (e) { showErr(e.message); }
     open.disabled = false; open.textContent = "Open sign-in page";
   };
@@ -235,7 +235,7 @@ function accountLoginSheet(a) {
     if (!code || finish.disabled) return;
     finish.disabled = true; finish.textContent = "Signing in…"; err.hidden = true;
     try {
-      const st = (await conn.call("accounts.login.code", { id: a.id, code })).status || {};
+      const st = (await conn.call("accounts.login.code", { account: a.id, code })).status || {};
       sheet.close(true);
       toast(st.email ? "Signed in as " + st.email : "Signed in", 3000);
       await refreshAccounts();

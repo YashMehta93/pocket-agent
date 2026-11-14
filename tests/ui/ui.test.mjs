@@ -206,6 +206,23 @@ ok(`the limit card names the limit and offers the way out: "${tx("#account-limit
 $("#account-limit button").click();
 await sleep(150);
 ok("continuing from the limit card moves the chat and carries on in it", ev(`__calls.some(([t, m]) => t === "chat.account" && m.sessionId === "cccccccc-0000-4000-8000-0000000000a1" && m.account === "work-1a2b")`) && ev(`__calls.some(([t, m]) => t === "send" && /Continued on the Work account/.test(m.text))`) && $("#account-limit").hidden);
+// the account is sent as "account": a param named "id" would overwrite the request's own id (conn.call) and hang
+ev("window.__calls = []");
+await ev(`(async () => {
+  const rp = renameAccountPrompt("work-1a2b");
+  await new Promise(r => setTimeout(r, 60));
+  document.querySelector("#ps-in").value = "Work 2";
+  document.querySelector('#sheet [data-r="1"]').click();
+  await rp;
+  await makeAccountDefault("work-1a2b");
+  accountLoginSheet({ id: "work-1a2b", name: "Work" });
+  document.querySelector("#acc-open").click();
+})()`);
+await sleep(100);
+const accCheck = ev(`(() => { const accs = window.__calls.filter(([t]) => typeof t === "string" && t.startsWith("accounts."));
+  return { types: accs.map(([t]) => t), bad: accs.filter(([, m]) => m && Object.prototype.hasOwnProperty.call(m, "id")).map(([t]) => t) }; })()`);
+ok("account calls never send a param named id", accCheck.bad.length === 0 && ["accounts.rename", "accounts.setDefault", "accounts.login.start"].every(t => accCheck.types.includes(t)));
+ev("sheet.close(true)");
 ev(`state.current = window.__save.cur; state.accounts = window.__save.accounts; state.defaultAccount = window.__save.defaultAccount; state.usageByAccount = window.__save.usageByAccount; state.newChatAccount = window.__save.newChatAccount;
   conn.call = window.__origCall; delete window.__save; delete window.__origCall; updateComposer()`);
 
