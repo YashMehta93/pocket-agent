@@ -9,10 +9,16 @@ function currentSettings() {
   return { model: li?.model ?? cur.model ?? state.defaults.model ?? null, effort: li?.effort ?? cur.effort ?? state.defaults.effort ?? null,
     permissionMode: li?.permissionMode ?? cur.permissionMode ?? state.defaults.permissionMode ?? "default" };
 }
+/** claude-opus-5-5 → "Opus 5.5" (also with a date or [1m] suffix). */
+function prettyModel(id) {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2})(?!\d))?/.exec(id || "");
+  return m ? m[1][0].toUpperCase() + m[1].slice(1) + " " + m[2] + (m[3] ? "." + m[3] : "") : (id || "").replace(/^claude-/, "");
+}
+/** The model's real name, never "Default": the default resolves to the model it stands for. */
 function modelLabel(id) {
-  if (!id) return "Default model";
-  const m = state.models.find(x => x.value === id || x.resolvedModel === id);
-  return m ? m.displayName : id.replace(/^claude-/, "").replace(/-/g, " ");
+  if (!id || id === "default") { const def = state.models.find(x => x.value === "default"); if (!def?.resolvedModel) return "Default model"; id = def.resolvedModel; }
+  const m = state.models.find(x => x.value !== "default" && (x.value === id || x.resolvedModel === id));
+  return m ? m.displayName : prettyModel(id);
 }
 function updateComposer() {
   const s = currentSettings();
