@@ -189,72 +189,181 @@ await sleep(100);
 ok("out of credit says so, and where to top up", /Out of credit Top up at platform\.deepseek\.com/.test(text("#usage-sheet .u-ds")));
 ev(`sheet.close(true); state.current.engine = "claude"; delete state.liveInfo[state.current.sessionId]; __ds = __fake(); state.deepseek = __fake()`);
 
-// 6. The links bar
+// 6. The Chat · Agents switch and the Agents tab, for workers (#52)
 const P = "44444444-0000-4000-8000-0000000000cc", C = "55555555-0000-4000-8000-0000000000dd";
-ev(`state.current = { sessionId: "${P}", cwd: state.home, title: "Plan the tidy-up", isNew: false, lastSeq: 0, engine: "claude" }; updateHeader()`);
-ok("no workers, no bar", $("#links-bar").hidden);
+ev(`state.current = { sessionId: "${P}", cwd: state.home, title: "Plan the tidy-up", isNew: false, lastSeq: 0, engine: "claude" }; state.links = {}; chat.reset(); hideEmpty(); updateHeader()`);
+ok("no workers, no switch, and no links bar or agents line any more", $("#chat-tabs").hidden && !$("#links-bar") && !$("#agents-line"));
 ev(`conn.fire("link", { parent: "${P}", child: "${C}", engine: "deepseek", title: "T1", toolUseId: "toolu_link1" })`);
 await sleep(150);
-ok(`a worker shows as a row: "${text("#links-bar")}"`, !$("#links-bar").hidden && $$("#links-bar .lk-row").length === 1 && /^DeepSeek · T1 · done/.test(text("#links-bar .lk-row")));
-ev(`state.liveInfo["${C}"] = { sessionId: "${C}", state: "running", engine: "deepseek", parent: "${P}" }; conn.fire("state", { sessionId: "${C}", state: "running", info: state.liveInfo["${C}"] })`);
+ok(`a worker starting shows the switch: "${text("#chat-tabs")}"`, !$("#chat-tabs").hidden && text("#tab-agents") === "Agents1" && ev(`chatAgents()[0].status`) === "starting");
+ev(`state.liveInfo["${C}"] = { sessionId: "${C}", state: "running", engine: "deepseek", parent: "${P}", spend: 0.0031 };
+  state.activity["${C}"] = { phase: "tool", label: "Running a command", detail: "npm test", turnStart: Date.now() - 72000, since: Date.now(), steps: [{ kind: "tool" }, { kind: "tool" }, { kind: "note" }], tokens: {} };
+  conn.fire("state", { sessionId: "${C}", state: "running", info: state.liveInfo["${C}"] })`);
 await sleep(150);
-ok("…working while it runs", /DeepSeek · T1 · working/.test(text("#links-bar")) && $("#links-bar .spark") !== null);
-ev(`state.pending = [{ requestId: "r-w", sessionId: "${C}", toolName: "Bash", input: { command: "ls" } }]; conn.fire("permission.request", { requestId: "r-w", sessionId: "${C}", toolName: "Bash" })`);
+$("#tab-agents").click();
+ok(`the Agents tab lists it, live: "${text("#agents-view .ag-row")}"`, $$("#agents-view .ag-row").length === 1 && text("#agents-view .ag-ti") === "T1"
+  && text("#agents-view .ag-now") === "Working · Running a command: npm test" && /^DeepSeek · 2 steps · \$0\.003 · 1m 1\ds$/.test(text("#agents-view .ag-meta"))
+  && $("#agents-view .ag-tile").classList.contains("deepseek") && $("#agents-view .ag-meta").classList.contains("ds"));
+ev(`conn.fire("activity", { sessionId: "${C}", activity: { ...state.activity["${C}"], detail: "npm run lint" }, spend: 0.0052 })`);
 await sleep(150);
-ok("…and needs you when it asks", /DeepSeek · T1 · needs you/.test(text("#links-bar")) && $("#links-bar .lk-st.needs-you") !== null);
-ok("each row is a thumb high", (w.getComputedStyle($("#links-bar .lk-row")).minHeight || "") === "44px");
-ev(`window.__opened = null; window.__realOpen = openSession; openSession = id => { __opened = id; }`);
-$("#links-bar .lk-row").click();
-ok("tapping it opens the worker's chat", ev("__opened") === C);
-for (const [i, t] of ["T2", "T3", "T4"].entries()) ev(`conn.fire("link", { parent: "${P}", child: "66666666-0000-4000-8000-00000000000${i}", engine: "deepseek", title: "${t}", toolUseId: "toolu_x${i}" })`);
+ok("its cost and what it's doing follow its activity events", /npm run lint/.test(text("#agents-view .ag-now")) && /\$0\.005/.test(text("#agents-view .ag-meta")));
+ev(`state.pending = [{ requestId: "r-w", sessionId: "${C}", toolName: "Bash", input: { command: "ls" }, engine: "deepseek", parent: "${P}", title: "T1" }];
+  conn.fire("permission.request", state.pending[0])`);
 await sleep(150);
-ok(`kept short: the one at work and "+N more" (${text("#links-bar")})`, $$("#links-bar .lk-row").length === 2 && /needs you/.test(text("#links-bar .lk-row")) && /\+3 more worker chats/.test(text("#links-bar")));
-$("#links-bar [data-more]").click();
-ok("…which lists them all", ev("sheet.key") === "links" && $$("#sheet .lk-row").length === 4); ev("sheet.close(true)");
-ev(`state.current = { sessionId: "${C}", cwd: state.home, title: "T1", isNew: false, lastSeq: 0, engine: "deepseek" };
-  state.sessions = [{ sessionId: "${P}", title: "Plan the tidy-up", cwd: state.home, lastModified: Date.now() }, ...state.sessions]; updateHeader()`);
-ok(`in the worker, the bar leads back: "${text("#links-bar")}"`, $$("#links-bar .lk-row").length === 1 && /^From: Plan the tidy-up/.test(text("#links-bar")));
-$("#links-bar .lk-row").click();
-ok("…to the chat that started it", ev("__opened") === P);
-ev(`openSession = __realOpen; state.pending = []; delete state.liveInfo["${C}"]; state.sessions = state.sessions.filter(s => s.sessionId !== "${P}")`);
+ok(`…needs you when it asks (the switch gets a dot): "${text("#agents-view .ag-now")}"`, text("#agents-view .ag-now") === "Needs you · Wants to run ls" && !$("#tab-agents .tdot").hidden
+  && $("#agents-view .ag-st.needs") !== null && $("#agents-view .ag-dot") !== null && /needs you/.test($("#tab-agents").getAttribute("aria-label")));
+ev(`sheet.close(true)`);
+for (const [i, t] of ["T2", "T3"].entries()) ev(`conn.fire("link", { parent: "${P}", child: "66666666-0000-4000-8000-00000000000${i}", engine: "${i ? "claude" : "deepseek"}", title: "${t}", toolUseId: "toolu_x${i}" });
+  conn.fire("link", { parent: "${P}", child: "66666666-0000-4000-8000-00000000000${i}", engine: "${i ? "claude" : "deepseek"}", title: "${t}", toolUseId: "toolu_x${i}", result: "${i ? "failed" : "done"}", steps: ${3 + i}, ms: 65000, usd: ${i ? "null" : 0.004}, endedAt: Date.now() - ${i + 1}000 })`);
+await sleep(150);
+const agRows = $$("#agents-view .ag-row").map(r => r.querySelector(".ag-ti").textContent + ": " + r.querySelector(".ag-now").textContent + " | " + r.querySelector(".ag-meta").textContent);
+ok(`every worker gets a row, the one that needs you first: ${agRows.join(" / ")}`, agRows.length === 3 && /^T1: Needs you/.test(agRows[0])
+  && agRows.includes("T2: Done | DeepSeek · 3 steps · $0.004 · 1m 5s") && agRows.includes("T3: Failed | Claude · 4 steps · 1m 5s") && $$("#agents-view .ag-tile.claude").length === 1
+  && $$("#agents-view .ag-st.bad").length === 1);
+ok("the switch counts only the ones at work", text("#tab-agents") === "Agents1");
+ev("setTab('chat')");
 
-// 7. The drawer
-ev(`state.sessions = [{ sessionId: "77777777-0000-4000-8000-0000000000ee", title: "Worker W", cwd: state.home + "/projects/demo", lastModified: Date.now(), engine: "deepseek", parent: "x" },
-  { sessionId: "88888888-0000-4000-8000-0000000000ff", title: "A DeepSeek chat", cwd: state.home, lastModified: Date.now(), engine: "deepseek" }, ...state.sessions]; renderSessions()`);
-const metas = $$("#session-list .sess .meta").map(m => m.textContent);
-ok(`the drawer marks workers and DeepSeek chats: ${metas.slice(0, 2).join(" / ")}`, /· DeepSeek worker/.test(metas[0]) && /· DeepSeek$/.test(metas[1]));
-ev(`state.sessions = state.sessions.slice(2); renderSessions()`);
+// 7. The drawer: workers nested under the chat that started them, folded
+const W1 = "77777777-0000-4000-8000-0000000000e1", W2 = "77777777-0000-4000-8000-0000000000e2", ORPHAN = "77777777-0000-4000-8000-0000000000e3";
+ev(`state.links = {}; state.pending = []; delete state.liveInfo["${C}"]; state.openKids = new Set();
+  state.sessions = [{ sessionId: W1, title: "Worker one", cwd: state.home + "/projects/demo", lastModified: Date.now(), engine: "deepseek", parent: "${P}" },
+    { sessionId: W2, title: "Worker two", cwd: state.home + "/projects/demo", lastModified: Date.now(), engine: "claude", parent: "${P}" },
+    { sessionId: "${P}", title: "Plan the tidy-up", cwd: state.home + "/projects/demo", lastModified: Date.now() - 5000 },
+    { sessionId: ORPHAN, title: "Lost worker", cwd: state.home, lastModified: Date.now(), engine: "deepseek", parent: "99999999-0000-4000-8000-00000000dead" },
+    { sessionId: "88888888-0000-4000-8000-0000000000ff", title: "A DeepSeek chat", cwd: state.home, lastModified: Date.now(), engine: "deepseek" }, ...state.sessions]; renderSessions()`.replaceAll("W1", `"${W1}"`).replaceAll("W2", `"${W2}"`).replaceAll("ORPHAN", `"${ORPHAN}"`));
+const titles = () => $$("#session-list > .sess .t div:first-child").map(d => d.textContent);
+ok(`workers aren't top-level chats any more: ${titles().slice(0, 4).join(" / ")}`, !titles().includes("Worker one") && !titles().includes("Worker two") && titles().includes("Plan the tidy-up"));
+const kids = $("#session-list .sess-kids");
+ok(`under their chat, folded: "${text("#session-list .kids-toggle")}"`, kids && kids.previousElementSibling.textContent.includes("Plan the tidy-up") && text("#session-list .kids-toggle") === "› 2 workers"
+  && !kids.classList.contains("open") && $$("#session-list .sess.kid").length === 0 && $("#session-list .kids-toggle").getAttribute("aria-expanded") === "false");
+ok("a worker whose chat isn't listed stays top-level, and says it's a worker", titles().includes("Lost worker") && /· DeepSeek worker$/.test($$("#session-list > .sess").find(r => r.textContent.includes("Lost worker")).querySelector(".meta").textContent));
+$("#session-list .kids-toggle").click();
+ok(`a tap unfolds them: ${$$("#session-list .sess.kid .meta").map(m => m.textContent).join(" / ")}`, $$("#session-list .sess.kid").length === 2 && $("#session-list .sess-kids").classList.contains("open")
+  && $$("#session-list .sess.kid .meta").every(m => !/worker/.test(m.textContent)) && /· DeepSeek$/.test($$("#session-list .sess.kid .meta")[0].textContent));
+$("#session-list .kids-toggle").click();
+ok("…and folds them again", $$("#session-list .sess.kid").length === 0);
+ev(`state.pending = [{ requestId: "r-k", sessionId: "${W1}", toolName: "Bash", input: { command: "ls" }, engine: "deepseek", parent: "${P}" }]; state.current = { sessionId: "88888888-0000-4000-8000-0000000000ff", isNew: false, cwd: state.home }; renderSessions()`);
+ok(`folded, it still says one needs you, and so does its chat: "${text("#session-list .kids-toggle")}"`, text("#session-list .kids-toggle") === "› 2 workers · 1 needs you"
+  && $$("#session-list > .sess").find(r => r.textContent.includes("Plan the tidy-up")).querySelector(".dot.waiting") !== null);
+ev(`const q = document.querySelector("#session-search"); q.value = "worker one"; q.dispatchEvent(new window.Event("input"))`);
+ok("a search finds a worker by itself", titles().includes("Worker one") && !$("#session-list .sess-kids"));
+ev(`const q = document.querySelector("#session-search"); q.value = ""; q.dispatchEvent(new window.Event("input"))`);
+ev(`state.current = { sessionId: "${W2}", isNew: false, cwd: state.home }; renderSessions()`);
+ok("the worker on screen is never folded away", $$("#session-list .sess.kid.on").length === 1);
+ev(`state.pending = []; state.openKids = new Set(); state.sessions = state.sessions.slice(5); renderSessions()`);
 
-// 8. The worker's card in the calling chat
+// 8. The handoff in the calling chat: one quiet line (the big worker card is gone)
 const CHILD = "99999999-0000-4000-8000-000000000123";
 ev(`state.current = { sessionId: "${P}", cwd: state.home, title: "Plan", isNew: false, lastSeq: 0, engine: "claude" }; state.links = {}; chat.reset(); hideEmpty();
+  state.pending = [{ requestId: "r-ho", sessionId: "${P}", toolName: "mcp__pocket__deepseek_task", toolUseID: "toolu_card1", input: { task: "x" }, suggestions: [] }];
   chat.event({ type: "assistant", uuid: "u-dl-1", message: { id: "m-dl-1", content: [{ type: "tool_use", id: "toolu_card1", name: "mcp__pocket__deepseek_task",
     input: { task: "## Add the CONTRIBUTORS file\\n\\nList the authors.", title: "Add the CONTRIBUTORS file" } }] } })`);
-const card = $("#messages > .tool.dl");
-ok("the worker's card stands on its own in the chat, open", card && card.open && !card.closest(".steps") && text("#messages .tool.dl .tn") === "DeepSeek worker" && text("#messages .tool.dl .ts") === "Add the CONTRIBUTORS file");
-ok("before the link: no Open link yet", $("#messages .tool.dl .dl-open").hidden);
+const line = () => text("#messages > .handoff");
+ok(`one line, no card: "${line()}"`, $$("#messages > .handoff").length === 1 && !$("#messages .tool.dl") && !$("#messages .tool") && line() === "Sending to DeepSeek: Add the CONTRIBUTORS file · needs your OK›"
+  && $("#messages .hl-st.needs") !== null);
+ok("styled like the steps line: a thumb high, quiet", (w.getComputedStyle($("#messages .handoff-line")).minHeight || "") === "44px");
+ev(`sheet.close(true); state.pending = []; dsRefreshHandoffs()`);
+ok(`once allowed, the worker starts: "${line()}"`, line() === "Sent to DeepSeek: Add the CONTRIBUTORS file · starting›" && $("#messages .handoff").classList.contains("working"));
 ev(`conn.fire("link", { parent: "${P}", child: "${CHILD}", engine: "deepseek", title: "Add the CONTRIBUTORS file", toolUseId: "toolu_card1" });
   state.liveInfo["${CHILD}"] = { sessionId: "${CHILD}", state: "running", engine: "deepseek", parent: "${P}" }`);
 await sleep(150);
-ok(`once the worker starts, the card links to it: "${text("#messages .tool.dl .dl-head")}"`, !$("#messages .tool.dl .dl-open").hidden && /Working…/.test(text("#messages .tool.dl .dl-st")));
-ev(`delete state.liveInfo["${CHILD}"]; chat.event({ type: "user", uuid: "u-dl-2", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_card1",
+ok(`…then works: "${line()}"`, line() === "Sent to DeepSeek: Add the CONTRIBUTORS file · working›" && $("#messages .handoff").classList.contains("working"));
+ev(`state.pending = [{ requestId: "r-c", sessionId: "${CHILD}", toolName: "Bash", input: { command: "git log" }, engine: "deepseek", parent: "${P}" }]; dsRefreshHandoffs()`);
+ok(`…and needs you when it asks: "${line()}"`, line() === "Sent to DeepSeek: Add the CONTRIBUTORS file · needs you›" && $("#messages .hl-st.needs") !== null);
+ev(`state.pending = []; delete state.liveInfo["${CHILD}"]; chat.event({ type: "user", uuid: "u-dl-2", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_card1",
   content: "DeepSeek worker: done\\nChat: ${CHILD}\\nTitle: Add the CONTRIBUTORS file\\nFolder: /root/projects/demo\\nModel: deepseek-flash · 3m 12s · about $0.031\\nChanged: 2 files\\n  M README.md\\n  ?? CONTRIBUTORS\\n---\\nI added **CONTRIBUTORS** with 3 names." }] } })`);
-ok(`the report: "${text("#messages .tool.dl .dl-st")}"`, text("#messages .tool.dl .dl-st") === "Done · 2 files changed · 3m 12s · about $0.031" && $("#messages .tool.dl .st.ok") !== null);
-ok("the report shows the changed files and the worker's last message", /M README\.md/.test(text("#messages .tool.dl .dl-files")) && $("#messages .tool.dl .tout .md strong")?.textContent === "CONTRIBUTORS");
-ok("the links bar learns how it ended", ev(`state.links["${CHILD}"]?.result`) === "done");
-ev(`state.sessions = [{ sessionId: "${CHILD}", title: "Add the CONTRIBUTORS file", cwd: state.home, lastModified: Date.now(), engine: "deepseek", parent: "${P}" }, ...state.sessions]; state.links["${CHILD}"] = { result: "stopped" }; renderLinksBar()`);
-ok("…even when only the chat list knows the worker's parent", /Add the CONTRIBUTORS file · stopped/.test(text("#links-bar")));
-ev(`state.sessions = state.sessions.slice(1); state.links["${CHILD}"] = { parent: "${P}", result: "done" }`);
-ev(`state.links = {}; window.__opened = null; window.__realOpen = openSession; openSession = id => { __opened = id; }`);
-$("#messages .tool.dl .dl-open").click();
-ok("Open chat › opens the worker from the report's Chat: line", ev("__opened") === CHILD);
-ev(`openSession = __realOpen`);
+ok(`the report says how it went: "${line()}"`, line() === "Sent to DeepSeek: Add the CONTRIBUTORS file · done›" && !$("#messages .handoff").classList.contains("working") && ev(`state.links["${CHILD}"]?.result`) === "done");
+ev(`renderTabs()`);
+const done = ev(`JSON.stringify(chatAgents().find(a => a.id === "${CHILD}"))`);
+ok(`its row takes the time and cost from the report, and what changed: ${done}`, /"now":"Done|"now":"2 files changed"/.test(done) && /"ms":192000/.test(done) && /"usd":0\.031/.test(done));
+ev(`window.__opened = null; window.__realPage = openWorkerPage; openWorkerPage = id => { __opened = id; }`);
+$("#messages .handoff-line").click();
+ok("a tap opens that worker on the Agents tab", ev("__opened") === CHILD && ev("state.tab") === "agents");
+ev(`openWorkerPage = __realPage; setTab("chat")`);
+// stopped, denied, failed to start, asking Claude, a follow-up
 ev(`chat.event({ type: "assistant", uuid: "u-dl-3", message: { id: "m-dl-3", content: [{ type: "tool_use", id: "toolu_card2", name: "mcp__pocket__deepseek_task", input: { task: "Do more." } }] } });
   chat.event({ type: "user", uuid: "u-dl-4", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_card2", is_error: true,
-    content: "DeepSeek worker: stopped\\nChat: ${CHILD}\\nModel: deepseek-flash · 12s · about $0.002\\nChanged: nothing\\n---\\n" }] } })`);
-ok(`a stopped worker: "${text("#messages .tool.dl:last-of-type .dl-st")}"`, /^Stopped · no files changed · 12s/.test([...$$("#messages .tool.dl")].pop().querySelector(".dl-st").textContent));
-ev(`chat.event({ type: "assistant", uuid: "u-dl-5", message: { id: "m-dl-5", content: [{ type: "text", text: "Reviewed." }] } }); chat.event({ type: "result", subtype: "success", duration_ms: 900 }); chat.event({ type: "pa_cost", usd: 0.0042 })`);
+    content: "DeepSeek worker: stopped\\nChat: ${CHILD}\\nModel: deepseek-flash · 12s · about $0.002\\nChanged: nothing\\n---\\n" }] } });
+  chat.event({ type: "assistant", uuid: "u-dl-5", message: { id: "m-dl-5", content: [{ type: "tool_use", id: "toolu_card3", name: "mcp__pocket__deepseek_task", input: { task: "Never mind.", title: "Rename things" } }] } });
+  chat.event({ type: "user", uuid: "u-dl-6", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_card3", is_error: true, content: "The user doesn't want to proceed with this tool use. The tool use was rejected." }] } });
+  chat.event({ type: "assistant", uuid: "u-dl-7", message: { id: "m-dl-7", content: [{ type: "tool_use", id: "toolu_card4", name: "mcp__pocket__deepseek_task", input: { task: "Elsewhere.", title: "Build it", cwd: "/nope" } }] } });
+  chat.event({ type: "user", uuid: "u-dl-8", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_card4", is_error: true, content: "Folder not found: /nope" }] } });
+  chat.event({ type: "assistant", uuid: "u-dl-9", message: { id: "m-dl-9", content: [{ type: "tool_use", id: "toolu_card5", name: "mcp__pocket__claude_task", input: { task: "Review it.", title: "Review the change" } }] } });
+  chat.event({ type: "assistant", uuid: "u-dl-10", message: { id: "m-dl-10", content: [{ type: "tool_use", id: "toolu_card6", name: "mcp__pocket__deepseek_task", input: { task: "Fix the test.", continue_chat: "${CHILD}" } }] } })`);
+const lines = $$("#messages > .handoff").map(e => e.textContent.replace(/\s+/g, " ").trim());
+ok(`every handoff says what happened: ${lines.slice(1).join(" / ")}`, lines[1] === "Sent to DeepSeek: Do more. · stopped›" && lines[2] === "Not sent to DeepSeek: Rename things›"
+  && lines[3] === "Couldn't send to DeepSeek: Build it›" && /^Asked Claude: Review the change · (starting|done)›$/.test(lines[4]) && /^Follow-up to DeepSeek: Add the CONTRIBUTORS file/.test(lines[5])
+  && $$("#messages .hl-st.bad").length === 1);
+$$("#messages .handoff-line")[3].click();
+ok(`one that never ran shows what was asked and what came back: "${text("#sheet h2")}"`, ev("sheet.key") === "handoff" && text("#sheet h2") === "Couldn't send to DeepSeek" && /Folder not found: \/nope/.test(text("#sheet")) && /Elsewhere\./.test(text("#sheet .dl-task")));
+ev("sheet.close(true)");
+ok("the chat's export keeps the handoff lines", /> Sent to DeepSeek: Add the CONTRIBUTORS file · done/.test(ev("chat.toMarkdown()")));
+ev(`chat.event({ type: "assistant", uuid: "u-dl-11", message: { id: "m-dl-11", content: [{ type: "text", text: "Reviewed." }] } }); chat.event({ type: "result", subtype: "success", duration_ms: 900 }); chat.event({ type: "pa_cost", usd: 0.0042 })`);
 ok(`a DeepSeek turn's cost on its result line: "${text("#messages > .result-line:last-of-type")}"`, /≈ \$0\.004/.test([...$$("#messages > .result-line")].pop().textContent));
+
+// 9. A worker's approval shows in the chat that started it, headed with the worker (#52)
+const WK = "abababab-0000-4000-8000-0000000000a1";
+ev(`state.links["${WK}"] = { parent: "${P}", engine: "deepseek", title: "Add README" }; state.liveInfo["${P}"] = { sessionId: "${P}", state: "running", engine: "claude", cwd: state.home };
+  state.liveInfo["${WK}"] = { sessionId: "${WK}", state: "waiting", engine: "deepseek", parent: "${P}" }; state.activity["${P}"] = { phase: "tool", label: "DeepSeek is working", detail: "Add README", turnStart: Date.now() - 5000, since: Date.now(), steps: [], tokens: {} };
+  __calls.length = 0; conn.fire("permission.request", { requestId: "r-wk", sessionId: "${WK}", toolName: "Bash", input: { command: "npm test", description: "Run the tests" }, engine: "deepseek", parent: "${P}", title: "Add README", suggestions: [{ type: "addRules" }] })`);
+await sleep(100);
+ok(`the calling chat shows it: "${text("#sheet h2")}"`, ev("sheet.key") === "perm:r-wk" && text("#sheet h2") === "DeepSeek · Add README wants to run npm test" && $("#sheet h2 code")?.textContent === "npm test"
+  && $("#sheet h2 .eng-deepseek")?.textContent === "DeepSeek");
+ok("a short command is in the heading, so only its description follows", !$("#sheet .perm-detail pre") && /Run the tests/.test(text("#sheet .perm-detail")));
+ok(`Allow / Allow all for this worker / Deny: ${$$("#sheet .btn").map(b => b.textContent).join(" / ")}`, $$("#sheet .btn").map(b => b.textContent).join(" / ") === "Allow / Allow all for this worker / Deny");
+ok("it isn't counted as another chat's (no drawer badge), and the chat says it needs approval", $("#menu-badge").hidden && /needs approval/.test(text("#chat-sub")));
+ok(`the activity bar says so too: "${text("#activity")}"`, !$("#activity").hidden && $("#activity").classList.contains("approval") && /DeepSeek · Add README wants to run npm test/.test(text("#activity .a-detail")));
+$('#sheet [data-a="all"]').click();
+await sleep(50);
+ok("Allow all for this worker answers the worker's request with allowAll", ev(`__calls.some(([t, m]) => t === "permission.reply" && m.sessionId === "${WK}" && m.requestId === "r-wk" && m.behavior === "allow" && m.allowAll === true)`) && !ev("sheet.isOpen"));
+ev(`state.pending = []; conn.fire("permission.request", { requestId: "r-wk2", sessionId: "${WK}", toolName: "Bash", input: { command: "cat <<EOF > notes.md\\nlong\\nEOF" }, engine: "deepseek", parent: "${P}", title: "Add README" })`);
+await sleep(50);
+ok(`a longer command: "${text("#sheet h2")}", shown whole below`, text("#sheet h2") === "DeepSeek · Add README wants to run a command" && /cat <<EOF > notes\.md/.test(text("#sheet .perm-detail pre")));
+$('#sheet [data-a="deny"]').click();
+await sleep(50);
+ok("Deny answers the worker", ev(`__calls.some(([t, m]) => t === "permission.reply" && m.requestId === "r-wk2" && m.behavior === "deny")`));
+ev(`state.pending = []; conn.fire("permission.request", { requestId: "r-wq", sessionId: "${WK}", toolName: "AskUserQuestion", engine: "deepseek", parent: "${P}", title: "Add README", input: { questions: [{ question: "Which licence?", options: [{ label: "MIT" }] }] } })`);
+await sleep(50);
+ok(`its question, headed the same: "${text("#sheet h2")}"`, text("#sheet h2") === "DeepSeek · Add README has a question" && $$("#sheet .opt").length === 1);
+ev(`sheet.close(true); state.pending = []`);
+ev(`state.current = { sessionId: "cdcdcdcd-0000-4000-8000-0000000000c1", cwd: state.home, title: "Other", isNew: false, lastSeq: 0 }; conn.fire("permission.request", { requestId: "r-other", sessionId: "${WK}", toolName: "Bash", input: { command: "ls" }, engine: "deepseek", parent: "${P}", title: "Add README" })`);
+await sleep(50);
+ok("in another chat it doesn't pop up; the drawer badge says a chat needs you", !ev("sheet.isOpen") && !$("#menu-badge").hidden);
+ev(`state.current = { sessionId: "${WK}", cwd: state.home, title: "Add README", isNew: false, lastSeq: 0, engine: "deepseek" }; updateHeader(); showNextPermission()`);
+ok("opened as a chat, the worker shows its own request, headed the same", ev("sheet.key") === "perm:r-other" && /^DeepSeek · Add README wants to run ls/.test(text("#sheet h2")));
+ok(`a worker opened as a chat says what it is: "${text("#chat-sub")}"`, / · DeepSeek worker/.test(text("#chat-sub")));
+ev(`sheet.close(true); state.pending = []; delete state.liveInfo["${WK}"]; delete state.liveInfo["${P}"]`);
+
+// 10. A worker's page: its own conversation, live, with Stop and Open as chat
+ev(`state.current = { sessionId: "${P}", cwd: state.home, title: "Plan", isNew: false, lastSeq: 0, engine: "claude" }; chat.reset(); hideEmpty();
+  state.liveInfo["${WK}"] = { sessionId: "${WK}", state: "running", engine: "deepseek", parent: "${P}", spend: 0.002, title: "Add README" };
+  const real2 = conn.call; window.__real2 = real2;
+  conn.call = (t, m = {}) => t === "session.history" && m.sessionId === "${WK}" ? Promise.resolve({ messages: [
+      { type: "user", uuid: "b1", message: { role: "user", content: "[Pocket Agent] You're a DeepSeek worker. The Claude chat \\"Plan\\" sent you this task, and the person approved it. Work in /w.\\n\\n## Add README\\n\\nWrite it." } },
+      { type: "assistant", uuid: "b2", message: { id: "n2", content: [{ type: "tool_use", id: "tb1", name: "Bash", input: { command: "ls", description: "Look around" } }] } }] })
+    : t === "subscribe" && m.sessionId === "${WK}" ? Promise.resolve({ info: { ...state.liveInfo["${WK}"], seq: 7 } }) : real2(t, m);
+  setTab("agents"); openWorkerPage("${WK}")`);
+await until(() => $(".ag-page .task-msg"), 5000, "the worker's page");
+ok(`its page: the task as a task, not as a message from you: "${text(".ag-page .task-msg summary")}"`, text("#page-title") === "Add README" && text(".ag-page .task-msg .tm-h") === "Task from “Plan”"
+  && text(".ag-page .task-msg .tm-first") === "Add README" && !$(".ag-page .user-msg") && $(".ag-page .task-msg .md h2")?.textContent === "Add README");
+ok("a step still running shows as running", /^Running /.test(text(".ag-page .steps .sl-t")) && $(".ag-page .steps.running") !== null);
+ok(`its head: "${text(".ag-hst")}" · "${text(".ag-hmeta")}", Stop and Open as chat`, /^Working/.test(text(".ag-hst")) && /^DeepSeek · /.test(text(".ag-hmeta")) && !$('.ag-head [data-a="stop"]').hidden && $('.ag-head [data-a="open"]'));
+ev(`conn.fire("ev", { sessionId: "${WK}", seq: 8, ev: { type: "assistant", uuid: "b3", message: { id: "n3", content: [{ type: "text", text: "Wrote README.md." }] } } });
+  conn.fire("ev", { sessionId: "${WK}", seq: 6, ev: { type: "assistant", uuid: "b0", message: { id: "n0", content: [{ type: "text", text: "An old event." }] } } })`);
+ok("live events of that worker show on its page, not in the chat", /Wrote README\.md\./.test(text(".ag-page .ag-chat")) && !/An old event/.test(text(".ag-page")) && !/Wrote README/.test(text("#messages")));
+ok("its page has no edit or retry (that's for the chat itself)", !$(".ag-page [data-a='edit']") && !$(".ag-page [data-a='retry']"));
+$('.ag-head [data-a="stop"]').click();
+await sleep(50);
+ok("Stop stops that worker", ev(`__calls.some(([t, m]) => t === "interrupt" && m.sessionId === "${WK}")`));
+ev(`window.__opened = null; window.__realOpen = openSession; openSession = id => { __opened = id; state.current = { sessionId: id, cwd: state.home, title: "Add README", isNew: false, lastSeq: 0 }; return Promise.resolve(); }`);
+$('.ag-head [data-a="open"]').click();
+await sleep(50);
+ok("Open as chat opens the worker as a chat", ev("__opened") === WK && $("#page").hidden && ev(`__calls.some(([t, m]) => t === "unsubscribe" && m.sessionId === "${WK}")`));
+ev(`openSession = id => { __opened = id; state.current = { sessionId: id, cwd: state.home, title: "Plan", isNew: false, lastSeq: 0 }; return Promise.resolve(); }; openWorkerPage = id => { window.__page = id; }`);
+ok("Android back from there returns to the chat that started it, on its Agents tab", w.paBack() === true && ev("__opened") === P);
+await sleep(50);
+ok("…with that worker's page open again", ev("state.tab") === "agents" && ev("window.__page") === WK);
+ev(`openSession = __realOpen; openWorkerPage = __realPage; conn.call = __real2; setTab("chat"); delete state.liveInfo["${WK}"]`);
 
 console.log(errors.length ? "\nPAGE ERRORS:\n" + errors.join("\n") : "\nno page errors");
 if (errors.length) fails++;

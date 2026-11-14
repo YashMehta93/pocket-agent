@@ -334,7 +334,7 @@ class ChatView {
   /** deepseek_task / claude_task: one quiet line where the handoff happened ("Sent to DeepSeek: Add README · done ›").
    *  The card keeps the usual fields (detached) so results and statuses flow as for any tool. */
   handoffCard(id, name, input, parentId, live) {
-    const el = h(`<div class="handoff"><button class="handoff-line"><span class="spark"></span><span class="sl-t"></span><span class="hl-st"></span><span class="chev" aria-hidden="true">›</span></button></div>`);
+    const el = h(`<div class="handoff"><button class="handoff-line"><span class="spark"></span><span class="hl-x"><span class="sl-t"></span><span class="hl-st"></span></span><span class="chev" aria-hidden="true">›</span></button></div>`);
     const card = { id, name, input, el, body: document.createElement("div"), summaryEl: document.createElement("span"), stEl: document.createElement("span"), status: live ? "run" : "done", handoff: true };
     el._card = card;
     this.tools.set(id, card);
@@ -486,7 +486,7 @@ class ChatView {
     this.root.querySelectorAll(".user-msg-wrap, .md:not(.tool .md):not(.thinking .md):not(.task-msg .md), .tool, .handoff, .task-msg").forEach(el => {
       if (el.classList.contains("user-msg-wrap")) parts.push("**You:** " + el.querySelector(".bubble").textContent);
       else if (el.classList.contains("tool")) parts.push(`> ${el.querySelector(".tn").textContent}: ${el.querySelector(".ts").textContent}`);
-      else if (el.classList.contains("handoff")) parts.push("> " + el.querySelector(".handoff-line").textContent.replace(/›\s*$/, "").trim());
+      else if (el.classList.contains("handoff")) parts.push("> " + el.querySelector(".handoff-line").textContent.replace(/›\s*$/, "").replace(/\s+/g, " ").trim());
       else if (el.classList.contains("task-msg")) parts.push(`**${el.querySelector(".tm-h").textContent}:**\n\n` + el.querySelector(".md").innerText);
       else parts.push(el.innerText);
     });

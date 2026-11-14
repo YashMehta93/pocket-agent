@@ -365,7 +365,8 @@ conn.on("link", m => {
   const run = "result" in m ? { result: m.result, steps: m.steps, ms: m.ms, usd: m.usd, endedAt: m.endedAt } : { runAt: Date.now(), result: null, steps: null, ms: null, usd: null, endedAt: null };
   state.links[m.child] = { ...state.links[m.child], parent: m.parent, engine: m.engine, title: m.title, toolUseId: m.toolUseId, at: state.links[m.child]?.at || Date.now(), ...run };
   // the worker's own state events follow once it has its task; until then it's starting
-  if (!("result" in m) && !state.liveInfo[m.child]) state.liveInfo[m.child] = { sessionId: m.child, state: "starting", parent: m.parent, engine: m.engine, title: m.title };
+  if (!("result" in m) && !state.liveInfo[m.child]) state.liveInfo[m.child] = { sessionId: m.child, state: "starting", parent: m.parent, engine: m.engine, title: m.title, placeholder: true };
+  else if ("result" in m && state.liveInfo[m.child]?.placeholder) delete state.liveInfo[m.child];
   dsSoon();
 });
 conn.on("deepseek", m => { if (m.deepseek) dsSetStatus(m.deepseek); });
@@ -446,7 +447,7 @@ function handoffState(card) {
     failed: follow ? `Couldn't send the follow-up to ${ds ? "DeepSeek" : "Claude"}` : ds ? "Couldn't send to DeepSeek" : "Couldn't ask Claude",
   })[kind];
   if (r?.status) return { lead: lead("sent"), title, status: r.status, tone: r.status === "done" ? "" : "bad" };
-  if (r) return card.denied || /denied|rejected|doesn't want|did not want|not want to proceed/i.test(r.raw) ? { lead: lead("denied"), title, status: "", tone: "" } : { lead: lead("failed"), title, status: "", tone: "bad" };
+  if (r) return card.denied || /denied|rejected|doesn't want|did not want|not want to proceed/i.test(r.raw) ? { lead: lead("denied"), title, status: "", tone: "" } : { lead: lead("failed"), title, status: "", tone: "" };
   if (state.pending.some(p => p.toolUseID === card.id)) return { lead: lead("asking"), title, status: "needs your OK", tone: "needs" };
   const child = card.child;
   if (child) {

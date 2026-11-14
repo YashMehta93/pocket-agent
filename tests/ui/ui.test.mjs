@@ -102,16 +102,47 @@ ev(`document.querySelector("#set-q").value = ""; document.querySelector("#set-q"
 ok("a category opens its own page with its controls", ev("document.querySelector('#page-title').textContent") === "Appearance" && $$("#page-body .set-row").length >= 3 && $$("#page-body #s-theme button").length === 3);
 ev(`document.querySelector('#s-theme button[data-v="dark"]').click()`); ok("a setting works from its category page", ev("settings.theme") === "dark"); ev(`settings.theme = "system"; saveSettings()`);
 ev("page.close()");
-// background agents: a line above the message box, a sheet listing them, a page per agent
+// agents Claude started (#52): the Chat · Agents switch under the header, the Agents tab, a page per agent
+const tx = s => ($(s)?.textContent || "").replace(/\s+/g, " ").trim();
+ev(`renderTabs()`);
+ok("a chat that started no agents has no switch", $("#chat-tabs").hidden && !$("#agents-line") && !$("#links-bar"));
 ev(`state.liveInfo[state.current.sessionId] = { ...(state.liveInfo[state.current.sessionId] || {}), tasks: [
   { id: "a1234567890abcdef", kind: "agent", agentType: "general-purpose", description: "Research DeepSeek", status: "running", activity: "Reading the API docs", tokens: 23548, tools: 4, startedAt: Date.now() - 90000 },
-  { id: "box1", kind: "command", description: "Run the tests", status: "completed", summary: "Run the tests", startedAt: Date.now() - 60000, endedAt: Date.now() } ] }; renderAgentsLine()`);
-ok("a line shows the agents at work", !$("#agents-line").hidden && /1 agent working · 1 command done/.test($("#agents-line").textContent));
-$("#agents-line").click();
-ok("tapping it lists each with what it's doing now", ev("sheet.key") === "agents" && $$("#sheet .ag-row").length === 2 && $("#sheet").textContent.includes("Reading the API docs") && $("#sheet").textContent.includes("23.5k tokens"));
-ev("sheet.close(true)");
-ev(`delete state.liveInfo[state.current.sessionId].tasks; renderAgentsLine()`);
-ok("no agents, no line", $("#agents-line").hidden);
+  { id: "box1", kind: "command", description: "Run the tests", status: "completed", summary: "Run the tests", startedAt: Date.now() - 60000, endedAt: Date.now() } ] }; renderTabs()`);
+ok(`the switch shows under the header, counting the agents at work: "${tx("#chat-tabs")}"`, !$("#chat-tabs").hidden && $("#chat-tabs").previousElementSibling === $("#topbar")
+  && tx("#tab-chat") === "Chat" && tx("#tab-agents") === "Agents1" && $("#tab-agents .tdot").hidden && $("#tab-chat").getAttribute("aria-selected") === "true"
+  && $("#tab-agents").getAttribute("aria-label") === "Agents, 1 at work");
+$("#tab-agents").click();
+ok("the Agents tab takes the chat's place (the message box goes with it)", ev("state.tab") === "agents" && !$("#agents-view").hidden && w.getComputedStyle($("#chat")).display === "none"
+  && w.getComputedStyle($("#composer")).display === "none" && $("#tab-agents").getAttribute("aria-selected") === "true");
+const agRows = $$("#agents-view .ag-row");
+ok(`one row per agent, working first: ${agRows.map(r => r.querySelector(".ag-ti").textContent).join(" / ")}`, agRows.length === 2 && agRows[0].querySelector(".ag-ti").textContent === "Research DeepSeek"
+  && tx("#agents-view .ag-row .ag-now") === "Working · Reading the API docs" && /^Subagent · 4 steps · 23\.5k tokens · 1m 3\ds$/.test(tx("#agents-view .ag-row .ag-meta"))
+  && agRows[0].querySelector(".ag-tile .spark") && agRows[1].querySelector(".ag-now").textContent === "Done" && /^Command · /.test(agRows[1].querySelector(".ag-meta").textContent));
+ok("each row is a thumb high or more", parseFloat(w.getComputedStyle(agRows[0]).minHeight) >= 56);
+agRows[0].click();
+await sleep(200);
+ok(`a row opens the agent's page: "${tx("#page-title")}" · ${tx(".ag-hst")}`, !$("#page").hidden && tx("#page-title") === "Research DeepSeek" && $("#page-title").classList.contains("ltr")
+  && tx(".ag-hst") === "Working · Reading the API docs" && !$('.ag-head [data-a="stop"]').hidden && !$('.ag-head [data-a="open"]'));
+ev("page.back()");
+ok("back returns to the Agents tab", $("#page").hidden && ev("state.tab") === "agents" && !$("#agents-view").hidden);
+ev(`state.liveInfo[state.current.sessionId].tasks[0].activity = "Writing the summary"; conn.fire("tasks", { sessionId: state.current.sessionId, tasks: state.liveInfo[state.current.sessionId].tasks })`);
+await sleep(150);
+ok("rows update in place as agents work", $$("#agents-view .ag-row")[0] === agRows[0] && /Writing the summary/.test(tx("#agents-view .ag-row .ag-now")));
+ok("Android back goes from the Agents tab to the chat", w.paBack() === true && ev("state.tab") === "chat" && w.getComputedStyle($("#chat")).display !== "none" && w.getComputedStyle($("#composer")).display !== "none");
+// a quick sideways swipe switches tabs; one that starts in something that scrolls sideways doesn't
+const swipe = (x0, x1, target = $("#messages")) => {
+  const t = (type, x) => { const e = new w.Event(type, { bubbles: true }); Object.defineProperty(e, type === "touchend" ? "changedTouches" : "touches", { value: [{ clientX: x, clientY: 300 }] }); target.dispatchEvent(e); };
+  t("touchstart", x0); t("touchend", x1);
+};
+swipe(330, 120);
+ok("a swipe to the left opens the Agents tab", ev("state.tab") === "agents");
+swipe(80, 300, $("#agents-view"));
+ok("…and to the right, the chat", ev("state.tab") === "chat");
+swipe(330, 300);
+ok("a short swipe does nothing", ev("state.tab") === "chat");
+ev(`delete state.liveInfo[state.current.sessionId].tasks; renderTabs()`);
+ok("no agents, no switch", $("#chat-tabs").hidden && ev("state.tab") === "chat");
 
 // usage limits: drawer meter, the note above the message box from 90%, the details sheet, the settings row
 ev(`state.usage = { windows: { five_hour: { used: 91, resetsAt: Date.now() + 3 * 3600e3 + 50 * 60e3, status: "allowed_warning" }, seven_day: { used: 64, resetsAt: Date.now() + 4 * 86400e3, status: "allowed" } }, models: [{ name: "Fable", used: 40, resetsAt: Date.now() + 4 * 86400e3 }], at: Date.now() }; renderUsage()`);
