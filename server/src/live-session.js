@@ -30,15 +30,28 @@ import { Inbox } from "./inbox.js";
 import { Activity, toolDetail } from "./activity.js";
 import { noteRateLimit, refreshUsage } from "./usage.js";
 import { phoneContext } from "./devtools.js";
+import { engineOptions, engineOf, recordEngine, linkOf, recordLink, detectEngine } from "./engines.js";
+import { ready as dsReady, revokeToken, requireReady, checkFolder, dsModel, isDeepseekModel, dsSettings, chatSpend } from "./deepseek.js";
+
+let toolProvider = () => undefined;
+/** delegate.js registers Pocket Agent's own MCP tools here, which keeps the import one-way (no cycle). */
+export const setToolProvider = fn => { toolProvider = fn; };
+/** Our own MCP tools (delegate.js), as opposed to a configured server that happens to use the same name. */
+const ownTool = (name, opts) => name.startsWith("mcp__pocket__") && opts?.mcpServer?.source === "sdk";
 
 /** sessionId -> LiveSession */
 export const live = new Map();
 
 export class LiveSession {
-  constructor({ sessionId, cwd, resume, model, effort, permissionMode, title }) {
+  constructor({ sessionId, cwd, resume, model, effort, permissionMode, title, engine = "claude", link = null }) {
     Object.assign(this, { sessionId, cwd, title: title || null, model: model || null, effort: effort || null,
-      permissionMode: permissionMode || "default", state: "starting", seq: 0, buffer: [], lastText: "", lastActive: Date.now() });
+      permissionMode: permissionMode || "default", state: "starting", seq: 0, buffer: [], lastText: "", lastActive: Date.now(),
+      engine: engine === "deepseek" ? "deepseek" : "claude", link: link || null });   // link: set in worker chats (engines.js)
     this.pending = new Map();   // requestId -> { resolve, info }
+    this.turnWaiters = [];      // waitTurn() callers, resolved with the turn's result
+    this.approvals = new Map(); // toolName -> [toolUseID] of our own tools the person allowed (delegate.js takes them)
+    this.allowAlways = new Set(); // our own tools the person allowed for the rest of this chat ("always")
+    this.costMark = this.engine === "deepseek" ? chatSpend(sessionId)?.usd || 0 : 0;   // for each turn's pa_cost
     this.tasks = new Map();     // task_id -> background agent or command (noteTask)
     this.inbox = new Inbox();
     this.activity = new Activity(snap => this.publishActivity(snap));
@@ -61,6 +74,9 @@ export class LiveSession {
     if (model) options.model = model;
     if (effort) options.effort = effort;
     if (resume) options.resume = sessionId; else { options.sessionId = sessionId; if (title) options.title = title; }
+    Object.assign(options, engineOptions(this));   // DeepSeek: its config dir, env, model, the tripwire (engines.js)
+    try { const servers = toolProvider(this); if (servers) options.mcpServers = servers; }
+    catch (e) { log("pocket tools not added:", e?.message); }
     this.q = query({ prompt: this.inbox, options });
     this.pump();
   }
@@ -75,7 +91,7 @@ export class LiveSession {
   publishActivity(activity) {
     broadcastAll({ t: "activity", sessionId: this.sessionId, activity });
     const { phase, label, detail, turnStart } = activity;
-    notifyNative({ type: "activity", sessionId: this.sessionId, title: this.title || "Claude", phase, label, detail, turnStart });
+    notifyNative({ type: "activity", sessionId: this.sessionId, title: this.title || "Claude", phase, label, detail, turnStart, engine: this.engine });
   }
   setState(state) {
     if (state === this.state) return;
@@ -84,13 +100,18 @@ export class LiveSession {
     this.lastActive = Date.now();
     broadcastAll({ t: "state", sessionId: this.sessionId, state, info: this.info() });
     saveWorking();
-    if (prev === "running" && state === "idle") notifyNative({ type: "done", sessionId: this.sessionId, title: this.title || "Session", text: this.lastText.slice(0, 300) });
+    if (prev === "running" && state === "idle") notifyNative({ type: "done", sessionId: this.sessionId, title: this.title || "Session", text: this.lastText.slice(0, 300), engine: this.engine });
   }
   info() {
     return { sessionId: this.sessionId, cwd: this.cwd, state: this.state, seq: this.seq, model: this.model, effort: this.effort,
       permissionMode: this.permissionMode, title: this.title, pending: [...this.pending.values()].map(p => p.info),
-      activity: this.activity.snapshot(), tasks: [...this.tasks.values()] };
+      activity: this.activity.snapshot(), tasks: [...this.tasks.values()],
+      engine: this.engine, parent: this.link?.parent || null, ...(this.engine === "deepseek" ? { spend: chatSpend(this.sessionId)?.usd ?? 0 } : {}) };
   }
+  /** Resolves with the result that ends the current (or next) turn; { type: "result", subtype: "closed" } if the chat closes first. */
+  waitTurn() { return new Promise(r => this.turnWaiters.push(r)); }
+  /** The oldest approved, not yet used call of one of our own tools (its toolUseID), or null. */
+  takeApproval(toolName) { return this.approvals.get(toolName)?.shift() || null; }
 
   // ───── SDK event loop ─────
   async pump() {
@@ -104,7 +125,8 @@ export class LiveSession {
           if (m.permissionMode && (!this.sawInit || this.permissionMode === "plan")) this.permissionMode = m.permissionMode;
           this.sawInit = true;
           if (this.state === "starting") this.setState("idle");
-          this.refreshMeta();
+          // A DeepSeek chat's models, commands and account would overwrite Claude's, and it has no Claude plan usage.
+          if (this.engine !== "deepseek") this.refreshMeta();
         } else if (m.type === "system" && m.subtype === "session_state_changed") {
           this.setState(m.state === "requires_action" ? "waiting" : m.state);
         } else if (m.type === "assistant" && !m.parent_tool_use_id) {
@@ -116,12 +138,14 @@ export class LiveSession {
         } else if (m.type === "system" && /^task_(started|progress|notification)$/.test(m.subtype || "")) {
           this.noteTask(m);
         } else if (m.type === "rate_limit_event") {
-          noteRateLimit(m.rate_limit_info);
+          if (this.engine !== "deepseek") noteRateLimit(m.rate_limit_info);
         } else if (m.type === "result") {
           if (this.state !== "waiting") this.setState("idle");
+          for (const w of this.turnWaiters.splice(0)) w(m);
         }
         if (m.type === "system" && /^hook_/.test(m.subtype || "")) continue;
         this.emit(m);
+        if (m.type === "result" && this.engine === "deepseek") this.emitCost();
       }
     } catch (e) {
       log("session error", this.sessionId.slice(0, 8), e?.message);
@@ -130,8 +154,16 @@ export class LiveSession {
     }
     for (const p of this.pending.values()) p.resolve({ behavior: "deny", message: "Session closed" });
     this.pending.clear();
+    revokeToken(this.proxyToken);
     live.delete(this.sessionId);
+    for (const w of this.turnWaiters.splice(0)) w({ type: "result", subtype: "closed" });
     this.setState("closed");
+  }
+  /** After a DeepSeek turn: what it cost (estimated), for the result line. Claude Code's own cost figure uses Claude's prices. */
+  emitCost() {
+    const now = chatSpend(this.sessionId)?.usd || 0, usd = now - this.costMark;
+    this.costMark = now;
+    if (usd > 0) this.emit({ type: "pa_cost", usd: Math.round(usd * 1e6) / 1e6 });
   }
 
   async refreshMeta() {
@@ -161,9 +193,16 @@ export class LiveSession {
 
   // ───── permissions ─────
   askPermission(toolName, input, opts) {
+    // Our own tools always ask (permission_policy always_ask), even in Bypass. The person's mode rules still apply:
+    // Bypass, or "always" earlier in this chat, means yes. The approval is recorded for delegate.js either way.
+    if (ownTool(toolName, opts) && opts?.toolUseID && (this.permissionMode === "bypassPermissions" || this.allowAlways.has(toolName))) {
+      this.noteApproval(toolName, opts.toolUseID);
+      return Promise.resolve({ behavior: "allow", updatedInput: input });
+    }
     const requestId = crypto.randomUUID();
     const info = { requestId, sessionId: this.sessionId, toolName, input, suggestions: opts?.suggestions || [],
-      decisionReason: opts?.decisionReason || null, blockedPath: opts?.blockedPath || null, title: this.title, at: Date.now() };
+      decisionReason: opts?.decisionReason || null, blockedPath: opts?.blockedPath || null, title: this.title, at: Date.now(),
+      toolUseID: opts?.toolUseID || null, mcpServer: opts?.mcpServer || null, engine: this.engine };
     return new Promise(resolve => {
       const done = r => {
         if (!this.pending.has(requestId)) return;
@@ -182,12 +221,21 @@ export class LiveSession {
       notifyNative({ type: "permission.request", ...info, input: toolDetail(toolName, input) || JSON.stringify(input).slice(0, 200) });
     });
   }
+  noteApproval(toolName, toolUseID) {
+    const list = this.approvals.get(toolName) || [];
+    list.push(toolUseID);
+    this.approvals.set(toolName, list.slice(-20));
+  }
   answer({ requestId, behavior, message, always, updatedInput }) {
     const p = this.pending.get(requestId);
     if (!p) return false;
     if (behavior === "allow") {
       const r = { behavior: "allow", updatedInput: updatedInput || p.info.input };
       if (always && p.info.suggestions?.length) r.updatedPermissions = p.info.suggestions;
+      if (ownTool(p.info.toolName, p.info) && p.info.toolUseID) {   // delegate.js runs the call only with this
+        this.noteApproval(p.info.toolName, p.info.toolUseID);
+        if (always) this.allowAlways.add(p.info.toolName);
+      }
       p.resolve(r);
     } else {
       p.resolve({ behavior: "deny", message: message || "The user denied this action.", interrupt: !message });
@@ -212,10 +260,11 @@ export class LiveSession {
     if (model !== undefined) { await this.q.setModel(model || undefined); this.model = model || null; }
     if (permissionMode) { await this.q.setPermissionMode(permissionMode); this.permissionMode = permissionMode; }
     rememberChatSettings(this.sessionId, { model, effort, permissionMode });
-    if (effort !== undefined) { await this.q.applyFlagSettings({ effortLevel: effort || null }); this.effort = effort || null; }
+    // DeepSeek's default effort is max (engines.js), so "default" there means max, not Claude Code's own default.
+    if (effort !== undefined) { await this.q.applyFlagSettings({ effortLevel: effort || (this.engine === "deepseek" ? "max" : null) }); this.effort = effort || null; }
     broadcastAll({ t: "state", sessionId: this.sessionId, state: this.state, info: this.info() });
   }
-  close() { this.inbox.end(); try { this.q.close(); } catch {} }
+  close() { revokeToken(this.proxyToken); this.inbox.end(); try { this.q.close(); } catch {} }
 }
 
 export function getLive(sessionId) {
@@ -234,13 +283,20 @@ const opening = new Map();
  */
 export function openSession(m) {
   const id = m.sessionId;
-  if (id && live.has(id)) return Promise.resolve(live.get(id));
+  if (id && live.has(id)) { const s = live.get(id); try { checkEngine(s.engine, m.engine); } catch (e) { return Promise.reject(e); } return Promise.resolve(s); }
   if (id && opening.has(id)) return opening.get(id);
   const p = startSession(m);
   if (id) { opening.set(id, p); p.then(() => opening.delete(id), () => opening.delete(id)); }
   return p;
 }
-async function startSession({ sessionId, cwd, model, effort, permissionMode, title }) {
+/** A chat keeps its engine: asking for the other one fails with ENGINE_FIXED. */
+export function checkEngine(actual, wanted) {
+  if (!wanted || wanted === actual) return;
+  const name = e => e === "deepseek" ? "DeepSeek" : "Claude";
+  throw Object.assign(new Error(`This chat runs on ${name(actual)}. Start a new chat to use ${name(wanted)}.`), { code: "ENGINE_FIXED" });
+}
+async function startSession({ sessionId, cwd, model, effort, permissionMode, title, engine, link }) {
+  if (engine != null && engine !== "claude" && engine !== "deepseek") throw new Error(`Unknown engine: ${String(engine).slice(0, 20)}`);
   let resume = false;
   if (sessionId) {
     const info = await getSessionInfo(sessionId).catch(() => undefined);
@@ -252,12 +308,25 @@ async function startSession({ sessionId, cwd, model, effort, permissionMode, tit
   cwd = cwd || prefs.defaults.cwd || HOME;
   if (!fs.existsSync(cwd)) throw new Error(`Folder not found: ${cwd}`);
   const d = prefs.defaults, kept = chatSettings(sessionId) || {};
-  // explicit choice (from the screen) > this chat's remembered settings > the defaults
-  const s = new LiveSession({ sessionId, cwd, resume, title, model: model ?? kept.model ?? d.model, effort: effort ?? kept.effort ?? d.effort,
-    permissionMode: permissionMode ?? kept.permissionMode ?? d.permissionMode });
+  // The engine: an existing chat keeps its own (its record, else its transcript); a new one takes the asked-for one or the default.
+  const known = engineOf(sessionId) || (resume ? await detectEngine(sessionId) : null);
+  if (resume || known) { checkEngine(known || "claude", engine); engine = known || "claude"; }
+  else engine = engine || (d.engine === "deepseek" && dsReady() ? "deepseek" : "claude");   // a default needs a key; asking for DeepSeek outright doesn't fall back
+  if (engine === "deepseek") { requireReady(); checkFolder(cwd); }
+  // explicit choice (from the screen) > this chat's remembered settings > the defaults; a DeepSeek chat gets a DeepSeek
+  // model and a Claude chat never does
+  const claudeDefault = isDeepseekModel(d.model) ? undefined : d.model;
+  const want = model ?? kept.model ?? (engine === "deepseek" ? dsSettings().defaultModel : claudeDefault);
+  const useModel = engine === "deepseek" ? dsModel(want) : isDeepseekModel(want) ? claudeDefault : want;
+  const useEffort = effort ?? kept.effort ?? (engine === "deepseek" ? dsSettings().effort : d.effort);
+  recordEngine(sessionId, engine);
+  if (link) recordLink(sessionId, link);
+  const s = new LiveSession({ sessionId, cwd, resume, title, model: useModel, effort: useEffort,
+    permissionMode: permissionMode ?? kept.permissionMode ?? d.permissionMode, engine, link: link || linkOf(sessionId) });
   rememberChatSettings(sessionId, { model, effort, permissionMode });
+  if (engine === "deepseek" && !resume && model == null) rememberChatSettings(sessionId, { model: useModel });   // a new DeepSeek chat keeps its model
   live.set(sessionId, s);
-  log("opened", sessionId.slice(0, 8), resume ? "resume" : "new", cwd);
+  log("opened", sessionId.slice(0, 8), resume ? "resume" : "new", engine === "deepseek" ? "on DeepSeek" : "", cwd);
   return s;
 }
 
@@ -291,7 +360,8 @@ export function runClaude(args, timeoutMs = 30000) {
 setInterval(() => {
   for (const s of live.values()) {
     const watched = [...clients].some(c => c.subs.has(s.sessionId));
-    if (s.state === "idle" && !watched && Date.now() - s.lastActive > IDLE_CLOSE_MS) { log("idle close", s.sessionId.slice(0, 8)); s.close(); }
+    const limit = s.link ? 5 * 60e3 : IDLE_CLOSE_MS;   // a worker nobody watches: its caller has its report
+    if (s.state === "idle" && !watched && Date.now() - s.lastActive > limit) { log("idle close", s.sessionId.slice(0, 8)); s.close(); }
   }
 }, 60_000).unref();
 
