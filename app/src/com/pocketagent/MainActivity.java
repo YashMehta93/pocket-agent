@@ -359,7 +359,8 @@ public class MainActivity extends Activity {
                     ContentValues v = new ContentValues();
                     v.put(MediaStore.Images.Media.DISPLAY_NAME, "pocket-agent-" + System.currentTimeMillis() + ".jpg");
                     v.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-                    v.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Pocket Agent");
+                    // RELATIVE_PATH is an Android 10+ column; older versions reject the insert ("Camera not available").
+                    if (Build.VERSION.SDK_INT >= 29) v.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Pocket Agent");
                     photoUri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v);
                     startActivityForResult(new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT, photoUri), REQ_PHOTO);
                 } catch (Exception e) { toast("Camera not available"); }
@@ -372,10 +373,20 @@ public class MainActivity extends Activity {
                     getWindow().setStatusBarColor(color);
                     getWindow().setNavigationBarColor(color);
                     web.setBackgroundColor(color);
-                    WindowInsetsController c = getWindow().getInsetsController();
-                    if (c != null) {
-                        int light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
-                        c.setSystemBarsAppearance("light".equals(mode) ? light : 0, light);
+                    boolean lightBars = "light".equals(mode);
+                    if (Build.VERSION.SDK_INT >= 30) {
+                        WindowInsetsController c = getWindow().getInsetsController();
+                        if (c != null) {
+                            int light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                            c.setSystemBarsAppearance(lightBars ? light : 0, light);
+                        }
+                    } else {
+                        // Android 8–10 has no WindowInsetsController: calling it there is a NoSuchMethodError,
+                        // which the catch below doesn't cover, so the app died as soon as the UI set its theme.
+                        View decor = getWindow().getDecorView();
+                        int light = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                        int flags = decor.getSystemUiVisibility();
+                        decor.setSystemUiVisibility(lightBars ? flags | light : flags & ~light);
                     }
                 } catch (Exception ignored) {}
             });
