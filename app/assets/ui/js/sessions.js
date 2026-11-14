@@ -126,6 +126,7 @@ async function openSession(sessionId, { keepScroll } = {}) {
     // Live session: get only events newer than what the transcript already shows.
     const sub = await conn.call("subscribe", { sessionId, after: 1e15 });
     if (sub.info) { state.liveInfo[sessionId] = sub.info; state.current.lastSeq = sub.info.seq; if (sub.info.activity) state.activity[sessionId] = sub.info.activity; }
+    else if (sub.settings) Object.assign(state.current, { model: sub.settings.model ?? null, effort: sub.settings.effort ?? null, permissionMode: sub.settings.permissionMode || state.current.permissionMode });
   } catch (e) { chat.note("Couldn't load this chat: " + e.message, true); }
   setStatus(null);
   if (chat.empty) showEmpty();

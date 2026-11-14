@@ -68,7 +68,9 @@ async function send(textOverride) {
     hideEmpty();
     const s = currentSettings();
     const msg = { sessionId: cur.sessionId, text, images };
-    if (cur.isNew) Object.assign(msg, { cwd: cur.cwd, model: s.model || undefined, effort: s.effort || undefined, permissionMode: s.permissionMode });
+    // A new chat, or one whose process was closed (idle, restart): start it with what the composer shows.
+    if (cur.isNew || !state.liveInfo[cur.sessionId]) Object.assign(msg, { model: s.model || undefined, effort: s.effort || undefined, permissionMode: s.permissionMode });
+    if (cur.isNew) msg.cwd = cur.cwd;
     if (cur.isNew) { cur.isNew = false; cur.title = text.slice(0, 60); updateHeader(); }
     await conn.call("send", msg);
     scrollToBottom(true);
@@ -242,7 +244,8 @@ $("#chip-model").onclick = () => {
 async function applySetting(patch) {
   const cur = state.current;
   Object.assign(cur, patch);
-  if (state.liveInfo[cur.sessionId]) {
+  // Running chats change at once; closed ones are remembered by the server for when they reopen.
+  if (!cur.isNew) {
     try { const r = await conn.call("set", { sessionId: cur.sessionId, ...patch }); if (r.info) state.liveInfo[cur.sessionId] = r.info; } catch (e) { toast(e.message); }
   }
   updateComposer();

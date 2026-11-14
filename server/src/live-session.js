@@ -6,7 +6,25 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { query, getSessionInfo } from "@anthropic-ai/claude-agent-sdk";
-import { CLAUDE, CLAUDE_DIR, HOME, BUFFER_MAX, IDLE_CLOSE_MS, prefs, cache, saveCache, log } from "./config.js";
+import { CLAUDE, CLAUDE_DIR, HOME, BUFFER_MAX, IDLE_CLOSE_MS, prefs, savePrefs, cache, saveCache, log } from "./config.js";
+
+// Each chat's own model, effort and permission mode, kept in prefs so a chat reopened after an idle close or
+// a server restart keeps them (before, it fell back to the defaults: Default model, Ask).
+const KEEP_SETTINGS = 400;   // most recently changed chats
+export const chatSettings = id => prefs.sessionSettings?.[id] || null;
+export function rememberChatSettings(id, { model, effort, permissionMode }) {
+  if (!id) return;
+  const patch = {};
+  if (model !== undefined) patch.model = model || null;
+  if (effort !== undefined) patch.effort = effort || null;
+  if (permissionMode) patch.permissionMode = permissionMode;
+  if (!Object.keys(patch).length) return;
+  const all = prefs.sessionSettings ||= {};
+  all[id] = { ...all[id], ...patch, at: Date.now() };
+  const ids = Object.keys(all);
+  if (ids.length > KEEP_SETTINGS) ids.sort((a, b) => all[a].at - all[b].at).slice(0, ids.length - KEEP_SETTINGS).forEach(k => delete all[k]);
+  savePrefs();
+}
 import { broadcast, broadcastAll, notifyNative, clients } from "./hub.js";
 import { Inbox } from "./inbox.js";
 import { Activity, toolDetail } from "./activity.js";
@@ -79,7 +97,8 @@ export class LiveSession {
         this.activity.feed(m);
         if (m.type === "system" && m.subtype === "init") {
           this.model = m.model || this.model;
-          this.permissionMode = m.permissionMode || this.permissionMode;
+          if (m.permissionMode && (!this.sawInit || this.permissionMode === "plan")) this.permissionMode = m.permissionMode;
+          this.sawInit = true;
           if (this.state === "starting") this.setState("idle");
           this.refreshMeta();
         } else if (m.type === "system" && m.subtype === "session_state_changed") {
@@ -166,6 +185,7 @@ export class LiveSession {
   async set({ model, permissionMode, effort }) {
     if (model !== undefined) { await this.q.setModel(model || undefined); this.model = model || null; }
     if (permissionMode) { await this.q.setPermissionMode(permissionMode); this.permissionMode = permissionMode; }
+    rememberChatSettings(this.sessionId, { model, effort, permissionMode });
     if (effort !== undefined) { await this.q.applyFlagSettings({ effortLevel: effort || null }); this.effort = effort || null; }
     broadcastAll({ t: "state", sessionId: this.sessionId, state: this.state, info: this.info() });
   }
@@ -205,8 +225,11 @@ async function startSession({ sessionId, cwd, model, effort, permissionMode, tit
   sessionId = sessionId || crypto.randomUUID();
   cwd = cwd || prefs.defaults.cwd || HOME;
   if (!fs.existsSync(cwd)) throw new Error(`Folder not found: ${cwd}`);
-  const d = prefs.defaults;
-  const s = new LiveSession({ sessionId, cwd, resume, title, model: model ?? d.model, effort: effort ?? d.effort, permissionMode: permissionMode ?? d.permissionMode });
+  const d = prefs.defaults, kept = chatSettings(sessionId) || {};
+  // explicit choice (from the screen) > this chat's remembered settings > the defaults
+  const s = new LiveSession({ sessionId, cwd, resume, title, model: model ?? kept.model ?? d.model, effort: effort ?? kept.effort ?? d.effort,
+    permissionMode: permissionMode ?? kept.permissionMode ?? d.permissionMode });
+  rememberChatSettings(sessionId, { model, effort, permissionMode });
   live.set(sessionId, s);
   log("opened", sessionId.slice(0, 8), resume ? "resume" : "new", cwd);
   return s;
