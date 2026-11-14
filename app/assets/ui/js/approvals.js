@@ -69,6 +69,7 @@ function showNextPermission() {
 function askQuestionSheet(p, who) {
   const qs = p.input?.questions || [];
   const answers = {};
+  const parts = [];
   const b = sheet.open(`<h2${who ? ' class="perm-h"' : ""}>${who ? whoHtml(who) + " has" : "Claude has"} ${qs.length > 1 ? "some questions" : "a question"}</h2><div id="qs"></div>
     <div class="btns"><button class="btn primary" data-a="ok">Submit answers</button><button class="btn ghost" data-a="skip">Skip</button></div>`, { key: "perm:" + p.requestId });
   qs.forEach(q => {
@@ -77,19 +78,25 @@ function askQuestionSheet(p, who) {
     (q.options || []).forEach(o => {
       const btn = h(`<button class="opt">${icon("circle")}<div class="ot"><div>${esc(o.label)}</div><div class="od">${esc(o.description || "")}</div></div></button>`);
       btn.onclick = () => {
+        const was = chosen.has(o.label);
         if (!q.multiSelect) { chosen.clear(); blk.querySelectorAll(".opt").forEach(x => { x.classList.remove("on"); x.querySelector("svg").outerHTML = icon("circle"); }); }
-        if (chosen.has(o.label)) chosen.delete(o.label); else chosen.add(o.label);
+        if (was) chosen.delete(o.label); else chosen.add(o.label);
         btn.classList.toggle("on", chosen.has(o.label)); btn.querySelector("svg").outerHTML = icon(chosen.has(o.label) ? "ccheck" : "circle");
-        answers[q.question] = [...chosen].join(", ");
       };
       blk.append(btn);
     });
     const other = h(`<input class="field" placeholder="Other (type your own answer)">`);
-    other.oninput = () => { if (other.value.trim()) answers[q.question] = other.value.trim(); else answers[q.question] = [...chosen].join(", "); };
     blk.append(other);
     b.querySelector("#qs").append(blk);
+    parts.push({ q, chosen, other });
   });
   b.querySelector('[data-a="ok"]').onclick = async () => {
+    // answers come from the screen, not from events: a last keystroke may not have sent its input event
+    for (const { q, chosen, other } of parts) {
+      const typed = other.value.trim(), picked = [...chosen];
+      const value = q.multiSelect ? [...picked, typed].filter(Boolean).join(", ") : picked.length && typed ? picked[0] + " — " + typed : typed || picked[0] || "";
+      if (value) answers[q.question] = value;
+    }
     sheet.close(true);
     await conn.call("permission.reply", { sessionId: p.sessionId, requestId: p.requestId, behavior: "allow", updatedInput: { ...p.input, answers } }).catch(e => toast(e.message));
   };

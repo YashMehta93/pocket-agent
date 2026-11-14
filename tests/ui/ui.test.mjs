@@ -156,6 +156,24 @@ ev("openSettings()"); ev(`const q = document.querySelector("#set-q"); q.value = 
 ok("settings search finds the usage limits", $("#set-results").textContent.includes("Usage limits") && $("#set-results").textContent.includes("Week 64%")); ev("page.close()");
 ev(`state.usage = null; renderUsage()`);
 
+// questions: a chosen option can be unchosen, and a typed answer goes with the chosen options
+ev("window.__origCall = conn.call; window.__calls = []; conn.call = (t, m) => { window.__calls.push([t, m]); return Promise.resolve({}); }");
+ev(`askQuestionSheet({ sessionId: "s1", requestId: "r1", toolName: "AskUserQuestion", input: { questions: [ { question: "Pick one", header: "One", multiSelect: false, options: [{ label: "A" }, { label: "B" }] }, { question: "Pick many", header: "Many", multiSelect: true, options: [{ label: "X" }, { label: "Y" }] } ] } }, null)`);
+const q1 = $$("#sheet .q-block")[0], q2 = $$("#sheet .q-block")[1];
+const optA = q1.querySelectorAll(".opt")[0];
+optA.click(); optA.click();
+ok("a chosen option can be unchosen", !optA.classList.contains("on"));
+optA.click();
+ok("…and chosen again", optA.classList.contains("on"));
+q1.querySelector("input.field").value = "with a note";   // no input event: a keyboard may not have sent it yet
+q2.querySelectorAll(".opt")[0].click();
+q2.querySelector("input.field").value = "and Z";
+$('#sheet [data-a="ok"]').click();
+await sleep(50);
+const reply = ev("window.__calls[window.__calls.length - 1]");
+const sent = reply && reply[0] === "permission.reply" && reply[1].updatedInput.answers;
+ok("typed answers are sent with the chosen options", !!sent && sent["Pick one"] === "A — with a note" && sent["Pick many"] === "X, and Z" && Object.keys(sent).length === 2);
+ev("conn.call = window.__origCall");
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");
 ev(`state.models = [{ value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)" }, { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5" }]`);
