@@ -26,7 +26,7 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), "pa-deepseek-"));
 const CLEAN = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE|ANTHROPIC|PA_|MCP_|HTTPS?_PROXY$|NO_PROXY$)/i.test(k)));
 
 let fails = 0;
-const ok = (name, cond, extra = "") => { console.log(cond ? "PASS" : "FAIL", name, extra ? `(${String(extra).slice(0, 400)})` : ""); if (!cond) fails++; return !!cond; };
+const ok = (name, cond, extra = "") => { console.log(cond ? "PASS" : "FAIL", name, extra ? `(${String(extra).replace(/\n/g, "\\n").slice(0, 400)})` : ""); if (!cond) fails++; return !!cond; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const write = (f, s) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, s); };
 const textOf = c => typeof c === "string" ? c : Array.isArray(c) ? c.map(x => x?.text || "").join("\n") : "";
@@ -466,7 +466,7 @@ async function e2eTests() {
     await turnEnd(parent, from);
     const rep = reportIn(parent, from);
     ok("e2e Claude → DeepSeek: the report: done, the worker's chat, its output, the new file", rep.startsWith("DeepSeek worker: done\n") && rep.includes(`\nChat: ${link.child}\n`)
-      && rep.includes("worker-ok") && /\nModel: deepseek-flash · \d+s · (about \$|under \$)/.test(rep) && rep.includes("Changed: 1 file\n  ?? worker.txt"), rep.slice(0, 400));
+      && rep.includes("worker-ok") && /\nModel: deepseek-flash · (\d+m )?\d+s · (about|under) \$/.test(rep) && rep.includes("Changed: 1 file\n  ?? worker.txt"), rep.slice(0, 400));
     const reqs = mock.requests.slice(n0).filter(r => r.model);
     const parentReqs = reqs.filter(r => /^claude/.test(r.model)), workerReqs = reqs.filter(r => r.bodyText.includes("You're a DeepSeek worker"));
     ok("e2e Claude → DeepSeek: the Claude chat had deepseek_task; the worker had no pocket tools", parentReqs.some(r => r.tools.includes(DS_TOOL)) && workerReqs.length > 0
@@ -587,6 +587,7 @@ try {
 } catch (e) { ok("the test ran to the end", false, e?.stack || e); }
 finally {
   await stopServer();
+  if (fails && serverOut) console.log("\n── the test server's log (end) ──\n" + serverOut.slice(-6000).replaceAll(KEY, "<key>"));
   await mock?.close();
   fs.rmSync(T, { recursive: true, force: true });
 }
