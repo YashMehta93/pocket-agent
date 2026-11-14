@@ -116,11 +116,13 @@ function dsChanged() {
 }
 
 // ───────────── engine chip and sheet ─────────────
+/** Shown where it says something: a new chat (once a key is saved, the engine is a choice) and every DeepSeek chat.
+ *  An existing Claude chat runs on the default and can't change, so it keeps the composer as it was. */
 function renderEngineChip() {
   const chip = $("#chip-engine");
   if (!chip) return;
   const ds = chatEngine() === "deepseek";
-  chip.hidden = !(state.deepseek?.ready || ds);
+  chip.hidden = !(ds || (state.deepseek?.ready && state.current?.isNew));
   chip.textContent = ENGINE_NAME[ds ? "deepseek" : "claude"];
   chip.classList.toggle("engine-ds", ds);
   chip.setAttribute("aria-label", "Engine: " + chip.textContent);

@@ -63,7 +63,10 @@ ev(`newChat(); state.deepseek = { ...__fake(), ready: false }; updateComposer()`
 ok("no key: no engine chip, the composer is as before", $("#chip-engine").hidden && w.document.querySelector("#input").placeholder === "Message Claude…");
 ev(`state.deepseek = __fake(); updateComposer()`);
 ok("with a key the engine chip shows: " + text("#chip-engine"), !$("#chip-engine").hidden && text("#chip-engine") === "Claude" && $("#chip-engine").getAttribute("aria-label") === "Engine: Claude");
-ok("the chip sits before the mode chip, the same small chip", $("#chip-engine").nextElementSibling === $("#chip-mode") && $("#chip-engine").classList.contains("chip"));
+ok("the chip sits before the mode chip, the same small chip", $("#chip-engine").nextElementSibling === $("#chip-mode") && $("#chip-engine").classList.contains("chip") && w.getComputedStyle($("#composer .chips")).flexWrap === "wrap");
+ev(`state.current.isNew = false; updateComposer()`);
+ok("an existing Claude chat keeps the composer as it was (no engine chip)", $("#chip-engine").hidden);
+ev(`state.current.isNew = true; updateComposer()`);
 
 // 2. Choosing DeepSeek for a new chat
 $("#chip-engine").click();

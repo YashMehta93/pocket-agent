@@ -461,6 +461,8 @@ pre.has-btns { position: relative; padding-top: 34px; }
 :root { --ds: #4B44A8; --ds-bg: #ECEBFA; }
 :root[data-theme="dark"] { --ds: #B9B4F4; --ds-bg: #28263C; }
 .chip.engine-ds { color: var(--ds); background: var(--ds-bg); border-color: transparent; }
+/* the chips take the room between the clip and the mic; with large text they wrap to a second line instead of being cut */
+#composer .chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; }
 .chip.danger { color: var(--red); background: var(--red-bg); border-color: transparent; }
 /* below the header: a worker's way back to its chat, or the chat's workers; a quiet row each, a thumb high */
 #links-bar { margin: 0 14px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }
@@ -492,7 +494,7 @@ pre.has-btns { position: relative; padding-top: 34px; }
 .dl-files { font: 12px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); margin: 2px 0 8px; }
 /* the approval sheet for a worker */
 .dl-title { font-size: 15px; font-weight: 500; color: var(--text); margin: -6px 0 2px; overflow-wrap: anywhere; }
-.dl-task { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); font-size: 14px; }
+.dl-task { max-height: 36vh; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); font-size: 14px; }
 .ds-err { color: var(--red); font-size: 13.5px; margin: 4px 0 0; }
 .set-foot { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 16px 0 4px; }
 /* Usage sheet: DeepSeek's balance as a figure, then what we estimate was spent, then the price now */
@@ -508,6 +510,6 @@ pre.has-btns { position: relative; padding-top: 34px; }
 .ds-row.warn small { color: var(--yellow); } .ds-row.full small { color: var(--red); }
 .ds-bar { height: 6px; border-radius: 3px; margin: 2px 0 8px; }
 .ds-bar.warn i { background: var(--yellow); } .ds-bar.full i { background: var(--red); }
-.ds-price { display: flex; gap: 9px; align-items: center; margin: 8px 0 0; font-size: 13.5px; color: var(--text2); }
-.ds-price i { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--green); } .ds-price.peak i { background: var(--yellow); }
+.ds-price { display: flex; gap: 9px; align-items: flex-start; margin: 8px 0 0; font-size: 13.5px; color: var(--text2); }
+.ds-price i { width: 7px; height: 7px; border-radius: 50%; flex: none; margin-top: .55em; background: var(--green); } .ds-price.peak i { background: var(--yellow); }
 .result-line .cost { color: var(--muted); }
