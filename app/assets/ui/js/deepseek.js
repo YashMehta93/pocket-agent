@@ -99,6 +99,7 @@ function dsHello(hello) {
   const cur = state.current;
   if (cur?.isNew && !cur.engineChosen && cur.engine !== defaultEngine()) applyEngine(cur, defaultEngine());
   renderEngineChip();
+  if (typeof renderAccountChip === "function") renderAccountChip();   // a DeepSeek chat hides the account chip
 }
 function dsSetStatus(d) {
   if (!d) return;
@@ -111,6 +112,7 @@ function dsSetStatus(d) {
 /** Shows new numbers wherever they're on screen: the chip, the Usage sheet, an open Settings → DeepSeek page. */
 function dsChanged() {
   renderEngineChip();
+  if (typeof renderAccountChip === "function") renderAccountChip();
   if (sheet.key === "usage" && typeof usageRedraw === "function") usageRedraw();
   const bal = $("#ds-bal"); if (bal) bal.textContent = dsBalanceRow();
   const sp = $("#ds-spent"); if (sp) sp.textContent = dsSpentRow();

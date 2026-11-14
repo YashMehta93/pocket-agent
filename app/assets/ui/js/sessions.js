@@ -156,6 +156,7 @@ async function openSession(sessionId, { keepScroll } = {}) {
     // Live session: get only events newer than what the transcript already shows.
     const sub = await conn.call("subscribe", { sessionId, after: 1e15 });
     if (sub.engine || sub.info?.engine) state.current.engine = sub.engine || sub.info.engine;
+    state.current.account = sub.account || state.defaultAccount || "default";   // the Claude account this chat runs on
     if (sub.parent && typeof parentOf === "function") state.links[sessionId] = { ...state.links[sessionId], parent: parentOf(sub.parent) };
     if (sub.info) { state.liveInfo[sessionId] = sub.info; state.current.lastSeq = sub.info.seq; if (sub.info.activity) state.activity[sessionId] = sub.info.activity; }
     else if (sub.settings) Object.assign(state.current, { model: sub.settings.model ?? null, effort: sub.settings.effort ?? null, permissionMode: sub.settings.permissionMode || state.current.permissionMode });
@@ -165,6 +166,7 @@ async function openSession(sessionId, { keepScroll } = {}) {
   updateHeader(); updateComposer(); updateMenuBadge();
   if (!keepScroll) scrollToBottom(true);
   showNextPermission();
+  if (typeof accountsChatChanged === "function") accountsChatChanged();   // its account chip, and no old limit card
 }
 /** engine: "claude" | "deepseek"; by default the one Settings → DeepSeek starts new chats on. */
 function newChat(cwd, engine) {
@@ -172,6 +174,7 @@ function newChat(cwd, engine) {
   state.current = { sessionId: uuid(), cwd: cwd || state.defaults.cwd || state.home, title: "New chat", isNew: true, lastSeq: 0,
     model: state.defaults.model || null, effort: state.defaults.effort || null, permissionMode: state.defaults.permissionMode || "default" };
   if (typeof applyEngine === "function") { applyEngine(state.current, engine || defaultEngine()); state.current.engineChosen = !!engine; }
+  if (typeof accountsNewChat === "function") accountsNewChat();   // a new chat starts on the default account
   if (typeof agentsChatChanged === "function") agentsChatChanged();
   chat.reset(); showEmpty(); updateHeader(); updateComposer(); renderSessions();
 }

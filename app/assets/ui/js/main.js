@@ -31,8 +31,10 @@ async function onConnected() {
   if (window.__uiVersion && hello.uiVersion && hello.uiVersion !== window.__uiVersion && !Object.values(hello.live || {}).some(i => i.state === "running")) { location.reload(); return; }
   window.__uiVersion = hello.uiVersion;
   Object.assign(state, { home: hello.home, hostName: hello.host, defaults: hello.defaults || {}, pinned: hello.pinned || [],
-    commands: hello.commands || [], models: hello.models || [], account: hello.account, usage: hello.usage || null });
+    commands: hello.commands || [], models: hello.models || [], account: hello.account, usage: hello.usage || null,
+    accounts: hello.accounts || [], defaultAccount: hello.defaultAccount || "default", usageByAccount: hello.usageByAccount || {} });
   if (typeof dsHello === "function") dsHello(hello);   // engines and the DeepSeek status (deepseek.js)
+  if (typeof accountsHello === "function") accountsHello(hello);   // the Claude accounts (accounts.js)
   renderUsage();
   // the server may have restarted: only the chats it reports are live now (stale ones kept a Stop button that did nothing)
   for (const id of Object.keys(state.liveInfo)) if (!(hello.live || []).some(i => i.sessionId === id)) { delete state.liveInfo[id]; delete state.activity[id]; }
@@ -136,7 +138,8 @@ conn.on("activity", m => {
   if (state.current?.sessionId === m.sessionId) renderActivity();
 });
 conn.on("tasks", m => { (state.liveInfo[m.sessionId] ||= { sessionId: m.sessionId }).tasks = m.tasks; if (m.sessionId === state.current?.sessionId) renderTabs(); });
-conn.on("usage", m => { state.usage = m.usage; renderUsage(); });
+// state.usage is the default account's (the meter and its sheet); the others live in state.usageByAccount (accounts.js)
+conn.on("usage", m => { if (!m.account || m.account === "default") { state.usage = m.usage; renderUsage(); } });
 conn.on("meta", m => { state.commands = m.commands || state.commands; state.models = m.models || state.models; state.account = m.account || state.account; updateComposer(); });
 conn.on("sessions.changed", () => debouncedRefresh());
 const debouncedRefresh = debounce(refreshSessions, 400);

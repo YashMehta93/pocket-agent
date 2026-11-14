@@ -58,6 +58,7 @@
     <footer id="composer">
       <div id="status-line" hidden></div>
       <button id="usage-note" hidden></button>
+      <div id="account-limit" hidden></div>
       <button id="activity" class="activity" hidden aria-live="polite"></button>
       <div id="popup" hidden></div>
       <div id="attachments" hidden></div>
@@ -65,7 +66,7 @@
         <textarea id="input" rows="1" placeholder="Message Claude…" enterkeyhint="send" autocapitalize="sentences"></textarea>
         <div class="row">
           <button class="icon-btn sm" id="btn-attach" aria-label="Attach" data-icon="clip"></button>
-          <span class="chips"><button class="chip" id="chip-engine" hidden></button><button class="chip" id="chip-mode"></button><button class="chip" id="chip-model"></button></span>
+          <span class="chips"><button class="chip" id="chip-engine" hidden></button><button class="chip" id="chip-account" hidden></button><button class="chip" id="chip-mode"></button><button class="chip" id="chip-model"></button></span>
           <button class="icon-btn sm" id="btn-mic" aria-label="Voice input" data-icon="mic"></button>
           <button class="send" id="btn-send" aria-label="Send" data-icon="up"></button>
         </div>
@@ -96,6 +97,7 @@
 <script src="js/usage.js"></script>
 <script src="js/agents.js"></script>
 <script src="js/deepseek.js"></script>
+<script src="js/accounts.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

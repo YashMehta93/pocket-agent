@@ -124,6 +124,10 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 #usage-note { max-width: 760px; width: 100%; margin: 0 auto 8px; padding: 0 4px; font: 12px/1.4 var(--mono); color: var(--text2); display: flex; gap: 8px; align-items: center; text-align: left; }
 #usage-note svg { width: 14px; height: 14px; flex: none; color: var(--yellow); }
 #usage-note.full svg { color: var(--red); }
+#account-limit { max-width: 760px; width: 100%; margin: 0 auto 8px; padding: 0 4px; font: 12px/1.4 var(--mono); color: var(--text2); display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; text-align: left; }
+#account-limit .al-line { display: flex; gap: 8px; align-items: center; }
+#account-limit .al-line svg { width: 14px; height: 14px; flex: none; color: var(--red); }
+#account-limit .al-btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .u-head { display: flex; align-items: center; justify-content: space-between; } .u-head .icon-btn { margin-right: -10px; } .u-head .icon-btn svg { width: 19px; height: 19px; }
 .u-sec { font: 600 11px/1.4 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 22px 0 10px; }
 .u-ctx { display: block; width: 100%; text-align: left; } .u-ctx small svg { display: inline-block; width: 13px; height: 13px; vertical-align: -2px; transition: transform .15s; }
@@ -358,6 +362,7 @@ textarea.field { min-height: 90px; resize: vertical; line-height: 1.5; }
 .settings h3 { font: 600 10.5px/1 var(--sans); color: var(--faint); text-transform: uppercase; letter-spacing: .08em; margin: 30px 0 4px; }
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--line); font-size: 14.5px; }
 .set-row .l { flex: 1; } .set-row .l small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; line-height: 1.45; }
+.acc-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 62%; }
 /* Settings home: search + categories, each opening its own short page */
 .set-search { width: 100%; min-height: 48px; margin: 12px 0 6px; padding: 0 14px; border: 1px solid var(--line2); border-radius: 10px; background: var(--surface); color: var(--text); font: 400 15px var(--sans); }
 .set-search:focus { outline: 2px solid var(--text); outline-offset: 1px; }
@@ -455,6 +460,7 @@ pre.has-btns { position: relative; padding-top: 34px; }
 .dl-title { font-size: 15px; font-weight: 500; color: var(--text); margin: -6px 0 2px; overflow-wrap: anywhere; }
 .dl-task { max-height: 36vh; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); font-size: 14px; }
 .ds-err { color: var(--red); font-size: 13.5px; margin: 4px 0 0; }
+.acc-err { color: var(--red); font-size: 13.5px; margin: 4px 0 0; }
 .set-foot { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 16px 0 4px; }
 /* Usage sheet: DeepSeek's balance as a figure, then what we estimate was spent, then the price now */
 .ds-bal { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; margin: 0 0 8px; }

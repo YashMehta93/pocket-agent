@@ -101,7 +101,8 @@ async function openUsage() {
       + (pace ? `<p class="u-pace">${icon("info")}<span>Heads up. ${esc(pace)}</span></p>` : "")
       + `<h3 class="u-sec">Plan limits</h3>`
       + (rows.length ? `<div class="u-list">${rows.map(r => usageRow(r, true)).join("")}</div>` : `<p class="u-foot">Nothing yet: the numbers come with Claude's replies. Send a message, then look again.</p>`)
-      + `<p class="u-foot">Limits count everything on this Claude account: this phone, your computers and claude.ai.</p>`;
+      + `<p class="u-foot">Limits count everything on this Claude account: this phone, your computers and claude.ai.</p>`
+      + (typeof accountsUsageHtml === "function" ? accountsUsageHtml() : "");
     hydrateIcons(b);
     b.querySelector("#u-refresh").onclick = () => load(true);
     const t = b.querySelector("#u-ctx"); if (t) t.onclick = () => { open = !open; draw(); };

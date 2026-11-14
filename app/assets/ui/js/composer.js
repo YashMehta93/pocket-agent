@@ -31,6 +31,7 @@ function updateComposer() {
   if (dsChat) $("#chip-model").setAttribute("aria-label", "Model: " + modelLabel(s.model || dsDefaultModel()) + (s.effort ? ", effort " + s.effort : ""));
   else $("#chip-model").removeAttribute("aria-label");
   if (typeof renderEngineChip === "function") renderEngineChip();
+  if (typeof renderAccountChip === "function") renderAccountChip();
   const st = sessionState(state.current?.sessionId);
   const running = st === "running" || st === "waiting";
   input.placeholder = running ? "Queue a message…" : s.engine === "deepseek" ? "Message DeepSeek…" : "Message Claude…";
@@ -88,7 +89,11 @@ async function send(textOverride) {
     const msg = { sessionId: cur.sessionId, text, images };
     // A new chat, or one whose process was closed (idle, restart): start it with what the composer shows.
     if (cur.isNew || !state.liveInfo[cur.sessionId]) Object.assign(msg, { model: s.model || undefined, effort: s.effort || undefined, permissionMode: s.permissionMode });
-    if (cur.isNew) { msg.cwd = cur.cwd; msg.engine = s.engine || "claude"; }
+    if (cur.isNew) {
+      msg.cwd = cur.cwd; msg.engine = s.engine || "claude";
+      // with several Claude accounts, the chip's pick (or the default) runs this new chat
+      if (state.accounts?.length >= 2) { msg.account = state.newChatAccount || state.defaultAccount; cur.account = msg.account; }
+    }
     wasNew = cur.isNew;
     if (cur.isNew) { cur.isNew = false; cur.title = text.slice(0, 60); updateHeader(); }
     await conn.call("send", msg);

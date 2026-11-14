@@ -145,6 +145,7 @@ function settingsSections() {
         + item(`<div class="set-row"><div class="l">Usage limits<small>${esc(usageSummary())}</small></div><button class="chip" id="s-usage">Show</button></div>`, "usage limits quota 5-hour weekly plan")
         + (native ? item(`<div class="set-row"><div class="l">Restart Claude's server<small>Stops any reply in progress</small></div><button class="chip" id="s-restart">Restart</button></div>`, "reload stuck") : "")
         + (standalone ? item(`<div class="set-row"><div class="l">Server log<small>For troubleshooting</small></div><button class="chip" id="s-log">View</button></div>`, "debug errors logs") : "") },
+    typeof accountsSettingsSection === "function" && accountsSettingsSection(),   // accounts.js: several Claude logins
     typeof dsSettingsSection === "function" && dsSettingsSection(),   // deepseek.js; none on a server without DeepSeek
     { id: "updates", title: "Updates", icon: "retry",
       summary: state.updateChannel ? `${state.updateChannel}${state.updateKind === "github" ? " · " + (state.updateTrack?.track === "pin" ? "pinned to " + state.updateTrack.tag : state.updateTrack?.track === "beta" ? "Beta" : "Stable") : ""}` : "Not set",
@@ -255,6 +256,7 @@ function wireSettings(root) {
   on("#s-restart", async () => { try { await conn.call("working.clear"); } catch {} nativeCall("restartServer"); toast("Restarting server…"); });
   if (native && root.querySelector("#phone-ctl")) renderPhoneControl(root.querySelector("#phone-ctl"));
   if (native && root.querySelector("#termux-box")) renderTermux(root.querySelector("#termux-box"));
+  if (typeof wireAccountsSettings === "function") wireAccountsSettings(root);
   if (typeof wireDsSettings === "function") wireDsSettings(root);
 }
 /** Re-renders the settings page on screen (home or a category) so it shows changed values. */

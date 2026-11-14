@@ -63,7 +63,7 @@ ev(`newChat(); state.deepseek = { ...__fake(), ready: false }; updateComposer()`
 ok("no key: no engine chip, the composer is as before", $("#chip-engine").hidden && w.document.querySelector("#input").placeholder === "Message Claude…");
 ev(`state.deepseek = __fake(); updateComposer()`);
 ok("with a key the engine chip shows: " + text("#chip-engine"), !$("#chip-engine").hidden && text("#chip-engine") === "Claude" && $("#chip-engine").getAttribute("aria-label") === "Engine: Claude");
-ok("the chip sits before the mode chip, the same small chip", $("#chip-engine").nextElementSibling === $("#chip-mode") && $("#chip-engine").classList.contains("chip") && w.getComputedStyle($("#composer .chips")).flexWrap === "wrap");
+ok("the chip sits before the mode chip (the account chip is between), the same small chip", $("#chip-engine").nextElementSibling === $("#chip-account") && $("#chip-account").nextElementSibling === $("#chip-mode") && $("#chip-engine").classList.contains("chip") && w.getComputedStyle($("#composer .chips")).flexWrap === "wrap");
 ev(`state.current.isNew = false; updateComposer()`);
 ok("an existing Claude chat keeps the composer as it was (no engine chip)", $("#chip-engine").hidden);
 ev(`state.current.isNew = true; updateComposer()`);
@@ -111,7 +111,8 @@ ev(`state.deepseek = null; openSettings()`);
 ok("a server without DeepSeek: no DeepSeek category", !$('[data-sec="deepseek"]')); ev("page.close()");
 ev(`state.deepseek = { ...__fake(), ready: false }; openSettings()`);
 ok("no key yet: the category says so", /Not set up/.test(text('[data-sec="deepseek"]')));
-ok("the category sits right after Claude and connection", $('[data-sec="deepseek"]')?.previousElementSibling?.dataset.sec === "claude"); ev("page.close()");
+ok("the category sits right after Claude accounts, which is right after Claude and connection",
+  $('[data-sec="deepseek"]')?.previousElementSibling?.dataset.sec === "accounts" && $('[data-sec="accounts"]')?.previousElementSibling?.dataset.sec === "claude"); ev("page.close()");
 ev(`state.deepseek = __fake(); openSettings()`);
 ok(`with a key it shows the balance and model: "${text('[data-sec="deepseek"] small')}"`, text('[data-sec="deepseek"] small') === "$4.20 left · Flash");
 $('[data-sec="deepseek"]').click();
