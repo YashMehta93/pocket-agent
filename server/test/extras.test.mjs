@@ -127,6 +127,19 @@ try {
     fs.writeFileSync(path.join(T, "b.tgz"), tgz);
     const list = sh(`tar tzf '${T}/b.tgz'`);
     ok("the code downloads the server bundle", list.includes("server/src/index.js") && list.includes("app/assets/ui/index.html"));
+
+    // a chat's own model and permission mode survive its process closing and the server restarting
+    const ws2 = new WebSocket(`ws://127.0.0.1:8769/ws?token=${token}`); await new Promise(r => ws2.on("open", r));
+    let n2 = 0; const call2 = (t, m = {}) => new Promise(res => { const id = ++n2; const h = raw => { const x = JSON.parse(raw); if (x.t === "reply" && x.id === id) { ws2.off("message", h); res(x); } }; ws2.on("message", h); ws2.send(JSON.stringify({ t, id, ...m })); });
+    await call2("set", { sessionId: "chat-closed-1", model: "claude-opus-5-5", permissionMode: "bypassPermissions" });
+    await call2("set", { sessionId: "chat-closed-1", effort: "high" });
+    const sub = await call2("subscribe", { sessionId: "chat-closed-1", after: 0 });
+    ok("a closed chat's model, effort and mode are remembered", sub.settings?.model === "claude-opus-5-5" && sub.settings.permissionMode === "bypassPermissions" && sub.settings.effort === "high");
+    const onDisk = JSON.parse(fs.readFileSync(path.join(process.env.PA_DATA, "prefs.json"), "utf8")).sessionSettings?.["chat-closed-1"];
+    ok("and saved to disk, so they survive a restart", onDisk?.permissionMode === "bypassPermissions");
+    const other = await call2("subscribe", { sessionId: "chat-never-set", after: 0 });
+    ok("a chat with nothing remembered gets no settings (the defaults apply)", other.settings === null);
+    ws2.close();
   } finally { server.kill(); }
 } catch (e) { console.log("FAIL", e.stack); fails++; }
 finally { fs.rmSync(T, { recursive: true, force: true }); }

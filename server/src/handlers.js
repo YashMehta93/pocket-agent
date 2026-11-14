@@ -6,7 +6,7 @@ import path from "node:path";
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, deleteSession, forkSession } from "@anthropic-ai/claude-agent-sdk";
 import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache, githubRepo } from "./config.js";
 import { broadcastAll, callNative } from "./hub.js";
-import { live, getLive, openSession, busyElsewhere, runClaude } from "./live-session.js";
+import { live, getLive, openSession, busyElsewhere, runClaude, chatSettings, rememberChatSettings } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
 import { importSessions, checkUpdate, applyUpdate, sourceName, pickRelease, listReleases, releaseAsset, bundleInfo } from "./transfer.js";
 import { runDevSetup, devSetupStatus, devRepo } from "./devtools.js";
@@ -56,7 +56,7 @@ export const handlers = {
   async subscribe({ sessionId, after = 0 }, ws) {
     ws.subs.add(sessionId);
     const s = live.get(sessionId);
-    return { sessionId, info: s ? s.info() : null, events: s ? s.buffer.filter(e => e.seq > after) : [] };
+    return { sessionId, info: s ? s.info() : null, events: s ? s.buffer.filter(e => e.seq > after) : [], settings: chatSettings(sessionId) };
   },
   async unsubscribe({ sessionId }, ws) { ws.subs.delete(sessionId); return {}; },
   async send(m, ws) {
@@ -67,7 +67,7 @@ export const handlers = {
   async interrupt({ sessionId }) { await getLive(sessionId).q.interrupt(); return {}; },
   async "session.close"({ sessionId }) { live.get(sessionId)?.close(); return {}; },
   async "permission.reply"(m) { return { ok: getLive(m.sessionId).answer(m) }; },
-  async set(m) { const s = live.get(m.sessionId); if (s) await s.set(m); return { info: s?.info() }; },
+  async set(m) { const s = live.get(m.sessionId); if (s) await s.set(m); else rememberChatSettings(m.sessionId, m); return { info: s?.info(), settings: chatSettings(m.sessionId) }; },
   async "session.rewindFiles"({ sessionId, userMessageId, dryRun }) { return { result: await getLive(sessionId).q.rewindFiles(userMessageId, { dryRun: !!dryRun }) }; },
   async "session.context"({ sessionId }) { return { usage: await getLive(sessionId).q.getContextUsage() }; },
   async "session.stopTask"({ sessionId, taskId }) { await getLive(sessionId).q.stopTask(taskId); return {}; },
