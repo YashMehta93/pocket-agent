@@ -314,6 +314,55 @@ async function unitTests() {
     const b = dg.brief({ who: "DeepSeek", other: "Claude", parent: { title: "Plan\nthe app" }, cwd: "/w", task: "Do X.", approved: true });
     ok("brief: names the caller, the folder and the task", b.startsWith(`[Pocket Agent] You're a DeepSeek worker. The Claude chat "Plan the app" sent you this task, and the person approved it. Work in /w.`) && b.endsWith("\n\nDo X."));
   });
+
+  // ───── a worker's approvals (#52): headed with the worker, shown in the calling chat, "Allow all for this worker" ─────
+  await step("worker approvals", async () => {
+    const { askPhrase } = await import("../src/activity.js");
+    ok("askPhrase: a short command by name, a long one as \"a command\", files by name, questions and plans",
+      askPhrase("Bash", { command: "npm test" }) === "wants to run npm test" && askPhrase("Bash", { command: "npm run build && npm test -- --watch=false --ci" }) === "wants to run a command"
+      && askPhrase("Bash", { command: "cat <<EOF\nx\nEOF" }) === "wants to run a command" && askPhrase("Edit", { file_path: "/w/src/README.md" }) === "wants to edit README.md"
+      && askPhrase("Write", { file_path: "/w/CONTRIBUTORS" }) === "wants to write CONTRIBUTORS" && askPhrase("WebFetch", { url: "https://example.com/a?b" }) === "wants to open example.com"
+      && askPhrase("AskUserQuestion", {}) === "has a question" && askPhrase("mcp__github__create_issue", {}) === "wants to use github create_issue");
+    const { toNative } = await import("../src/notify.js");
+    const req = { type: "permission.request", requestId: "r1", sessionId: "w1", toolName: "Bash", input: "Run the tests: npm test", title: "Add README", engine: "deepseek",
+      parent: "p1", parentTitle: "Plan the tidy-up", ask: "wants to run npm test" };
+    const n = toNative(req)[0].spec;
+    ok("notification: a worker's request is headed like the sheet, opens the calling chat, and offers Allow all",
+      n.title === "DeepSeek · Add README wants to run npm test" && n.subText === "Plan the tidy-up" && n.tap.sessionId === "p1" && n.text === "Run the tests: npm test"
+      && n.actions.map(a => a.label).join() === "Allow,Allow all,Deny" && n.actions[1].post.body.allowAll === true && n.actions[1].post.body.sessionId === "w1"
+      && n.actions.every(a => a.post.body.requestId === "r1"), JSON.stringify(n));
+    const own = toNative({ ...req, parent: null, parentTitle: undefined, ask: undefined, title: "Plan the tidy-up", engine: "claude" })[0].spec;
+    ok("notification: a chat's own request is as before (Allow / Deny, opens that chat)", own.title === "Allow Bash?" && own.tap.sessionId === "w1" && own.actions.map(a => a.label).join() === "Allow,Deny");
+    const q = toNative({ ...req, toolName: "AskUserQuestion", ask: "has a question" })[0].spec;
+    ok("notification: a worker's question needs the app (no buttons)", q.title === "DeepSeek · Add README has a question" && !q.actions && q.tap.sessionId === "p1");
+
+    // allowAll on a real LiveSession (the fake Claude Code binary: nothing runs, only the approval logic)
+    const { openSession, live } = await import("../src/live-session.js");
+    const P = "aaaaaaaa-0000-4000-8000-0000000000a1";
+    const w = await openSession({ cwd: UHOME, engine: "claude", title: "Add README", link: { parent: P, via: DS_TOOL, toolUseId: "toolu_w" } });
+    const solo = await openSession({ cwd: UHOME, engine: "claude", title: "A chat" });
+    try {
+      const answered = [];
+      const ask = (s, name, input) => s.askPermission(name, input, { toolUseID: "tu-" + Math.random() }).then(r => { answered.push(name); return r; });
+      const a = ask(w, "Bash", { command: "touch a" }), b = ask(w, "Write", { file_path: "/w/b.txt", content: "" }), qn = ask(w, "AskUserQuestion", { questions: [] });
+      const first = [...w.pending.values()][0].info;
+      ok("a worker's request names its calling chat (parent)", first.parent === P && first.title === "Add README" && w.info().parent === P);
+      w.answer({ requestId: first.requestId, behavior: "allow", allowAll: true });
+      const [ra, rb] = await Promise.all([a, b]);
+      ok("Allow all: this request and the worker's other waiting ones are allowed", ra.behavior === "allow" && rb.behavior === "allow" && w.info().allowAll === true);
+      ok("…but a question still waits for the person", [...w.pending.values()].length === 1 && [...w.pending.values()][0].info.toolName === "AskUserQuestion" && !answered.includes("AskUserQuestion"));
+      const n0 = w.pending.size, rc = await ask(w, "Bash", { command: "rm -rf build" });
+      ok("…and later requests in this turn don't ask", rc.behavior === "allow" && w.pending.size === n0);
+      w.answer({ requestId: [...w.pending.values()][0].info.requestId, behavior: "deny", message: "skip" }); await qn;
+      const s1 = ask(solo, "Bash", { command: "touch c" });
+      solo.answer({ requestId: [...solo.pending.values()][0].info.requestId, behavior: "allow", allowAll: true });
+      await s1;
+      const s2 = ask(solo, "Bash", { command: "touch d" });
+      ok("a chat that isn't a worker can't be allowed all (it asks again)", solo.pending.size === 1 && !solo.info().allowAll && [...solo.pending.values()][0].info.parent === null);
+      solo.answer({ requestId: [...solo.pending.values()][0].info.requestId, behavior: "deny" }); await s2;
+    } finally { w.close(); solo.close(); }
+    await until(() => !live.has(w.sessionId) && !live.has(solo.sessionId), 5000, "the test chats to close").catch(() => {});
+  });
 }
 
 // ───── end to end: the real Claude Code, the fake DeepSeek, a test server on 8771 ─────
@@ -485,8 +534,10 @@ async function e2eTests() {
     } finally { fs.rmSync(cred, { force: true }); }   // test-mode Claude chats below must not see a login
   });
 
+  let askedWorker = null;   // the worker of the step below, for the follow-up after it
   await e2e("Claude → DeepSeek, asking first", async () => {
-    const task = `Write the check file. ${bash("echo worker-ok | tee worker.txt", "Write the check file")}`;
+    // two commands that write (so each would ask in Ask mode): "Allow all for this worker" on the first lets the second run
+    const task = `Write the check files. ${bash("echo worker-ok | tee worker.txt", "Write the check file")} ${bash("touch worker2.txt && echo second-ok", "Write another")}`;
     const from = cl.mark(), n0 = mock.requests.length;
     const parent = await send({ cwd: repo, text: delegate(DS_TOOL, task, "Worker check"), engine: "claude", permissionMode: "default" });
     const p1 = await asked(parent, from);
@@ -495,14 +546,23 @@ async function e2eTests() {
     await allow(p1);
     const link = await linked(parent, from);
     opened.add(link.child);
+    askedWorker = { parent, child: link.child };
     ok("e2e Claude → DeepSeek: a linked DeepSeek worker chat starts", link.engine === "deepseek" && link.title === "Worker check" && link.toolUseId === p1.toolUseID, JSON.stringify(link));
     const p2 = await asked(link.child, from);
     ok("e2e Claude → DeepSeek: the worker runs in the caller's mode (Ask), so its command asks", p2.toolName === "Bash", p2.toolName);
-    await allow(p2);
+    ok("e2e worker approval: the request names the calling chat, so the app shows it there", p2.parent === parent && p2.title === "Worker check" && p2.engine === "deepseek", JSON.stringify({ parent: p2.parent, title: p2.title }));
+    await cl.call("permission.reply", { sessionId: p2.sessionId, requestId: p2.requestId, behavior: "allow", allowAll: true });
     await turnEnd(parent, from);
+    const workerAsks = cl.events.slice(from).filter(m => m.t === "permission.request" && m.sessionId === link.child);
+    ok("e2e Allow all for this worker: its second command ran without asking", workerAsks.length === 1, workerAsks.map(m => m.input?.command).join(" | "));
+    const infos = cl.events.slice(from).filter(m => m.t === "state" && m.sessionId === link.child).map(m => m.info);
+    ok("e2e Allow all: the worker says so while it runs, and not once its turn is over", infos.some(i => i.allowAll === true) && infos.at(-1)?.state === "idle" && !infos.at(-1)?.allowAll,
+      infos.map(i => `${i.state}${i.allowAll ? "+all" : ""}`).join(" "));
+    const end = cl.events.slice(from).filter(m => m.t === "link" && m.child === link.child).at(-1);
+    ok("e2e: the run's outcome comes as a second link event (done, 2 steps, time, cost)", end?.result === "done" && end.steps === 2 && end.ms > 0 && end.usd > 0 && end.endedAt > 0, JSON.stringify(end));
     const rep = reportIn(parent, from);
-    ok("e2e Claude → DeepSeek: the report: done, the worker's chat, its output, the new file", rep.startsWith("DeepSeek worker: done\n") && rep.includes(`\nChat: ${link.child}\n`)
-      && rep.includes("worker-ok") && /\nModel: deepseek-flash · (\d+m )?\d+s · (about|under) \$/.test(rep) && rep.includes("Changed: 1 file\n  ?? worker.txt"), rep.slice(0, 400));
+    ok("e2e Claude → DeepSeek: the report: done, the worker's chat, its output, the new files", rep.startsWith("DeepSeek worker: done\n") && rep.includes(`\nChat: ${link.child}\n`)
+      && rep.includes("second-ok") && /\nModel: deepseek-flash · (\d+m )?\d+s · (about|under) \$/.test(rep) && rep.includes("Changed: 2 files\n  ?? worker.txt\n  ?? worker2.txt"), rep.slice(0, 400));
     const reqs = mock.requests.slice(n0).filter(r => r.model);
     const parentReqs = reqs.filter(r => /^claude/.test(r.model)), workerReqs = reqs.filter(r => r.bodyText.includes("You're a DeepSeek worker"));
     ok("e2e Claude → DeepSeek: the Claude chat had deepseek_task; the worker had no pocket tools", parentReqs.some(r => r.tools.includes(DS_TOOL)) && workerReqs.length > 0
@@ -510,7 +570,27 @@ async function e2eTests() {
     ok("e2e Claude → DeepSeek: the worker used DeepSeek with the key; the Claude chat never had it", workerReqs.every(r => r.model === "deepseek-flash" && r.auth === `Bearer ${KEY}`)
       && parentReqs.every(r => r.auth === `Bearer ${CLAUDE_KEY}`));
     const item = (await cl.call("sessions.list", {})).sessions.find(s => s.sessionId === link.child);
-    ok("e2e Claude → DeepSeek: the chat list links the worker to its caller", item?.engine === "deepseek" && item.parent === parent, JSON.stringify(item && { engine: item.engine, parent: item.parent }));
+    ok("e2e Claude → DeepSeek: the chat list links the worker to its caller, with how its run went", item?.engine === "deepseek" && item.parent === parent
+      && item.worker?.result === "done" && item.worker.steps === 2 && item.worker.toolUseId === p1.toolUseID && item.worker.endedAt > 0,
+      JSON.stringify(item && { engine: item.engine, parent: item.parent, worker: item.worker }));
+  });
+
+  await e2e("a follow-up to a worker asks again", async () => {
+    if (!askedWorker) throw new Error("no worker from the step before");
+    const { parent, child } = askedWorker;
+    const from = cl.mark();
+    await send({ sessionId: parent, text: `Follow up. [[tool ${DS_TOOL} ${JSON.stringify({ task: `One more. ${bash("touch worker3.txt && echo third-ok", "Write a third")}`, continue_chat: child })}]]` });
+    opened.add(child);
+    const p1 = await asked(parent, from);
+    await allow(p1);
+    const p2 = await asked(child, from);
+    ok("e2e follow-up: \"Allow all\" ended with the worker's turn, so its command asks again", p2.toolName === "Bash" && p2.parent === parent, p2.toolName);
+    await allow(p2);
+    await turnEnd(parent, from);
+    const ends = cl.events.slice(from).filter(m => m.t === "link" && m.child === child);
+    ok("e2e follow-up: the same worker, with a fresh outcome", ends.length >= 2 && ends[0].toolUseId === p1.toolUseID && ends.at(-1).result === "done" && ends.at(-1).steps === 1,
+      JSON.stringify(ends.map(e => ({ toolUseId: e.toolUseId, result: e.result, steps: e.steps }))));
+    ok("e2e follow-up: the report comes back", reportIn(parent, from).startsWith("DeepSeek worker: done\n") && reportIn(parent, from).includes("third-ok"));
   });
 
   await e2e("Claude → DeepSeek in Bypass", async () => {

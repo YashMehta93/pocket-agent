@@ -31,6 +31,14 @@ export function recordLink(child, link) {
   if (ids.length > 500) ids.sort((a, b) => (all[a].at || 0) - (all[b].at || 0)).slice(0, ids.length - 500).forEach(k => delete all[k]);
   savePrefs();
 }
+/** Adds to a worker's link record: how its latest run went (delegate.js), for the app's Agents tab after a restart. */
+export function updateLink(child, patch) {
+  const l = prefs.chatLinks?.[child];
+  if (!l) return null;
+  Object.assign(l, patch);
+  savePrefs();
+  return l;
+}
 
 /** A chat with no record: DeepSeek if its newest assistant message came from a deepseek model, null if it has none. */
 export async function detectEngine(id) {

@@ -27,7 +27,7 @@ export function rememberChatSettings(id, { model, effort, permissionMode }) {
 }
 import { broadcast, broadcastAll, notifyNative, clients } from "./hub.js";
 import { Inbox } from "./inbox.js";
-import { Activity, toolDetail } from "./activity.js";
+import { Activity, toolDetail, askPhrase } from "./activity.js";
 import { noteRateLimit, refreshUsage, accountChanged } from "./usage.js";
 import { phoneContext } from "./devtools.js";
 import { engineOptions, engineOf, recordEngine, linkOf, recordLink, detectEngine } from "./engines.js";
@@ -41,6 +41,9 @@ const ownTool = (name, opts) => name.startsWith("mcp__pocket__") && opts?.mcpSer
 
 /** sessionId -> LiveSession */
 export const live = new Map();
+const isBusy = s => s.state === "starting" || s.state === "running" || s.state === "waiting";
+/** Approvals that "Allow all for this worker" still asks about: a question needs answers, a plan needs a choice. */
+const ALWAYS_ASKS = new Set(["AskUserQuestion", "ExitPlanMode"]);
 
 export class LiveSession {
   constructor({ sessionId, cwd, resume, model, effort, permissionMode, title, engine = "claude", link = null }) {
@@ -51,8 +54,10 @@ export class LiveSession {
     this.turnWaiters = [];      // waitTurn() callers, resolved with the turn's result
     this.approvals = new Map(); // toolName -> [toolUseID] of our own tools the person allowed (delegate.js takes them)
     this.allowAlways = new Set(); // our own tools the person allowed for the rest of this chat ("always")
+    this.allowAll = false;      // a worker the person let run without asking ("Allow all for this worker"), until its turn ends
     this.costMark = this.engine === "deepseek" ? chatSpend(sessionId)?.usd || 0 : 0;   // for each turn's pa_cost
     this.tasks = new Map();     // task_id -> background agent or command (noteTask)
+    this.quietTasks = new Set(); // task_ids of Claude Code's own housekeeping tasks (ambient): not shown as agents
     this.inbox = new Inbox();
     this.activity = new Activity(snap => this.publishActivity(snap));
     if (this.engine === "deepseek") this.activity.who = "DeepSeek";
@@ -90,7 +95,8 @@ export class LiveSession {
     broadcast({ t: "ev", sessionId: this.sessionId, ...item });
   }
   publishActivity(activity) {
-    broadcastAll({ t: "activity", sessionId: this.sessionId, activity });
+    // a DeepSeek chat's spend so far rides along, so a worker's cost counts up while it works
+    broadcastAll({ t: "activity", sessionId: this.sessionId, activity, ...(this.engine === "deepseek" ? { spend: chatSpend(this.sessionId)?.usd ?? 0 } : {}) });
     const { phase, label, detail, turnStart } = activity;
     notifyNative({ type: "activity", sessionId: this.sessionId, title: this.title || "Claude", phase, label, detail, turnStart, engine: this.engine });
   }
@@ -101,13 +107,17 @@ export class LiveSession {
     this.lastActive = Date.now();
     broadcastAll({ t: "state", sessionId: this.sessionId, state, info: this.info() });
     saveWorking();
-    if (prev === "running" && state === "idle") notifyNative({ type: "done", sessionId: this.sessionId, title: this.title || "Session", text: this.lastText.slice(0, 300), engine: this.engine });
+    // A worker's caller reads its report and carries on, so while the caller works, only the caller says when it's done.
+    const caller = this.link && live.get(this.link.parent);
+    if (prev === "running" && state === "idle" && !(caller && isBusy(caller)))
+      notifyNative({ type: "done", sessionId: this.sessionId, title: this.title || "Session", text: this.lastText.slice(0, 300), engine: this.engine });
   }
   info() {
     return { sessionId: this.sessionId, cwd: this.cwd, state: this.state, seq: this.seq, model: this.model, effort: this.effort,
       permissionMode: this.permissionMode, title: this.title, pending: [...this.pending.values()].map(p => p.info),
       activity: this.activity.snapshot(), tasks: [...this.tasks.values()],
-      engine: this.engine, parent: this.link?.parent || null, ...(this.engine === "deepseek" ? { spend: chatSpend(this.sessionId)?.usd ?? 0 } : {}) };
+      engine: this.engine, parent: this.link?.parent || null, ...(this.engine === "deepseek" ? { spend: chatSpend(this.sessionId)?.usd ?? 0 } : {}),
+      ...(this.allowAll ? { allowAll: true } : {}) };
   }
   /** Resolves with the result that ends the current (or next) turn; { type: "result", subtype: "closed" } if the chat closes first. */
   waitTurn() { return new Promise(r => this.turnWaiters.push(r)); }
@@ -141,6 +151,7 @@ export class LiveSession {
         } else if (m.type === "rate_limit_event") {
           if (this.engine !== "deepseek") noteRateLimit(m.rate_limit_info);
         } else if (m.type === "result") {
+          this.allowAll = false;   // "Allow all for this worker" lasts until the worker's turn ends; a follow-up asks again
           if (this.state !== "waiting") this.setState("idle");
           for (const w of this.turnWaiters.splice(0)) w(m);
         }
@@ -182,9 +193,13 @@ export class LiveSession {
 
   /** Background agents and commands Claude started: what each is doing, and how it ended. */
   noteTask(m) {
+    // Claude Code's own housekeeping (ambient tasks such as watchers) isn't something Claude started for the person
+    if (m.ambient || m.skip_transcript) this.quietTasks.add(m.task_id);
+    if (this.quietTasks.has(m.task_id)) return;
     const t = this.tasks.get(m.task_id) || { id: m.task_id, status: "running", startedAt: Date.now() };
     if (m.subtype !== "task_notification") Object.assign(t, { status: "running", endedAt: null });   // also an agent resumed after it stopped
-    if (m.subtype === "task_started") Object.assign(t, { description: m.description, kind: m.task_type === "local_agent" || m.subagent_type ? "agent" : "command", agentType: m.subagent_type || null, background: !!m.is_backgrounded });
+    if (m.tool_use_id) t.toolUseId = m.tool_use_id;   // the tool call that started it: the app ties the task to that call
+    if (m.subtype === "task_started") Object.assign(t, { description: m.description, kind: m.task_type === "local_agent" || m.subagent_type ? "agent" : "command", agentType: m.subagent_type || null, background: !!m.is_backgrounded, taskType: m.task_type || null });
     else if (m.subtype === "task_progress") Object.assign(t, { activity: m.description, tokens: m.usage?.total_tokens ?? t.tokens, tools: m.usage?.tool_uses ?? t.tools, ms: m.usage?.duration_ms ?? t.ms });
     else Object.assign(t, { status: m.status || "completed", summary: m.summary || null, endedAt: Date.now(), activity: null });
     t.description ||= m.description || m.summary || "Background task";
@@ -202,10 +217,13 @@ export class LiveSession {
       this.noteApproval(toolName, opts.toolUseID);
       return Promise.resolve({ behavior: "allow", updatedInput: input });
     }
+    // "Allow all for this worker": no more asking until this turn ends (answer() sets it, pump() clears it)
+    if (this.allowAll && !ALWAYS_ASKS.has(toolName)) return Promise.resolve({ behavior: "allow", updatedInput: input });
     const requestId = crypto.randomUUID();
+    // `parent`: a worker's approvals show in the chat that started it (the app routes them there)
     const info = { requestId, sessionId: this.sessionId, toolName, input, suggestions: opts?.suggestions || [],
       decisionReason: opts?.decisionReason || null, blockedPath: opts?.blockedPath || null, title: this.title, at: Date.now(),
-      toolUseID: opts?.toolUseID || null, mcpServer: opts?.mcpServer || null, engine: this.engine };
+      toolUseID: opts?.toolUseID || null, mcpServer: opts?.mcpServer || null, engine: this.engine, parent: this.link?.parent || null };
     return new Promise(resolve => {
       const done = r => {
         if (!this.pending.has(requestId)) return;
@@ -221,7 +239,8 @@ export class LiveSession {
       this.setState("waiting");
       this.activity.approval(toolName, input);
       broadcastAll({ t: "permission.request", ...info });
-      notifyNative({ type: "permission.request", ...info, input: toolDetail(toolName, input) || JSON.stringify(input).slice(0, 200) });
+      notifyNative({ type: "permission.request", ...info, input: toolDetail(toolName, input) || JSON.stringify(input).slice(0, 200),
+        ...(this.link ? { ask: askPhrase(toolName, input), parentTitle: live.get(this.link.parent)?.title || null } : {}) });
     });
   }
   noteApproval(toolName, toolUseID) {
@@ -229,7 +248,7 @@ export class LiveSession {
     list.push(toolUseID);
     this.approvals.set(toolName, list.slice(-20));
   }
-  answer({ requestId, behavior, message, always, updatedInput }) {
+  answer({ requestId, behavior, message, always, updatedInput, allowAll }) {
     const p = this.pending.get(requestId);
     if (!p) return false;
     if (behavior === "allow") {
@@ -239,7 +258,14 @@ export class LiveSession {
         this.noteApproval(p.info.toolName, p.info.toolUseID);
         if (always) this.allowAlways.add(p.info.toolName);
       }
+      // "Allow all for this worker" (workers only): this one, the others it's waiting on, and the rest of its turn
+      const all = !!allowAll && !!this.link && !this.allowAll;
+      if (all) this.allowAll = true;
       p.resolve(r);
+      if (all) {
+        for (const q of [...this.pending.values()]) if (!ALWAYS_ASKS.has(q.info.toolName)) q.resolve({ behavior: "allow", updatedInput: q.info.input });
+        broadcastAll({ t: "state", sessionId: this.sessionId, state: this.state, info: this.info() });
+      }
     } else {
       p.resolve({ behavior: "deny", message: message || "The user denied this action.", interrupt: !message });
     }

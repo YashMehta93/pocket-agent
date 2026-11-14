@@ -13,14 +13,14 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 | `t` | Args | Reply |
 |---|---|---|
 | `hello` | `tzOffset?` (minutes, from `new Date().getTimezoneOffset()`; DeepSeek spend is counted per local day) | `version, uiVersion, home, host, platform, defaults, pinned, commands, models, account, live[], engines[], deepseek` (see DeepSeek below) |
-| `sessions.list` | `limit?, dir?` | `sessions[]: { sessionId, title, firstPrompt, cwd, lastModified, pinned, live, elsewhere, engine?, parent?, spend? }`: `engine` is `"deepseek"` for DeepSeek chats (absent = Claude), `parent` the calling chat of a worker, `spend` a DeepSeek chat's estimated USD |
+| `sessions.list` | `limit?, dir?` | `sessions[]: { sessionId, title, firstPrompt, cwd, lastModified, pinned, live, elsewhere, engine?, parent?, worker?, spend? }`: `engine` is `"deepseek"` for DeepSeek chats (absent = Claude), `parent` the calling chat of a worker, `worker` its latest run (`at, toolUseId, runAt, result: done\|stopped\|failed\|null, steps, ms, usd, endedAt`; `result` null and no `endedAt` while it runs), `spend` a DeepSeek chat's estimated USD |
 | `session.history` | `sessionId` | `messages[]` (SDK `SessionMessage`), `info` |
 | `session.open` | `sessionId?, cwd?, model?, effort?, permissionMode?, engine?` | `sessionId, info`. `engine: "claude" \| "deepseek"` picks a new chat's engine (default: `defaults.engine`, else Claude); a chat keeps its engine for life, so asking an existing chat for the other one fails with `ENGINE_FIXED`. DeepSeek also fails with `NO_DEEPSEEK_KEY` or `FOLDER_BLOCKED` |
 | `subscribe` | `sessionId, after` | `info` (live session or null), `events[]` with `seq > after`, `settings`, `engine` (`"claude"` \| `"deepseek"`), `parent` (or null) |
 | `unsubscribe` | `sessionId` | |
 | `send` | `sessionId, text, images?[{mediaType,data}]`, plus `cwd/model/effort/permissionMode/engine` for a new chat | `sessionId, uuid` — may fail with `code: "BUSY_ELSEWHERE"`, or as `session.open` does |
 | `interrupt` | `sessionId` | |
-| `permission.reply` | `sessionId, requestId, behavior: allow\|deny, always?, message?, updatedInput?` | `ok` |
+| `permission.reply` | `sessionId, requestId, behavior: allow\|deny, always?, allowAll?, message?, updatedInput?` | `ok`. `allowAll` (a worker's request, "Allow all for this worker"): this one, the worker's other waiting requests, and the rest of its turn are allowed without asking; questions and plans still ask, and a follow-up asks again |
 | `set` | `sessionId, model?, effort?, permissionMode?` | `info`. A model must suit the chat's engine ("That model isn't available on DeepSeek/Claude."); on DeepSeek, `flash`/`pro` are accepted and an empty effort means `max` |
 | `session.close` | `sessionId` | stops the Claude process (chat stays on disk) |
 | `session.rename` / `session.delete` / `session.pin` | `sessionId, title` / `sessionId` / `sessionId, pinned` | |
@@ -58,15 +58,15 @@ Token-protected HTTP routes another server pulls from (see `server/src/transfer.
 |---|---|---|
 | `ev` | `sessionId, seq, ev` | one SDK message, or `pa_user` (echo of a sent message) / `pa_error` / `pa_cost` (DeepSeek) |
 | `state` | `sessionId, state, info` | `starting \| idle \| running \| waiting \| closed` |
-| `activity` | `sessionId, activity` | live status + step log, see `server/src/activity.js` |
-| `permission.request` | `requestId, sessionId, toolName, input, suggestions, decisionReason, blockedPath, title, toolUseID, mcpServer, engine` | Claude wants to use a tool (`mcpServer`: `{ name, source }` for MCP tools, `source: "sdk"` = Pocket Agent's own) |
+| `activity` | `sessionId, activity, spend?` | live status + step log, see `server/src/activity.js`; `spend`: a DeepSeek chat's estimated USD so far |
+| `permission.request` | `requestId, sessionId, toolName, input, suggestions, decisionReason, blockedPath, title, toolUseID, mcpServer, engine, parent` | Claude wants to use a tool (`mcpServer`: `{ name, source }` for MCP tools, `source: "sdk"` = Pocket Agent's own). `parent` is set in a worker chat: the app shows the request in that calling chat, headed with the worker |
 | `permission.resolved` | `sessionId, requestId, behavior` | answered (from any client or a notification) |
 | `meta` | `commands, models, account` | slash commands, models, account info |
 | `sessions.changed` | | refresh the chat list |
 | `deepseek` | `deepseek`: the whole object, or part of it (`spend` and `price` after metered requests, at most every 2 s) | DeepSeek key, balance, spend or settings changed |
-| `link` | `parent, child, engine, title, toolUseId` | a worker chat started for `parent` (then `sessions.changed`) |
+| `link` | `parent, child, engine, title, toolUseId`, and when the run ends `result, steps, ms, usd, endedAt` | a worker chat started (or got a follow-up) for `parent` (then `sessions.changed`); sent again with how the run went |
 
-`info` (in `state` events, `hello.live` and `subscribe`) has `sessionId, cwd, state, seq, model, effort, permissionMode, title, pending[], activity, tasks[], engine, parent`, plus `spend` (estimated USD so far) in DeepSeek chats. In `ev`, besides SDK messages: `pa_user` (a sent message), `pa_error`, and `pa_cost` `{ usd }` after each DeepSeek turn (what that turn cost, estimated).
+`info` (in `state` events, `hello.live` and `subscribe`) has `sessionId, cwd, state, seq, model, effort, permissionMode, title, pending[], activity, tasks[], engine, parent`, plus `spend` (estimated USD so far) in DeepSeek chats and `allowAll: true` while a worker runs without asking. `tasks[]`: the subagents and background commands Claude started, `{ id, kind: agent|command, description, status: running|completed|stopped|failed, activity, tokens, tools, ms, startedAt, endedAt, summary, agentType, toolUseId, taskType }` (Claude Code's own housekeeping tasks aren't listed). In `ev`, besides SDK messages: `pa_user` (a sent message), `pa_error`, and `pa_cost` `{ usd }` after each DeepSeek turn (what that turn cost, estimated).
 
 ## DeepSeek
 
@@ -132,4 +132,4 @@ Called from the UI with `nativeRpc(method, params)` or from the server with `cal
 
 `target` is `{ index }` from `a11y.tree`, or `{ text }`, `{ desc }`, `{ id }`, or `{ x, y }`.
 
-`POST /permission?token=` with `{ sessionId, requestId, behavior }` answers an approval.
+`POST /permission?token=` with `{ sessionId, requestId, behavior, allowAll? }` answers an approval. A worker's approval notification is headed like the app's sheet ("DeepSeek · Add README wants to run npm test"), opens the calling chat, and has Allow / Allow all / Deny.

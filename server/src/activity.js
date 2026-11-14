@@ -48,6 +48,29 @@ export function toolDetail(name, input) {
   }
 }
 
+/**
+ * What an approval asks, said of a worker: "wants to run npm test", "wants to edit README.md", "has a question".
+ * Notifications put it after the worker's name ("DeepSeek · Add README wants to run npm test"); the app words it the same.
+ * A command longer than one short line is "a command": the notification's text shows it whole.
+ */
+export function askPhrase(name, input = {}) {
+  const i = input && typeof input === "object" ? input : {};
+  const base = p => String(p || "").replace(/\/+$/, "").split("/").pop();
+  switch (name) {
+    case "Bash": { const c = String(i.command || "").trim(); return c && !c.includes("\n") && c.length <= 40 ? `wants to run ${c}` : "wants to run a command"; }
+    case "Edit": case "MultiEdit": return `wants to edit ${base(i.file_path) || "a file"}`;
+    case "NotebookEdit": return `wants to edit ${base(i.notebook_path) || "a notebook"}`;
+    case "Write": return `wants to write ${base(i.file_path) || "a file"}`;
+    case "Read": return `wants to read ${base(i.file_path) || "a file"}`;
+    case "WebFetch": { let host = ""; try { host = new URL(i.url).hostname; } catch {} return host ? `wants to open ${host}` : "wants to open a web page"; }
+    case "WebSearch": return "wants to search the web";
+    case "Glob": case "Grep": return "wants to search files";
+    case "AskUserQuestion": return "has a question";
+    case "ExitPlanMode": return "has a plan ready";
+    default: return name.startsWith("mcp__") ? `wants to use ${name.split("__").slice(1).join(" ")}` : `wants to use ${name}`;
+  }
+}
+
 /** Best-effort extraction of a string field from partially streamed tool-input JSON. */
 function partialField(json, field) {
   const m = json.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`));

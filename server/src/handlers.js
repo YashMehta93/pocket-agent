@@ -19,6 +19,9 @@ import { engineOf, copyEngine, forget, linkOf, engineList } from "./engines.js";
 import { status as dsStatus, balance as dsBalance, setKey as dsSetKey, removeKey as dsRemoveKey, setDsSettings, chatSpend, isDeepseekModel, dsModel } from "./deepseek.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
+/** A worker's latest run, from its link record (delegate.js): when it started, toolUseId, and once it ended, how. */
+const workerRun = l => ({ at: l.at || null, toolUseId: l.toolUseId || null, runAt: l.runAt || null, result: l.result || null,
+  steps: l.steps ?? null, ms: l.ms ?? null, usd: l.usd ?? null, endedAt: l.endedAt || null });
 
 /** Changes whenever a UI file changes, so open apps can reload themselves. */
 export function uiVersion() {
@@ -46,13 +49,13 @@ export const handlers = {
     const list = await listSessions({ limit, ...(dir ? { dir } : {}) });
     const busy = busyElsewhere();
     return { sessions: list.map(s => {
-      const engine = engineOf(s.sessionId), parent = linkOf(s.sessionId)?.parent;
+      const engine = engineOf(s.sessionId), link = linkOf(s.sessionId), parent = link?.parent;
       return {
         sessionId: s.sessionId, title: s.customTitle || s.summary, firstPrompt: s.firstPrompt, cwd: s.cwd,
         lastModified: s.lastModified, createdAt: s.createdAt, gitBranch: s.gitBranch, tag: s.tag,
         custom: !!s.customTitle, pinned: prefs.pinned.includes(s.sessionId),
         live: live.get(s.sessionId)?.state || null, elsewhere: busy.get(s.sessionId)?.kind || null,
-        ...(engine ? { engine } : {}), ...(parent ? { parent } : {}), ...(engine === "deepseek" ? { spend: chatSpend(s.sessionId)?.usd ?? 0 } : {}),
+        ...(engine ? { engine } : {}), ...(parent ? { parent, worker: workerRun(link) } : {}), ...(engine === "deepseek" ? { spend: chatSpend(s.sessionId)?.usd ?? 0 } : {}),
       };
     }) };
   },

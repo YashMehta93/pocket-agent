@@ -12,7 +12,7 @@ import { z } from "zod";
 import { VERSION, HOME, log } from "./config.js";
 import { broadcastAll } from "./hub.js";
 import { openSession, live, setToolProvider } from "./live-session.js";
-import { engineOf, linkOf } from "./engines.js";
+import { engineOf, linkOf, updateLink } from "./engines.js";
 import { ready as dsReady, chatSpend, dsSettings, dsModel } from "./deepseek.js";
 
 export const DS_TOOL = "mcp__pocket__deepseek_task", CLAUDE_TOOL = "mcp__pocket__claude_task";
@@ -114,13 +114,19 @@ async function run(parent, engine, args, extra) {
         permissionMode: mode, link: { parent: parent.sessionId, via: toolName, toolUseId: callId || approved } });
     }
   } catch (e) { return fail(e?.message || String(e)); }   // no key, a blocked folder, a chat open elsewhere…
-  broadcastAll({ t: "link", parent: parent.sessionId, child: worker.sessionId, engine, title: worker.title, toolUseId: callId || approved });
+  const linkEv = { t: "link", parent: parent.sessionId, child: worker.sessionId, engine, title: worker.title, toolUseId: callId || approved };
+  // this run: no outcome yet (a follow-up clears the last one); the app's Agents tab reads it after a restart
+  updateLink(worker.sessionId, { runAt: Date.now(), toolUseId: linkEv.toolUseId, result: null, steps: null, ms: null, usd: null, endedAt: null });
+  broadcastAll(linkEv);
   broadcastAll({ t: "sessions.changed" });
   log("worker", worker.sessionId.slice(0, 8), "for", parent.sessionId.slice(0, 8), engine, mode);
 
   const before = await gitStatus(worker.cwd), usd0 = chatSpend(worker.sessionId)?.usd || 0, t0 = Date.now(), text0 = worker.lastText;
   if (extra?.signal?.aborted) {   // the calling chat was stopped before the worker got its task: don't send it
     if (!args.continue_chat) worker.close();
+    const outcome = { result: "stopped", steps: 0, ms: 0, usd: 0, endedAt: Date.now() };
+    updateLink(worker.sessionId, outcome);
+    broadcastAll({ ...linkEv, ...outcome });
     return fail("Stopped before the worker began.");
   }
   const turn = worker.waitTurn();
@@ -143,9 +149,20 @@ async function run(parent, engine, args, extra) {
   extra?.signal?.removeEventListener("abort", stop);
   clearInterval(timer);
   const after = await gitStatus(worker.cwd);
-  return report({ who, worker, r, before, after, ms: Date.now() - t0, parentStopped: !!extra?.signal?.aborted,
-    usd: engine === "deepseek" ? Math.max(0, (chatSpend(worker.sessionId)?.usd || 0) - usd0) : null,
-    text: r?.result || (worker.lastText !== text0 ? worker.lastText : "") });
+  const ms = Date.now() - t0, parentStopped = !!extra?.signal?.aborted;
+  const usd = engine === "deepseek" ? Math.max(0, (chatSpend(worker.sessionId)?.usd || 0) - usd0) : null;
+  // how the run went, kept with the link and sent to the app: done | stopped | failed, its steps, time and cost
+  const steps = worker.activity?.snapshot().steps.filter(s => s.kind === "tool").length ?? null;
+  const outcome = { result: runStatus(r, parentStopped).split(" ")[0], steps, ms, usd, endedAt: Date.now() };
+  updateLink(worker.sessionId, outcome);
+  broadcastAll({ ...linkEv, title: worker.title, ...outcome });
+  return report({ who, worker, r, before, after, ms, parentStopped, usd, text: r?.result || (worker.lastText !== text0 ? worker.lastText : "") });
+}
+
+/** "done", "stopped" (the caller or the person stopped it) or "failed (<why>)", from the worker's last result. */
+function runStatus(r, parentStopped) {
+  const sub = r?.subtype || "closed";
+  return parentStopped || sub === "error_during_execution" ? "stopped" : sub !== "success" ? `failed (${sub})` : r.is_error ? "failed (error)" : "done";
 }
 
 /** The worker's first message. It stays visible in the worker's chat. */
@@ -157,9 +174,7 @@ export function brief({ who, other, parent, cwd, task, approved }) {
 
 /** The tool's result. Stable: the app reads the first line and the "Chat:" line. `text` defaults to the result's own text. */
 export function report({ who, worker, r, before, after, ms, usd, parentStopped, text }) {
-  const sub = r?.subtype || "closed";
-  const status = parentStopped || sub === "error_during_execution" ? "stopped"
-    : sub !== "success" ? `failed (${sub})` : r.is_error ? "failed (error)" : "done";
+  const status = runStatus(r, parentStopped);
   const model = String(worker.model || "default").replace(/\[1m\]$/i, "");
   const cost = usd == null ? "" : usd < 0.001 ? " · under $0.001" : ` · about $${usd.toFixed(usd < 1 ? 3 : 2)}`;
   let body = String((text ?? r?.result) || "").trim() || "(no reply)";
