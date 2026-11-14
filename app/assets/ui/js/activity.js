@@ -15,9 +15,12 @@ function elapsed(a) { return a?.turnStart ? fmtDur(Math.floor((Date.now() - a.tu
 /** Show the bar while a turn runs, for errors, and briefly after a turn finishes. */
 function renderActivity() {
   const bar = $("#activity");
-  const a = currentActivity();
+  let a = currentActivity();
   const st = sessionState(state.current?.sessionId);
   const running = st === "running" || st === "waiting";
+  // a worker of this chat waits for your OK: say so here, as for the chat's own approvals (#52)
+  const wp = running && st !== "waiting" && typeof requestWorker === "function" && state.pending.find(p => p.sessionId !== state.current?.sessionId && requestWorker(p)?.parent === state.current?.sessionId);
+  if (wp && a) { const w = requestWorker(wp); a = { ...a, phase: "approval", label: "Waiting for your approval", detail: `${ENGINE_NAME[w.engine]} · ${w.title} ${askPhrase(wp.toolName, wp.input)}` }; }
   const recentEnd = a && (a.phase === "idle" || a.phase === "error") && a.turnStart && Date.now() - a.since < (a.phase === "error" ? 60000 : 6000);
   if (!a || (!running && !recentEnd)) { bar.hidden = true; stopActivityTick(); if (sheet.key === "activity") renderActivityLog(); return; }
   // If the server hasn't reported yet but the session is running, show a generic state.

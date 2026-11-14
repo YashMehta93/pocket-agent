@@ -116,23 +116,26 @@ conn.on("state", m => {
   renderSessions();
   if (m.state === "idle") debouncedRefresh();
 });
+// a worker's approval shows in the chat that started it, and in the worker's own views (approvals.js, requestHere)
 conn.on("permission.request", m => {
   state.pending = state.pending.filter(p => p.requestId !== m.requestId).concat(m);
   haptic("alert");
-  updateMenuBadge(); renderSessions();
-  if (state.current?.sessionId === m.sessionId) showNextPermission();
+  updateMenuBadge(); renderSessions(); updateHeader();
+  if (requestHere(m)) showNextPermission();
 });
 conn.on("permission.resolved", m => {
+  const was = state.pending.find(p => p.requestId === m.requestId) || m;
   state.pending = state.pending.filter(p => p.requestId !== m.requestId);
   if (sheet.key === "perm:" + m.requestId) sheet.close(true);
-  updateMenuBadge(); renderSessions();
-  if (state.current?.sessionId === m.sessionId) showNextPermission();
+  updateMenuBadge(); renderSessions(); updateHeader();
+  if (requestHere(was)) showNextPermission();
 });
 conn.on("activity", m => {
   state.activity[m.sessionId] = m.activity;
+  if (m.spend != null && state.liveInfo[m.sessionId]) state.liveInfo[m.sessionId].spend = m.spend;   // a DeepSeek chat's cost so far
   if (state.current?.sessionId === m.sessionId) renderActivity();
 });
-conn.on("tasks", m => { (state.liveInfo[m.sessionId] ||= { sessionId: m.sessionId }).tasks = m.tasks; if (m.sessionId === state.current?.sessionId) renderAgentsLine(); });
+conn.on("tasks", m => { (state.liveInfo[m.sessionId] ||= { sessionId: m.sessionId }).tasks = m.tasks; if (m.sessionId === state.current?.sessionId) renderTabs(); });
 conn.on("usage", m => { state.usage = m.usage; renderUsage(); });
 conn.on("meta", m => { state.commands = m.commands || state.commands; state.models = m.models || state.models; state.account = m.account || state.account; updateComposer(); });
 conn.on("sessions.changed", () => debouncedRefresh());

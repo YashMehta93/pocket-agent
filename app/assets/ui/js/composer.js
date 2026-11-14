@@ -41,7 +41,7 @@ function updateComposer() {
   send.disabled = !running && !hasText;
   send.setAttribute("aria-label", running && !hasText ? "Stop" : "Send");
   renderActivity();
-  if (typeof renderAgentsLine === "function") renderAgentsLine();
+  if (typeof renderTabs === "function") renderTabs();
 }
 function setStatus(text, spin = true) {
   const el = $("#status-line");

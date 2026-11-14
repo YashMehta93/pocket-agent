@@ -37,9 +37,12 @@
       <button class="icon-btn" id="btn-files" aria-label="Files" data-icon="folder"></button>
       <button class="icon-btn" id="btn-more" aria-label="More" data-icon="dots"></button>
     </header>
+    <nav id="chat-tabs" role="tablist" aria-label="This chat" hidden>
+      <button class="tab" id="tab-chat" role="tab" aria-selected="true" aria-controls="chat"><span class="tl">Chat</span></button>
+      <button class="tab" id="tab-agents" role="tab" aria-selected="false" aria-controls="agents-view"><span class="tl">Agents<span class="ct"></span><i class="tdot" hidden></i></span></button>
+    </nav>
     <div id="banner" hidden></div>
     <div id="todo-bar" hidden></div>
-    <div id="links-bar" hidden></div>
     <section id="chat" aria-live="polite">
       <div id="messages"></div>
       <div id="empty" class="empty">
@@ -49,12 +52,12 @@
         <div class="suggestions" id="suggestions"></div>
       </div>
     </section>
+    <section id="agents-view" role="tabpanel" aria-labelledby="tab-agents" hidden><div class="ag-list"></div></section>
     <button id="jump" hidden aria-label="Jump to latest" data-icon="down"></button>
 
     <footer id="composer">
       <div id="status-line" hidden></div>
       <button id="usage-note" hidden></button>
-      <button id="agents-line" hidden></button>
       <button id="activity" class="activity" hidden aria-live="polite"></button>
       <div id="popup" hidden></div>
       <div id="attachments" hidden></div>

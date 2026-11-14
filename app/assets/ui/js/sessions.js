@@ -9,6 +9,13 @@ async function refreshSessions() {
   catch (e) { console.warn(e); }
 }
 function sessionState(id) { const pend = state.pending.some(p => p.sessionId === id); if (pend) return "waiting"; return state.liveInfo[id]?.state || null; }
+/** A chat's state with its workers': a worker's approval shows in the chat that started it, so it needs you there (#52). */
+function chatState(id) {
+  const st = sessionState(id);
+  if (st === "waiting" || typeof requestWorker !== "function") return st;
+  return state.pending.some(p => p.sessionId !== id && requestWorker(p)?.parent === id) ? "waiting" : st;
+}
+state.openKids = new Set();   // chats whose workers are shown in the drawer
 function renderSessions() {
   const list = $("#session-list");
   const q = state.filter.toLowerCase();
@@ -18,6 +25,11 @@ function renderSessions() {
   for (const id of Object.keys(state.liveInfo)) if (!state.sessions.some(s => s.sessionId === id)) {
     const i = state.liveInfo[id]; items.unshift({ sessionId: id, title: i.title || "New chat", cwd: i.cwd, lastModified: Date.now(), engine: i.engine, parent: i.parent });
   }
+  // Workers sit under the chat that started them, folded (#52). A search lists whatever matches, workers too.
+  const links = typeof dsLinks === "function" ? dsLinks() : {}, listed = new Set(items.map(s => s.sessionId)), kids = {};
+  if (!q) items = items.filter(s => { const par = links[s.sessionId]?.parent; if (!par || !listed.has(par)) return true; (kids[par] ||= []).push(s); return false; });
+  const curParent = links[state.current?.sessionId]?.parent;
+  if (curParent) state.openKids.add(curParent);   // the worker on screen is never hidden
   const groups = { Pinned: [], Today: [], Yesterday: [], "Previous 7 days": [], Older: [] };
   const day = 864e5, startToday = new Date().setHours(0, 0, 0, 0);
   for (const s of items) {
@@ -32,21 +44,36 @@ function renderSessions() {
     if (!arr.length) continue;
     list.append(h(`<div class="group-label">${g}</div>`));
     for (const s of arr) {
-      const st = sessionState(s.sessionId);
-      const row = h(`<button class="sess ${state.current?.sessionId === s.sessionId ? "on" : ""}">
-        ${st ? `<span class="dot ${st}"></span>` : ""}
-        <div class="t"><div></div><div class="meta"></div></div>
-        ${state.pinned.includes(s.sessionId) ? `<span class="pin">${icon("pin")}</span>` : ""}</button>`);
-      row.querySelector(".t div").textContent = s.title || s.firstPrompt || "Untitled";
-      // DeepSeek chats and worker chats (started by another chat) say so
-      const eng = s.parent ? ` · ${s.engine === "deepseek" ? "DeepSeek" : "Claude"} worker` : s.engine === "deepseek" ? " · DeepSeek" : "";
-      row.querySelector(".meta").textContent = `${baseName(s.cwd)} · ${relTime(s.lastModified)}${st === "waiting" ? " · needs approval" : st === "running" ? " · working" : s.elsewhere ? " · open in Termux" : ""}${eng}`;
-      row.onclick = () => { closeDrawer(); openSession(s.sessionId); };
-      longPress(row, () => sessionMenu(s));
-      list.append(row);
+      list.append(sessRow(s));
+      if (kids[s.sessionId]) list.append(kidsBlock(s.sessionId, kids[s.sessionId]));
     }
   }
   if (!list.children.length) list.innerHTML = `<div class="group-label" style="text-transform:none">${state.filter ? "No matching chats" : "No chats yet"}</div>`;
+}
+function sessRow(s, nested) {
+  const st = nested ? sessionState(s.sessionId) : chatState(s.sessionId);
+  const row = h(`<button class="sess ${state.current?.sessionId === s.sessionId ? "on" : ""}${nested ? " kid" : ""}">
+    ${st || nested ? `<span class="dot ${st || ""}"></span>` : ""}
+    <div class="t"><div></div><div class="meta"></div></div>
+    ${state.pinned.includes(s.sessionId) ? `<span class="pin">${icon("pin")}</span>` : ""}</button>`);
+  row.querySelector(".t div").textContent = s.title || s.firstPrompt || "Untitled";
+  // DeepSeek chats and worker chats say so (a nested worker's place already says it's a worker)
+  const eng = s.parent && !nested ? ` · ${s.engine === "deepseek" ? "DeepSeek" : "Claude"} worker` : s.engine === "deepseek" ? " · DeepSeek" : "";
+  row.querySelector(".meta").textContent = `${baseName(s.cwd)} · ${relTime(s.lastModified)}${st === "waiting" ? " · needs approval" : st === "running" ? " · working" : s.elsewhere ? " · open in Termux" : ""}${eng}`;
+  row.onclick = () => { closeDrawer(); openSession(s.sessionId); };
+  longPress(row, () => sessionMenu(s));
+  return row;
+}
+/** "▸ 2 workers · 1 needs you" under a chat; a tap shows them, folded again with another. */
+function kidsBlock(parent, arr) {
+  const open = state.openKids.has(parent), states = arr.map(s => sessionState(s.sessionId));
+  const needs = states.filter(x => x === "waiting").length, busy = states.filter(x => x === "running" || x === "starting").length;
+  const box = h(`<div class="sess-kids${open ? " open" : ""}"><button class="kids-toggle" aria-expanded="${open}"><span class="kt-chev" aria-hidden="true">›</span>
+    <span class="kt-n">${arr.length} worker${arr.length === 1 ? "" : "s"}</span>${needs ? `<span class="kt-st needs"> · ${needs} need${needs === 1 ? "s" : ""} you</span>` : busy ? `<span class="kt-st"> · ${busy} working</span>` : ""}</button>
+    <div class="kids-list"></div></div>`);
+  if (open) for (const s of arr) box.querySelector(".kids-list").append(sessRow(s, true));
+  box.querySelector(".kids-toggle").onclick = () => { if (state.openKids.has(parent)) state.openKids.delete(parent); else state.openKids.add(parent); renderSessions(); };
+  return box;
 }
 function renderProjects() {
   const counts = {};
@@ -63,7 +90,7 @@ function renderProjects() {
     box.append(b);
   }
 }
-function updateMenuBadge() { $("#menu-badge").hidden = !state.pending.some(p => p.sessionId !== state.current?.sessionId); }
+function updateMenuBadge() { $("#menu-badge").hidden = !state.pending.some(p => typeof requestHere === "function" ? !requestHere(p) : p.sessionId !== state.current?.sessionId); }
 $("#session-search").addEventListener("input", e => { state.filter = e.target.value; renderSessions(); });
 $("#btn-menu").onclick = () => {
   document.body.classList.add("drawer-open"); nativeCall("setBackHandler", true); refreshSessions();
@@ -118,6 +145,7 @@ async function openSession(sessionId, { keepScroll } = {}) {
   const meta = state.sessions.find(s => s.sessionId === sessionId) || {};
   const info = state.liveInfo[sessionId];
   state.current = { sessionId, cwd: meta.cwd || info?.cwd || state.home, title: meta.title || info?.title || "Chat", isNew: false, lastSeq: 0, engine: meta.engine || info?.engine || undefined };
+  if (typeof agentsChatChanged === "function" && prev?.sessionId !== sessionId) agentsChatChanged();
   chat.reset(); hideEmpty(); updateHeader(); updateComposer(); renderSessions();
   setStatus("Loading…");
   try {
@@ -144,6 +172,7 @@ function newChat(cwd, engine) {
   state.current = { sessionId: uuid(), cwd: cwd || state.defaults.cwd || state.home, title: "New chat", isNew: true, lastSeq: 0,
     model: state.defaults.model || null, effort: state.defaults.effort || null, permissionMode: state.defaults.permissionMode || "default" };
   if (typeof applyEngine === "function") { applyEngine(state.current, engine || defaultEngine()); state.current.engineChosen = !!engine; }
+  if (typeof agentsChatChanged === "function") agentsChatChanged();
   chat.reset(); showEmpty(); updateHeader(); updateComposer(); renderSessions();
 }
 function showEmpty() {
@@ -160,9 +189,11 @@ function hideEmpty() { $("#empty").hidden = true; }
 function updateHeader() {
   const cur = state.current; if (!cur) return;
   $("#chat-title").textContent = cur.isNew ? "New chat" : (cur.title || "Chat");
-  const st = sessionState(cur.sessionId);
+  const st = chatState(cur.sessionId);
   const elsewhere = !cur.isNew && state.sessions.find(s => s.sessionId === cur.sessionId)?.elsewhere;
   const ds = typeof chatEngine === "function" && chatEngine(cur.sessionId) === "deepseek" ? " · DeepSeek" : "";
-  $("#chat-sub").textContent = `${shortPath(cur.cwd)}${ds}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
-  if (typeof renderLinksBar === "function") renderLinksBar();
+  // a worker says so (the drawer has it under the chat that started it; Android back returns there)
+  const worker = !cur.isNew && typeof workerParentOf === "function" && workerParentOf(cur.sessionId) ? (ds ? " worker" : " · Claude worker") : "";
+  $("#chat-sub").textContent = `${shortPath(cur.cwd)}${ds}${worker}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
+  if (typeof renderTabs === "function") renderTabs();
 }

@@ -103,7 +103,11 @@ function resultText(content) {
 function stripReminders(t) { return t.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim(); }
 
 class ChatView {
-  constructor(root) { this.root = root; this.reset(); }
+  /** opts.embedded: inside an agent's page (agents.js), so it leaves the chat's to-do bar, status line and scrolling
+   *  alone, and offers no edit or retry; opts.scroller() is then the element that scrolls it. */
+  constructor(root, opts = {}) { this.root = root; this.opts = opts; this.stick = true; this.reset(); }
+  get embedded() { return !!this.opts.embedded; }
+  scrollIfPinned() { if (!this.embedded) return scrollIfPinned(); const el = this.opts.scroller?.(); if (el && this.stick) el.scrollTop = el.scrollHeight; }
   reset() {
     this.root.innerHTML = "";
     this.tools = new Map();      // tool_use_id -> card
@@ -116,7 +120,7 @@ class ChatView {
     this.todos = null;
     this.lastText = "";
     this.turnStart = null;
-    updateTodoBar(null);
+    if (!this.embedded) updateTodoBar(null);
   }
   get empty() { return !this.root.children.length; }
 
@@ -127,7 +131,8 @@ class ChatView {
   makeSub(card) { const d = document.createElement("div"); d.className = "subagent"; card.body.append(d); return d; }
 
   // ───── history (SessionMessage[]) ─────
-  loadHistory(messages) {
+  /** live: the chat is still at work (an agent's page), so its unfinished steps keep running */
+  loadHistory(messages, { live = false } = {}) {
     this.loadingHistory = true;   // history appears at once; only live messages animate in
     for (const m of messages) {
       if (m.uuid) this.order.push(m.uuid);
@@ -136,7 +141,8 @@ class ChatView {
       else if (m.type === "system") this.systemHistory(m);
     }
     this.finishGhosts();
-    for (const card of this.tools.values()) if (card.status === "run") this.setStatus(card, "unknown");
+    // a step with no result yet: still running in a live chat, cut off in an old one
+    for (const card of this.tools.values()) if (live ? card.status === "done" : card.status === "run") this.setStatus(card, live ? "run" : "unknown");
     this.loadingHistory = false;
     this.fresh = false;
   }
@@ -161,6 +167,7 @@ class ChatView {
   }
   system(ev) {
     if (ev.subtype === "compact_boundary") this.divider("Conversation compacted");
+    else if (this.embedded) return;   // the status line and toasts belong to the chat on screen
     else if (ev.subtype === "local_command_output" && ev.content) this.note(ev.content);
     else if (ev.subtype === "informational" && ev.content) this.note(ev.content);
     else if (ev.subtype === "notification" && ev.text) toast(ev.text);
@@ -184,7 +191,7 @@ class ChatView {
           const md = this.thoughtSlot(this.curParent, true);
           this.ghosts.set(key, { el: md.closest(".thinking"), md, kind: "thinking", text: "" });
         }
-        scrollIfPinned();
+        this.scrollIfPinned();
       } else if (b.type === "tool_use") {
         if (!this.tools.has(b.id)) this.toolCard(b.id, b.name, {}, this.curParent, true);
         (this.streamTools ||= new Map()).set(key, { id: b.id, json: "" });
@@ -205,11 +212,12 @@ class ChatView {
     st.json += chunk;
     const card = this.tools.get(st.id); if (!card || Object.keys(card.input || {}).length) return;
     const field = f => { const m = st.json.match(new RegExp(`"${f}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`)); if (!m) return ""; try { return JSON.parse(`"${m[1].replace(/\\$/, "")}"`); } catch { return m[1]; } };
+    if (card.handoff) { const t = field("title") || field("task").split("\n").map(l => l.trim()).find(Boolean) || ""; if (t && t !== card.streamTitle) { card.streamTitle = t.slice(0, 80); handoffLine(card); } return; }
     let hint = card.name === "Bash" ? field("command") : shortPath(field("file_path")) || field("pattern") || field("description") || field("url") || field("query");
     if (card.name === "Write") hint = `${shortPath(field("file_path"))} · ${(st.json.match(/\\n/g) || []).length + 1} lines so far`;
     if (hint) card.summaryEl.textContent = hint;
   }
-  scheduleGhost(g) { if (g.t) return; g.t = setTimeout(() => { g.t = null; this.paintGhost(g); scrollIfPinned(); }, 70); }
+  scheduleGhost(g) { if (g.t) return; g.t = setTimeout(() => { g.t = null; this.paintGhost(g); this.scrollIfPinned(); }, 70); }
   paintGhost(g) {
     if (g.kind === "text") setMd(g.el, g.text);
     else setMd(g.md, g.text || "…");
@@ -250,7 +258,7 @@ class ChatView {
         else this.toolCard(b.id, b.name, b.input || {}, parentId, !history);
       }
     });
-    scrollIfPinned();
+    this.scrollIfPinned();
   }
 
   // ───── user content (prompts + tool results) ─────
@@ -283,6 +291,8 @@ class ChatView {
     if (uuid && this.rendered.has(uuid)) return;
     if (uuid) { this.rendered.add(uuid); this.userTexts.set(uuid, text); }
     this.fresh = true;
+    const task = workerTask(text);
+    if (task && !images.length) return this.taskBlock(task);
     const wrap = h(`<div class="user-msg-wrap"><div class="user-msg"><div><div class="imgs"></div><div class="bubble ${isCmd ? "cmd-chip" : ""}"></div></div></div>
       <div class="msg-actions" hidden><button class="icon-btn sm" data-a="copy" data-icon="copy" aria-label="Copy"></button>${uuid ? `<button class="icon-btn sm" data-a="edit" data-icon="edit" aria-label="Edit"></button>` : ""}</div></div>`);
     wrap.querySelector(".bubble").textContent = text;
@@ -292,38 +302,59 @@ class ChatView {
     const acts = wrap.querySelector(".msg-actions");
     wrap.querySelector(".bubble").onclick = () => { acts.hidden = !acts.hidden; };
     acts.querySelector('[data-a="copy"]').onclick = () => copyText(text);
-    const ed = acts.querySelector('[data-a="edit"]'); if (ed) ed.onclick = () => editMessage(uuid, text);
+    const ed = acts.querySelector('[data-a="edit"]'); if (ed) { if (this.embedded) ed.remove(); else ed.onclick = () => editMessage(uuid, text); }
     this.root.append(wrap);
-    scrollToBottom();
+    if (this.embedded) this.scrollIfPinned(); else scrollToBottom();
+  }
+  /** "Task from “Plan the tidy-up”" with its first line; the whole task (Markdown) opens with a tap. */
+  taskBlock({ from, task, followUp }) {
+    const el = h(`<details class="task-msg"><summary><span class="tm-h"></span><span class="tm-first"></span></summary><div class="md"></div></details>`);
+    el.querySelector(".tm-h").textContent = (followUp ? "Follow-up from " : "Task from ") + (from ? "“" + from + "”" : "the calling chat");
+    el.querySelector(".tm-first").textContent = String(task).split("\n").map(l => l.replace(/^[#>*\-\s]+/, "").trim()).find(Boolean) || "";
+    setMd(el.querySelector(".md"), task);
+    this.root.append(el);
+    this.scrollIfPinned();
   }
 
   // ───── tool cards ─────
   toolCard(id, name, input, parentId, live) {
+    if (name.startsWith("mcp__pocket__") && typeof handoffLine === "function") return this.handoffCard(id, name, input, parentId, live);
     const el = h(`<details class="tool"><summary><span class="ti">${icon(TOOL_ICON[name] || (name.startsWith("mcp__") ? "bolt" : "terminal"))}</span>
       <span class="tn"></span><span class="ts"></span><span class="st ${live ? "spin" : ""}"></span></summary><div class="tb"></div></details>`);
     el.querySelector(".tn").textContent = prettyToolName(name);
     el.dataset.kind = TOOL_KIND[name] || (name.startsWith("mcp__") ? "run" : "other");  // colours the tag (css: .tool[data-kind])
     const card = { id, name, input, el, body: el.querySelector(".tb"), summaryEl: el.querySelector(".ts"), stEl: el.querySelector(".st"), status: live ? "run" : "done" };
-    const worker = name.startsWith("mcp__pocket__");   // deepseek_task / claude_task (deepseek.js)
-    if (settings.autoExpandTools || worker || name === "TodoWrite" || name === "Task" || name === "Agent" || name === "ExitPlanMode") el.open = name !== "Task" && name !== "Agent" ? true : false;
+    if (settings.autoExpandTools || name === "TodoWrite" || name === "Task" || name === "Agent" || name === "ExitPlanMode") el.open = name !== "Task" && name !== "Agent" ? true : false;
     this.tools.set(id, card);
     el._card = card;
     this.fillToolInput(card);
-    if (worker || name === "AskUserQuestion" || name === "ExitPlanMode") this.container(parentId).append(el); else this.place(el, parentId);
+    if (name === "AskUserQuestion" || name === "ExitPlanMode") this.container(parentId).append(el); else this.place(el, parentId);
+    return card;
+  }
+  /** deepseek_task / claude_task: one quiet line where the handoff happened ("Sent to DeepSeek: Add README · done ›").
+   *  The card keeps the usual fields (detached) so results and statuses flow as for any tool. */
+  handoffCard(id, name, input, parentId, live) {
+    const el = h(`<div class="handoff"><button class="handoff-line"><span class="spark"></span><span class="sl-t"></span><span class="hl-st"></span><span class="chev" aria-hidden="true">›</span></button></div>`);
+    const card = { id, name, input, el, body: document.createElement("div"), summaryEl: document.createElement("span"), stEl: document.createElement("span"), status: live ? "run" : "done", handoff: true };
+    el._card = card;
+    this.tools.set(id, card);
+    el.querySelector("button").onclick = () => { if (typeof openHandoff === "function") openHandoff(card); };
+    this.container(parentId).append(el);
+    this.fillToolInput(card);
     return card;
   }
   fillToolInput(card) {
     const { name, input } = card, body = card.body;
     card.summaryEl.textContent = toolSummary(name, input);
     if (card.el.isConnected) this.updateGroup(card.el.closest(".steps"));   // the line names what's running once its input arrives
-    if (name.startsWith("mcp__pocket__") && typeof delegationCard === "function") return delegationCard(card);
+    if (card.handoff) return handoffLine(card);
     body.querySelector(".tin")?.remove();
     const box = document.createElement("div"); box.className = "tin";
     if (name === "Bash") { box.append(codeBlock("$ " + (input.command || ""), "bash", true)); }
     else if (name === "Edit") { const d = diffView(diffLines(input.old_string, input.new_string)); box.append(d.el); card.summaryEl.innerHTML = `${esc(shortPath(input.file_path))} <span class="diff-stat"><span class="p">+${d.add}</span> <span class="m">-${d.del}</span></span>`; }
     else if (name === "MultiEdit") { for (const e of input.edits || []) box.append(diffView(diffLines(e.old_string, e.new_string)).el); }
     else if (name === "Write") { const lines = (input.content || "").split("\n").length; card.summaryEl.textContent = `${shortPath(input.file_path)} · ${lines} lines`; if (input.content != null) box.append(codeBlock(input.content, langOf(input.file_path))); }
-    else if (name === "TodoWrite") { box.append(todoList(input.todos)); this.todos = input.todos; updateTodoBar(input.todos); }
+    else if (name === "TodoWrite") { box.append(todoList(input.todos)); this.todos = input.todos; if (!this.embedded) updateTodoBar(input.todos); }
     else if (name === "ExitPlanMode") { const m = document.createElement("div"); m.className = "md"; setMd(m, input.plan || ""); box.append(m); }
     else if (name === "Task" || name === "Agent") { if (input.prompt) { const l = h(`<div class="lbl">Task</div>`); box.append(l, codeBlock(input.prompt, "", true)); } }
     else if (name === "AskUserQuestion") { for (const q of input.questions || []) box.append(h(`<div class="q-block"><div class="qh">${esc(q.header || "")}</div><div>${esc(q.question)}</div></div>`)); }
@@ -338,7 +369,7 @@ class ChatView {
     card.body.querySelector(".tout")?.remove();
     const out = document.createElement("div"); out.className = "tout";
     const name = card.name;
-    if (name.startsWith("mcp__pocket__") && typeof delegationCard === "function") { delegationCard(card, text, isErr); return this.setStatus(card, isErr ? "err" : "ok"); }
+    if (card.handoff) { card.status = isErr ? "err" : "ok"; return handoffLine(card, text, isErr); }
     if (isErr) { out.append(h(`<div class="lbl">Error</div>`)); const p = codeBlock(text, "", true); p.classList.add("err-text"); out.append(p); }
     else if (name === "Edit" || name === "MultiEdit" || name === "Write") {
       const patch = structured?.structuredPatch;
@@ -359,6 +390,7 @@ class ChatView {
   }
   setStatus(card, s) {
     card.status = s;
+    if (card.handoff) return handoffLine(card);
     card.stEl.className = "st " + (s === "ok" ? "ok" : s === "err" ? "err" : "");
     card.stEl.innerHTML = s === "ok" ? icon("check") : s === "err" ? icon("x") : "";
     this.updateGroup(card.el.closest(".steps"));
@@ -433,9 +465,9 @@ class ChatView {
     const text = this.lastText;
     line.querySelector('[data-a="copy"]').onclick = () => copyText(text);
     line.querySelector('[data-a="share"]').onclick = () => shareText(text);
-    line.querySelector('[data-a="retry"]').onclick = () => retryLast();
+    if (this.embedded) line.querySelector('[data-a="retry"]').remove(); else line.querySelector('[data-a="retry"]').onclick = () => retryLast();
     this.root.append(line);
-    scrollIfPinned();
+    this.scrollIfPinned();
   }
   /** A DeepSeek turn's estimated cost (the server's pa_cost event), on that turn's result line. */
   costNote(usd) {
@@ -443,7 +475,7 @@ class ChatView {
     if (!line || !(usd > 0) || line.querySelector(".cost")) return;
     line.querySelector("span").insertAdjacentHTML("afterend", `<span class="cost" title="Estimated from token counts">≈ ${esc(typeof dsMoney === "function" ? dsMoney(usd) : "$" + usd.toFixed(3))}</span>`);
   }
-  note(text, err) { this.root.append(h(`<div class="note ${err ? "err" : ""}">${esc(text)}</div>`)); scrollIfPinned(); }
+  note(text, err) { this.root.append(h(`<div class="note ${err ? "err" : ""}">${esc(text)}</div>`)); this.scrollIfPinned(); }
   divider(text) { this.root.append(h(`<div class="divider">${esc(text)}</div>`)); }
 
   lastUserUuid() { for (let i = this.order.length - 1; i >= 0; i--) if (this.userTexts.has(this.order[i])) return this.order[i]; return null; }
@@ -451,13 +483,25 @@ class ChatView {
 
   toMarkdown() {
     const parts = [];
-    this.root.querySelectorAll(".user-msg-wrap, .md:not(.tool .md):not(.thinking .md), .tool").forEach(el => {
+    this.root.querySelectorAll(".user-msg-wrap, .md:not(.tool .md):not(.thinking .md):not(.task-msg .md), .tool, .handoff, .task-msg").forEach(el => {
       if (el.classList.contains("user-msg-wrap")) parts.push("**You:** " + el.querySelector(".bubble").textContent);
       else if (el.classList.contains("tool")) parts.push(`> ${el.querySelector(".tn").textContent}: ${el.querySelector(".ts").textContent}`);
+      else if (el.classList.contains("handoff")) parts.push("> " + el.querySelector(".handoff-line").textContent.replace(/›\s*$/, "").trim());
+      else if (el.classList.contains("task-msg")) parts.push(`**${el.querySelector(".tm-h").textContent}:**\n\n` + el.querySelector(".md").innerText);
       else parts.push(el.innerText);
     });
     return parts.join("\n\n");
   }
+}
+
+/** The first message delegate.js sends a worker, or a follow-up: { from, task, followUp }, else null. */
+function workerTask(text) {
+  const t = String(text || "");
+  const m = /^\[Pocket Agent\] You're a (?:DeepSeek|Claude) worker\. The (?:DeepSeek|Claude) chat "(.*?)" sent you this task\b/.exec(t)
+    || /^\[Pocket Agent\] A follow-up from "(.*?)":\n/.exec(t);
+  const cut = t.indexOf("\n\n");
+  if (!m || cut < 0) return null;
+  return { from: m[1] === "untitled" || m[1] === "the calling chat" ? "" : m[1], task: t.slice(cut + 2), followUp: t.startsWith("[Pocket Agent] A follow-up") };
 }
 
 function updateTodoBar(todos) {

@@ -1,5 +1,6 @@
 // deepseek.js — DeepSeek in the app: the engine chip and its sheet, Settings → DeepSeek and the key sheet, the
-// DeepSeek part of the Usage sheet, the bar of linked worker chats, and the worker approval sheet and card.
+// DeepSeek part of the Usage sheet, worker links, the sheet that asks before a handoff, and the handoff's quiet line
+// in the chat (agents.js has the Agents tab those lines open).
 // The server owns the key, the prices and the spend (server/src/deepseek.js); this file only shows them.
 // Claude-only users (no key) see none of it except the Settings category.
 "use strict";
@@ -324,74 +325,47 @@ function wireDsUsage(root, reload) { const t = root.querySelector("#ds-u-refresh
 
 // ───────────── linked chats: workers and the chat that started them ─────────────
 const parentOf = p => (typeof p === "string" ? p : p?.parent) || null;
-/** Every known link, from `link` events, the chat list and live chats: child id -> { parent, engine, title, toolUseId }. */
+/** Every known link, from `link` events, the chat list and live chats: child id -> { parent, engine, title, toolUseId, at,
+ *  runAt, result, steps, ms, usd, endedAt } (the outcome fields describe the worker's latest run, once it ended). */
 function dsLinks() {
   const out = {};
   const add = (id, l) => { if (id && (l.parent || out[id])) out[id] = { ...out[id], ...Object.fromEntries(Object.entries(l).filter(([, v]) => v != null && v !== "")) }; };
-  for (const s of state.sessions) if (s.parent) add(s.sessionId, { parent: parentOf(s.parent), engine: s.engine || "claude", title: s.title || s.firstPrompt, toolUseId: s.parent.toolUseId, at: s.parent.at });
+  for (const s of state.sessions) if (s.parent) add(s.sessionId, { ...(s.worker || {}), parent: parentOf(s.parent), engine: s.engine || "claude", title: s.title || s.firstPrompt });
   for (const [id, i] of Object.entries(state.liveInfo)) if (i.parent) add(id, { parent: parentOf(i.parent), engine: i.engine || "claude" });
   for (const [id, l] of Object.entries(state.links)) add(id, l);
   return out;
 }
+/** The chat that started this worker chat, or null. */
+const workerParentOf = id => state.liveInfo[id]?.parent || state.links[id]?.parent || parentOf(state.sessions.find(s => s.sessionId === id)?.parent) || null;
 function dsChatTitle(id) {
   const s = state.sessions.find(x => x.sessionId === id);
   return state.links[id]?.title || s?.title || s?.firstPrompt || state.liveInfo[id]?.title || "";
 }
 /** "needs you" | "working" | "starting" | "done" | "stopped" | "failed" */
-function dsLinkState(id, l = state.links[id]) {
+function dsLinkState(id, l = dsLinks()[id]) {
   const st = sessionState(id);
   if (st === "waiting") return "needs you";
   if (st === "running") return "working";
   if (st === "starting") return "starting";
-  return l?.result === "stopped" || l?.result === "failed" ? l.result : "done";
+  if (l?.result === "stopped" || l?.result === "failed") return l.result;
+  // a run that began and never ended, with the worker gone: starting while its caller waits on it, else cut off
+  if (!l?.result && l?.runAt && !l.endedAt && !state.liveInfo[id]) return sessionState(l.parent) === "running" ? "starting" : "stopped";
+  return "done";
 }
 const LINK_RANK = { "needs you": 0, working: 1, starting: 2, done: 3, stopped: 3, failed: 3 };
-const linkIcon = st => st === "working" || st === "starting" ? '<span class="spark"></span>' : st === "needs you" ? '<i class="lk-dot"></i>' : icon(st === "done" ? "check" : "x");
-function linkRow(id, l) {
-  const st = dsLinkState(id, l), eng = l.engine === "deepseek" ? "deepseek" : "claude";
-  return `<button class="lk-row" data-open="${esc(id)}"><span class="lk-ic ${st.replace(" ", "-")}">${linkIcon(st)}</span>`
-    + `<span class="lk-t"><b class="lk-eng ${eng}">${ENGINE_NAME[eng]}</b> · <span class="lk-ti">${esc(dsChatTitle(id) || "Worker")}</span></span>`
-    + `<span class="lk-st ${st.replace(" ", "-")}"><span class="lk-sep"> · </span>${esc(st)}</span><span class="chev" aria-hidden="true">›</span></button>`;
-}
-/** Below the header: the workers this chat started, or, in a worker, the chat that started it. Kept short: a row for each
- *  worker at work (two at most) or else the latest one, and one row for the rest: that one, or "+N more", which lists them all. */
-function renderLinksBar() {
-  const bar = $("#links-bar");
-  if (!bar) return;
-  const cur = state.current, rows = [];
-  if (cur && !cur.isNew) {
-    const links = dsLinks(), mine = links[cur.sessionId];
-    if (mine) rows.push(`<button class="lk-row lk-from" data-open="${esc(mine.parent)}"><span class="lk-ic">${icon("undo")}</span><span class="lk-t">From: <span class="lk-ti">${esc(dsChatTitle(mine.parent) || "the chat that started it")}</span></span><span class="chev" aria-hidden="true">›</span></button>`);
-    const kids = dsKids(cur.sessionId, links), busy = kids.filter(([id, l]) => LINK_RANK[dsLinkState(id, l)] < 3);
-    let shown = busy.length ? busy.slice(0, 2) : kids.slice(0, 1);
-    if (kids.length === shown.length + 1) shown = kids.slice(0, shown.length + 1);
-    for (const [id, l] of shown) rows.push(linkRow(id, l));
-    if (kids.length > shown.length) rows.push(`<button class="lk-row lk-more" data-more="1"><span class="lk-ic">${icon("list")}</span><span class="lk-t">+${kids.length - shown.length} more worker chat${kids.length - shown.length === 1 ? "" : "s"}</span><span class="chev" aria-hidden="true">›</span></button>`);
-  }
-  bar.hidden = !rows.length;
-  bar.innerHTML = rows.join("");
-  hydrateIcons(bar);
-  bar.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openSession(b.dataset.open));
-  bar.querySelector("[data-more]")?.addEventListener("click", () => linksSheet());
-  if (sheet.key === "links") drawLinks();
-}
 function dsKids(parent, links = dsLinks()) {
   return Object.entries(links).filter(([, l]) => l.parent === parent)
-    .sort(([a, x], [b, y]) => LINK_RANK[dsLinkState(a, x)] - LINK_RANK[dsLinkState(b, y)] || (y.at || 0) - (x.at || 0));
-}
-function linksSheet() { sheet.open(`<div id="links-sheet"></div>`, { key: "links" }); drawLinks(); }
-function drawLinks() {
-  const b = $("#links-sheet");
-  if (!b || !state.current) return;
-  b.innerHTML = `<h2>Worker chats</h2><div class="sub">Started from this chat. Tap one to open it.</div><div class="lk-list">${dsKids(state.current.sessionId).map(([id, l]) => linkRow(id, l)).join("")}</div>`;
-  hydrateIcons(b);
-  b.querySelectorAll("[data-open]").forEach(x => x.onclick = () => { sheet.close(true); openSession(x.dataset.open); });
+    .sort(([a, x], [b, y]) => LINK_RANK[dsLinkState(a, x)] - LINK_RANK[dsLinkState(b, y)] || (y.runAt || y.at || 0) - (x.runAt || x.at || 0));
 }
 // main.js's handlers update the state first (they're registered later), so draw after them
-const dsSoon = debounce(() => { renderLinksBar(); dsRefreshCards(); }, 60);
-for (const t of ["state", "permission.request", "permission.resolved", "sessions.changed"]) conn.on(t, dsSoon);
+const dsSoon = debounce(() => { dsRefreshHandoffs(); if (typeof agentsChanged === "function") agentsChanged(); }, 60);
+for (const t of ["state", "permission.request", "permission.resolved", "sessions.changed", "activity", "tasks"]) conn.on(t, dsSoon);
+// a worker starts (or gets a follow-up), then the same event again with how the run went
 conn.on("link", m => {
-  state.links[m.child] = { ...state.links[m.child], parent: m.parent, engine: m.engine, title: m.title, toolUseId: m.toolUseId, at: Date.now() };
+  const run = "result" in m ? { result: m.result, steps: m.steps, ms: m.ms, usd: m.usd, endedAt: m.endedAt } : { runAt: Date.now(), result: null, steps: null, ms: null, usd: null, endedAt: null };
+  state.links[m.child] = { ...state.links[m.child], parent: m.parent, engine: m.engine, title: m.title, toolUseId: m.toolUseId, at: state.links[m.child]?.at || Date.now(), ...run };
+  // the worker's own state events follow once it has its task; until then it's starting
+  if (!("result" in m) && !state.liveInfo[m.child]) state.liveInfo[m.child] = { sessionId: m.child, state: "starting", parent: m.parent, engine: m.engine, title: m.title };
   dsSoon();
 });
 conn.on("deepseek", m => { if (m.deepseek) dsSetStatus(m.deepseek); });
@@ -424,6 +398,8 @@ function delegationSheet(p) {
   setMd(b.querySelector("#dl-task"), inp.task || "");
   const reply = async (behavior, extra = {}) => {
     haptic("tick"); sheet.close(true);
+    const card = chat.tools.get(p.toolUseID);
+    if (card && behavior === "deny") card.denied = true;   // its line says "Not sent", whatever words come back
     try { await conn.call("permission.reply", { sessionId: p.sessionId, requestId: p.requestId, behavior, ...extra }); } catch (e) { toast(e.message); }
   };
   b.querySelector('[data-a="allow"]').onclick = () => reply("allow");
@@ -435,7 +411,7 @@ function delegationSheet(p) {
   };
 }
 
-// ───────────── the worker's card in the calling chat ─────────────
+// ───────────── the quiet handoff line in the calling chat ─────────────
 /** The report's stable format (server/src/delegate.js): status line, Chat:, Title:, Folder:, Model:, Changed:, ---, text. */
 function dsParseReport(text) {
   const t = String(text || ""), r = { chat: (/^Chat: ([0-9a-f-]{36})$/m.exec(t) || [])[1] || null };
@@ -444,63 +420,53 @@ function dsParseReport(text) {
   r.status = m[1];
   const head = t.split(/^---$/m)[0];
   r.model = (/^Model: (.*)$/m.exec(head) || [])[1] || "";
+  // "deepseek-flash · 3m 12s · about $0.031" (or "1h 02m", "12s"; Claude workers have no cost): the run's time and cost
+  const [, dur = "", cost = ""] = r.model.split(" · "), n = re => +(re.exec(dur)?.[1] || 0);
+  if (/^\d+[hms]/.test(dur)) r.ms = (n(/(\d+)h/) * 3600 + n(/(\d+)m/) * 60 + n(/(\d+)s/)) * 1000;
+  if (/^about \$[\d.]+$/.test(cost)) r.usd = +cost.slice(7); else if (/^under \$/.test(cost)) r.usd = 0.0005;
   r.changed = (/^Changed: (.*)$/m.exec(head) || [])[1] || "";
   r.files = (/^Changed: .*\n((?: {2}.*\n?)*)/m.exec(head) || [])[1]?.split("\n").map(s => s.trim()).filter(Boolean) || [];
   const cut = t.search(/^---$/m);
   r.body = cut >= 0 ? t.slice(cut + 4).trim() : "";
   return r;
 }
-/** The worker's chat for a card: from the report, or from the `link` event that named its tool call. */
+/** The worker chat of a handoff: from its report, or from the `link` event that named its tool call. */
 function dsChildOf(card) {
   if (card.report?.chat) return card.report.chat;
   return Object.entries(dsLinks()).find(([, l]) => l.toolUseId === card.id)?.[0] || null;
 }
-function dsCardStatus(card) {
-  const r = card.report;
-  if (r?.status) {
-    const bits = [r.status[0].toUpperCase() + r.status.slice(1)];
-    if (r.changed && !/^\(/.test(r.changed)) bits.push(r.changed === "nothing" ? "no files changed" : r.changed + " changed");
-    bits.push(...r.model.split(" · ").slice(1));   // time and cost; the model is in the worker's chat
-    return bits.join(" · ");
+/** What a handoff line says, e.g. { lead: "Sent to DeepSeek", title: "Add README", status: "done", tone: "" }. */
+function handoffState(card) {
+  const inp = card.input || {}, ds = card.name === DS_TOOL, follow = !!inp.continue_chat, r = card.report;
+  const title = (follow && dsChatTitle(inp.continue_chat)) || inp.title || dsFirstLine(inp.task) || card.streamTitle || (follow ? "a worker" : "");
+  const lead = (kind) => ({
+    asking: follow ? `Follow-up to ${ds ? "DeepSeek" : "Claude"}` : ds ? "Sending to DeepSeek" : "Asking Claude",
+    sent: follow ? `Follow-up to ${ds ? "DeepSeek" : "Claude"}` : ds ? "Sent to DeepSeek" : "Asked Claude",
+    denied: follow ? `Follow-up not sent to ${ds ? "DeepSeek" : "Claude"}` : ds ? "Not sent to DeepSeek" : "Didn't ask Claude",
+    failed: follow ? `Couldn't send the follow-up to ${ds ? "DeepSeek" : "Claude"}` : ds ? "Couldn't send to DeepSeek" : "Couldn't ask Claude",
+  })[kind];
+  if (r?.status) return { lead: lead("sent"), title, status: r.status, tone: r.status === "done" ? "" : "bad" };
+  if (r) return card.denied || /denied|rejected|doesn't want|did not want|not want to proceed/i.test(r.raw) ? { lead: lead("denied"), title, status: "", tone: "" } : { lead: lead("failed"), title, status: "", tone: "bad" };
+  if (state.pending.some(p => p.toolUseID === card.id)) return { lead: lead("asking"), title, status: "needs your OK", tone: "needs" };
+  const child = card.child;
+  if (child) {
+    const st = dsLinkState(child);
+    // the worker finished, its report is on the way
+    return { lead: lead("sent"), title, status: st === "done" && card.status === "run" ? "finishing" : st, tone: st === "needs you" ? "needs" : st === "stopped" || st === "failed" ? "bad" : "", busy: st === "working" || st === "starting" || card.status === "run" && st === "done" };
   }
-  if (card.report) return /denied|rejected|doesn't want/i.test(card.report.raw) ? "Not sent" : card.isErr ? "Didn't run" : "Finished";
-  if (!card.child) return state.pending.some(p => p.toolUseID === card.id) ? "Waiting for your OK" : card.status === "run" ? "Starting…" : "";
-  const st = dsLinkState(card.child);
-  return st === "needs you" ? "Waiting for you in the worker's chat" : st === "working" || st === "starting" ? "Working…" : "Finishing…";
+  if (card.status === "run") return { lead: lead("sent"), title, status: "starting", tone: "", busy: true };
+  return { lead: lead("sent"), title, status: "", tone: "" };   // cut off before it reported (an older chat)
 }
-/** render.js calls this for deepseek_task / claude_task cards: status, a link to the worker's chat, the task and the report. */
-function delegationCard(card, text, isErr) {
-  const inp = card.input || {}, ds = card.name === DS_TOOL;
-  card.el.classList.add("dl");
-  card.el.dataset.kind = ds ? "ds" : "cl";
-  card.summaryEl.textContent = inp.title || dsFirstLine(inp.task) || (ds ? "A task for DeepSeek" : "A question for Claude");
+/** render.js calls this for deepseek_task / claude_task: the line's words, and how it ended once the result is in. */
+function handoffLine(card, text, isErr) {
   if (text !== undefined) { card.report = dsParseReport(text); card.isErr = !!isErr; }
   card.child = dsChildOf(card) || card.child || null;
   if (card.child && card.report?.status) state.links[card.child] = { ...state.links[card.child], result: card.report.status };
-  const body = card.body;
-  let head = body.querySelector(".dl-head");
-  if (!head) {
-    head = h(`<div class="dl-head"><span class="dl-st"></span><button class="chip dl-open" hidden>Open chat ›</button></div>`);
-    head.querySelector(".dl-open").onclick = () => { if (card.child) openSession(card.child); };
-    body.prepend(head);
-  }
-  head.querySelector(".dl-st").textContent = dsCardStatus(card);
-  head.querySelector(".dl-open").hidden = !card.child;
-  if (card.taskShown !== inp.task) {
-    card.taskShown = inp.task;
-    body.querySelector(".tin")?.remove();
-    if (inp.task) {
-      const sec = h(`<details class="tin dl-sec"><summary>Task</summary><div class="md"></div></details>`);
-      setMd(sec.querySelector(".md"), inp.task);
-      head.after(sec);
-    }
-  }
-  if (text !== undefined) {
-    body.querySelector(".tout")?.remove();
-    const r = card.report, sec = h(`<details class="tout dl-sec"><summary>${r.status ? "Report" : "Result"}</summary><div class="dl-files"></div><div class="md"></div></details>`);
-    if (r.files?.length) sec.querySelector(".dl-files").textContent = r.files.join("\n"); else sec.querySelector(".dl-files").remove();
-    setMd(sec.querySelector(".md"), r.status ? r.body || "(no text)" : r.raw);
-    body.append(sec);
-  }
+  const st = handoffState(card), el = card.el;
+  el.classList.toggle("working", !!st.busy);
+  el.querySelector(".sl-t").textContent = st.title ? `${st.lead}: ${st.title}` : st.lead;
+  const s = el.querySelector(".hl-st");
+  s.textContent = st.status ? "\u00a0· " + st.status : "";   // a flex item drops a plain leading space
+  s.className = "hl-st" + (st.tone ? " " + st.tone : "");
 }
-function dsRefreshCards() { for (const c of chat.tools.values()) if (isDelegationTool(c.name)) delegationCard(c); }
+function dsRefreshHandoffs() { for (const c of chat.tools.values()) if (c.handoff) handoffLine(c); }

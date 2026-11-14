@@ -189,19 +189,21 @@ $("#sheet-x").addEventListener("click", () => sheet.close());
 
 const page = {
   stack: [],
-  open(title, render, actions = "", leave = null) {
+  /** opts.ltr: a title that reads from its start (names); by default the end shows, as paths need */
+  open(title, render, actions = "", leave = null, opts = null) {
     $("#page").hidden = false;
     $("#page-title").textContent = title;
+    $("#page-title").classList.toggle("ltr", !!opts?.ltr);
     $("#page-actions").innerHTML = actions; hydrateIcons($("#page-actions"));
     const body = $("#page-body"); body.innerHTML = ""; body.scrollTop = 0;
-    this.stack.push({ title, render, actions, leave });
+    this.stack.push({ title, render, actions, leave, opts });
     render(body);
     nativeCall("setBackHandler", true);
   },
   back() {
     this.stack.pop()?.leave?.("back");
     const prev = this.stack.pop();
-    if (prev) this.open(prev.title, prev.render, prev.actions, prev.leave); else this.close();
+    if (prev) this.open(prev.title, prev.render, prev.actions, prev.leave, prev.opts); else this.close();
   },
   close() { for (const s of this.stack.splice(0)) s.leave?.("close"); $("#page").hidden = true; $("#page-body").innerHTML = ""; },
   get isOpen() { return !$("#page").hidden; },
@@ -215,6 +217,7 @@ window.paBack = function () {
   if (page.isOpen) { page.back(); return true; }
   if (!$("#popup").hidden) { $("#popup").hidden = true; return true; }
   if (document.body.classList.contains("drawer-open")) { document.body.classList.remove("drawer-open"); return true; }
+  if (typeof agentsBack === "function" && agentsBack()) return true;   // the Agents tab, a worker opened as a chat (agents.js)
   return false;
 };
 
