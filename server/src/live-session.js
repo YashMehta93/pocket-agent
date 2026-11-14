@@ -31,7 +31,7 @@ import { Activity, toolDetail } from "./activity.js";
 import { noteRateLimit, refreshUsage } from "./usage.js";
 import { phoneContext } from "./devtools.js";
 import { engineOptions, engineOf, recordEngine, linkOf, recordLink, detectEngine } from "./engines.js";
-import { revokeToken, requireReady, checkFolder, dsModel, isDeepseekModel, dsSettings, chatSpend } from "./deepseek.js";
+import { ready as dsReady, revokeToken, requireReady, checkFolder, dsModel, isDeepseekModel, dsSettings, chatSpend } from "./deepseek.js";
 
 let toolProvider = () => undefined;
 /** delegate.js registers Pocket Agent's own MCP tools here, which keeps the import one-way (no cycle). */
@@ -311,7 +311,7 @@ async function startSession({ sessionId, cwd, model, effort, permissionMode, tit
   // The engine: an existing chat keeps its own (its record, else its transcript); a new one takes the asked-for one or the default.
   const known = engineOf(sessionId) || (resume ? await detectEngine(sessionId) : null);
   if (resume || known) { checkEngine(known || "claude", engine); engine = known || "claude"; }
-  else engine = engine || (d.engine === "deepseek" ? "deepseek" : "claude");
+  else engine = engine || (d.engine === "deepseek" && dsReady() ? "deepseek" : "claude");   // a default needs a key; asking for DeepSeek outright doesn't fall back
   if (engine === "deepseek") { requireReady(); checkFolder(cwd); }
   // explicit choice (from the screen) > this chat's remembered settings > the defaults; a DeepSeek chat gets a DeepSeek
   // model and a Claude chat never does
