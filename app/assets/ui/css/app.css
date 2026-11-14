@@ -475,6 +475,7 @@ pre.has-btns { position: relative; padding-top: 34px; }
 .lk-from .lk-ti { color: var(--text); }
 .lk-st { flex: none; color: var(--muted); font-size: 12.5px; white-space: nowrap; } .lk-st.needs-you { color: var(--yellow); font-weight: 500; }
 .lk-st.stopped, .lk-st.failed { color: var(--red); }
+.lk-sep { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .lk-row .chev { flex: none; color: var(--faint); font-size: 16px; line-height: 1; }
 .lk-list { border-top: 1px solid var(--line); } .lk-list .lk-row { padding-left: 2px; padding-right: 2px; }
 /* the worker's card in the calling chat: status and a link first, then the task and the report, each folded */

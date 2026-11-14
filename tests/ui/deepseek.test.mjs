@@ -68,7 +68,7 @@ ok("the chip sits before the mode chip, the same small chip", $("#chip-engine").
 // 2. Choosing DeepSeek for a new chat
 $("#chip-engine").click();
 ok("a new chat's engine sheet offers Claude and DeepSeek", ev("sheet.key") === "engine" && text("#sheet h2") === "Run this chat on" && $$("#sheet .opt").length === 2
-  && /Pay per use from your DeepSeek credit\. Your messages, files and memory go to DeepSeek\./.test(text("#sheet")));
+  && /Pay per use from your DeepSeek credit \(\$4\.20 left\)\. Your messages, files and memory go to DeepSeek\./.test(text("#sheet")));
 $$("#sheet .opt")[1].click();
 ok("the chip says DeepSeek, in its accent", text("#chip-engine") === "DeepSeek" && $("#chip-engine").classList.contains("engine-ds") && $("#chip-engine").getAttribute("aria-label") === "Engine: DeepSeek");
 ok(`the model chip names the DeepSeek model ("${text("#chip-model")}", spoken "${$("#chip-model").getAttribute("aria-label")}")`,
@@ -205,7 +205,9 @@ $("#links-bar .lk-row").click();
 ok("tapping it opens the worker's chat", ev("__opened") === C);
 for (const [i, t] of ["T2", "T3", "T4"].entries()) ev(`conn.fire("link", { parent: "${P}", child: "66666666-0000-4000-8000-00000000000${i}", engine: "deepseek", title: "${t}", toolUseId: "toolu_x${i}" })`);
 await sleep(150);
-ok(`more than three: two rows and "+N" (${text("#links-bar")})`, $$("#links-bar .lk-row").length === 3 && /\+2 more worker chats/.test(text("#links-bar")));
+ok(`kept short: the one at work and "+N more" (${text("#links-bar")})`, $$("#links-bar .lk-row").length === 2 && /needs you/.test(text("#links-bar .lk-row")) && /\+3 more worker chats/.test(text("#links-bar")));
+$("#links-bar [data-more]").click();
+ok("…which lists them all", ev("sheet.key") === "links" && $$("#sheet .lk-row").length === 4); ev("sheet.close(true)");
 ev(`state.current = { sessionId: "${C}", cwd: state.home, title: "T1", isNew: false, lastSeq: 0, engine: "deepseek" };
   state.sessions = [{ sessionId: "${P}", title: "Plan the tidy-up", cwd: state.home, lastModified: Date.now() }, ...state.sessions]; updateHeader()`);
 ok(`in the worker, the bar leads back: "${text("#links-bar")}"`, $$("#links-bar .lk-row").length === 1 && /^From: Plan the tidy-up/.test(text("#links-bar")));

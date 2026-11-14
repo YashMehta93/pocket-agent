@@ -139,7 +139,8 @@ function engineSheet() {
   }
   const opts = [
     { id: "claude", title: "Claude", desc: "Your Claude plan." },
-    { id: "deepseek", title: "DeepSeek", desc: ready ? "Pay per use from your DeepSeek credit. Your messages, files and memory go to DeepSeek." : "Add your key in Settings first" },
+    { id: "deepseek", title: "DeepSeek", desc: !ready ? "Add your key in Settings first"
+      : `Pay per use from your DeepSeek credit${state.deepseek.balance?.total != null ? " (" + dsBalanceText() + ")" : ""}. Your messages, files and memory go to DeepSeek.` },
   ];
   const b = sheet.open(`<h2>Run this chat on</h2><div id="eng-opts"></div>`, { key: "engine" });
   for (const o of opts) {
@@ -348,9 +349,10 @@ function linkRow(id, l) {
   const st = dsLinkState(id, l), eng = l.engine === "deepseek" ? "deepseek" : "claude";
   return `<button class="lk-row" data-open="${esc(id)}"><span class="lk-ic ${st.replace(" ", "-")}">${linkIcon(st)}</span>`
     + `<span class="lk-t"><b class="lk-eng ${eng}">${ENGINE_NAME[eng]}</b> · <span class="lk-ti">${esc(dsChatTitle(id) || "Worker")}</span></span>`
-    + `<span class="lk-st ${st.replace(" ", "-")}"> · ${esc(st)}</span><span class="chev" aria-hidden="true">›</span></button>`;
+    + `<span class="lk-st ${st.replace(" ", "-")}"><span class="lk-sep"> · </span>${esc(st)}</span><span class="chev" aria-hidden="true">›</span></button>`;
 }
-/** Below the header: the workers this chat started (at most 3 rows), or, in a worker, the chat that started it. */
+/** Below the header: the workers this chat started, or, in a worker, the chat that started it. Kept short: a row for each
+ *  worker at work (two at most) or else the latest one, and one "+N more" row for the rest, which lists them all. */
 function renderLinksBar() {
   const bar = $("#links-bar");
   if (!bar) return;
@@ -358,9 +360,10 @@ function renderLinksBar() {
   if (cur && !cur.isNew) {
     const links = dsLinks(), mine = links[cur.sessionId];
     if (mine) rows.push(`<button class="lk-row lk-from" data-open="${esc(mine.parent)}"><span class="lk-ic">${icon("back")}</span><span class="lk-t">From: <span class="lk-ti">${esc(dsChatTitle(mine.parent) || "the chat that started it")}</span></span><span class="chev" aria-hidden="true">›</span></button>`);
-    const kids = dsKids(cur.sessionId, links);
-    for (const [id, l] of kids.length > 3 ? kids.slice(0, 2) : kids) rows.push(linkRow(id, l));
-    if (kids.length > 3) rows.push(`<button class="lk-row lk-more" data-more="1"><span class="lk-ic">${icon("list")}</span><span class="lk-t">+${kids.length - 2} more worker chats</span><span class="chev" aria-hidden="true">›</span></button>`);
+    const kids = dsKids(cur.sessionId, links), busy = kids.filter(([id, l]) => LINK_RANK[dsLinkState(id, l)] < 3);
+    const shown = busy.length ? busy.slice(0, 2) : kids.slice(0, 1);
+    for (const [id, l] of shown) rows.push(linkRow(id, l));
+    if (kids.length > shown.length) rows.push(`<button class="lk-row lk-more" data-more="1"><span class="lk-ic">${icon("list")}</span><span class="lk-t">+${kids.length - shown.length} more worker chat${kids.length - shown.length === 1 ? "" : "s"}</span><span class="chev" aria-hidden="true">›</span></button>`);
   }
   bar.hidden = !rows.length;
   bar.innerHTML = rows.join("");
