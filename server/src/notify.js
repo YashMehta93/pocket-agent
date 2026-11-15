@@ -13,6 +13,8 @@ const ENGINE = { deepseek: "DeepSeek", claude: "Claude" };
 const subText = ev => (ev.engine === "deepseek" ? "DeepSeek · " : "") + (ev.title || "");
 /** A worker's approval is headed like the app's sheet: "DeepSeek · Add README wants to run npm test". */
 const workerHeading = ev => `${ENGINE[ev.engine] || "Claude"} · ${ev.title || "Worker"} ${ev.ask || `wants to use ${ev.toolName}`}`;
+/** A chat on another environment says which one ("Laptop · Allow Bash?"). */
+const envPrefix = ev => ev.envName ? ev.envName + " · " : "";
 
 export function toNative(ev) {
   switch (ev.type) {
@@ -21,7 +23,7 @@ export function toNative(ev) {
       const special = ev.toolName === "AskUserQuestion" ? "Claude has a question" : ev.toolName === "ExitPlanMode" ? "Claude's plan is ready" : DELEGATION[ev.toolName] || null;
       const spec = {
         id: approvalId(ev.requestId), channel: "approval", prefKey: "notifyApproval", onlyWhenBackground: true,
-        title: worker ? workerHeading(ev) : special || `Allow ${ev.toolName}?`, text: String(ev.input || ""),
+        title: envPrefix(ev) + (worker ? workerHeading(ev) : special || `Allow ${ev.toolName}?`), text: String(ev.input || ""),
         subText: worker ? ev.parentTitle || subText(ev) : subText(ev),
         tap: { sessionId: worker ? ev.parent : ev.sessionId },
       };
@@ -36,7 +38,7 @@ export function toNative(ev) {
       return [{ type: "cancel", id: approvalId(ev.requestId) }];
     case "done":
       return [{ type: "notify", spec: { id: "done:" + ev.sessionId, channel: "done", prefKey: "notifyDone", onlyWhenBackground: true,
-        title: `Done: ${ev.title || "Claude"}`, text: ev.text || "", ...(ev.engine === "deepseek" ? { subText: "DeepSeek" } : {}), tap: { sessionId: ev.sessionId } } }];
+        title: `Done: ${envPrefix(ev)}${ev.title || "Claude"}`, text: ev.text || "", ...(ev.engine === "deepseek" ? { subText: "DeepSeek" } : {}), tap: { sessionId: ev.sessionId } } }];
     case "activity": {
       const busy = !["idle", "error", "starting"].includes(ev.phase);
       const spec = busy
