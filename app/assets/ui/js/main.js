@@ -40,6 +40,7 @@ async function onConnected() {
   if (typeof dsHello === "function") dsHello(hello);   // engines and the DeepSeek status (deepseek.js)
   if (typeof accountsHello === "function") accountsHello(hello);   // the Claude accounts (accounts.js)
   if (typeof profilesHello === "function") profilesHello(hello);   // the profiles (profiles.js)
+  if (typeof environmentsHello === "function") environmentsHello(hello);   // other Pocket Agent servers (environments.js)
   renderUsage();
   // the server may have restarted: only the chats it reports are live now (stale ones kept a Stop button that did nothing)
   for (const id of Object.keys(state.liveInfo)) if (!(hello.live || []).some(i => i.sessionId === id)) { delete state.liveInfo[id]; delete state.activity[id]; }

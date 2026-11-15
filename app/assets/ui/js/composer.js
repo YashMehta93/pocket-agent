@@ -34,13 +34,16 @@ function updateComposer() {
   if (typeof renderAccountChip === "function") renderAccountChip();
   const st = sessionState(state.current?.sessionId);
   const running = st === "running" || st === "waiting";
-  input.placeholder = running ? "Queue a message…" : s.engine === "deepseek" ? "Message DeepSeek…" : "Message Claude…";
+  // a chat on a device that's away can't be sent to until it comes back (environments.js)
+  const env = typeof sessionEnvironment === "function" ? sessionEnvironment(state.current?.sessionId) : null;
+  const away = !!env && env.offline;
+  input.placeholder = away ? `${env.name} is offline` : running ? "Queue a message…" : s.engine === "deepseek" ? "Message DeepSeek…" : "Message Claude…";
   const send = $("#btn-send");
   const hasText = input.value.trim() || attachments.length;
-  send.classList.toggle("stop", running && !hasText);
-  send.innerHTML = icon(running && !hasText ? "stop" : "up");
-  send.disabled = !running && !hasText;
-  send.setAttribute("aria-label", running && !hasText ? "Stop" : "Send");
+  send.classList.toggle("stop", running && !hasText && !away);
+  send.innerHTML = icon(running && !hasText && !away ? "stop" : "up");
+  send.disabled = away || (!running && !hasText);
+  send.setAttribute("aria-label", running && !hasText && !away ? "Stop" : "Send");
   renderActivity();
   if (typeof renderTabs === "function") renderTabs();
 }
@@ -77,6 +80,8 @@ async function send(textOverride) {
   let text = (textOverride ?? input.value).trim();
   if (!text && !attachments.length) return;
   if (!conn.ok) return toast("Not connected to the server yet");
+  const env = typeof sessionEnvironment === "function" ? sessionEnvironment(cur.sessionId) : null;
+  if (env?.offline) return toast(`${env.name} is offline`, 4000);   // the chat comes back when it's on
   haptic("tick");
   const draft = textOverride === undefined ? input.value : null;   // what leaves the field once the send lands
   const images = attachments.filter(a => a.kind === "image").map(a => ({ mediaType: a.mediaType, data: a.data }));
@@ -99,8 +104,8 @@ async function send(textOverride) {
     if (cur.isNew || !state.liveInfo[cur.sessionId]) Object.assign(msg, { model: s.model || undefined, effort: s.effort || undefined, permissionMode: s.permissionMode });
     if (cur.isNew) {
       msg.cwd = cur.cwd; msg.engine = s.engine || "claude";
-      // with several Claude accounts, the chip's pick (or the default) runs this new chat
-      if (state.accounts?.length >= 2) msg.account = state.newChatAccount || state.defaultAccount;
+      // with several Claude accounts, the chip's pick (or the default) runs this new chat; another device has its own accounts
+      if (state.accounts?.length >= 2 && !(typeof envIdOf === "function" && envIdOf(cur.sessionId))) { msg.account = state.newChatAccount || state.defaultAccount; cur.account = msg.account; }
     }
     await conn.call("send", msg);
     // The server has it: only now is this chat no longer new, and only now does the draft leave the field.
@@ -214,7 +219,9 @@ const updatePopup = debounce(async () => {
       .map(c => ({ label: "/" + c.name + (c.argumentHint ? " " + c.argumentHint : ""), desc: c.description, insert: "/" + c.name + " " }));
     popupCtx = { start: 0, end: pos };
   } else if (at) {
-    try { const r = await conn.call("fs.search", { cwd: state.current.cwd, q: at[1] });
+    // a chat on another device searches that machine's files (environments.js)
+    const env = typeof currentEnvId === "function" ? currentEnvId() : null;
+    try { const r = await conn.call("fs.search", env ? { cwd: state.current.cwd, q: at[1], env } : { cwd: state.current.cwd, q: at[1] });
       popupItems = r.results.map(x => ({ label: x.path + (x.dir ? "/" : ""), desc: x.dir ? "folder" : "", insert: "@" + x.path + (x.dir ? "/" : " ") }));
     } catch { popupItems = []; }
     popupCtx = { start: pos - at[1].length - 1, end: pos };

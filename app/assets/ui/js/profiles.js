@@ -72,6 +72,7 @@ function renderProfileFilter() {
   const many = profileMany();
   box.hidden = !many;
   box.innerHTML = "";
+  syncChatFilterRow();
   if (!many) return;
   const chip = (id, label) => {
     const on = (state.profileFilter || "") === id;
@@ -83,6 +84,15 @@ function renderProfileFilter() {
   };
   box.append(chip("", "All"));
   for (const p of state.profiles) box.append(chip(p.id, p.name));
+}
+/** The drawer's one filter row: profiles first, a thin divider, then environments; hidden when neither shows. */
+function syncChatFilterRow() {
+  const row = $("#chat-filters");
+  if (!row) return;
+  const prof = $("#profile-filters"), env = $("#env-filters"), sep = $("#filter-sep");
+  const p = !!prof && !prof.hidden, e = !!env && !env.hidden;
+  row.hidden = !p && !e;
+  if (sep) sep.hidden = !(p && e);
 }
 function setProfileFilter(id, rerender = true) {
   state.profileFilter = id || "";

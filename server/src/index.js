@@ -14,6 +14,7 @@ import { startUpdateChecks } from "./autoupdate.js";
 import { ensureTrustedKeys } from "./signing.js";
 import { ROOT, syncVersionFile } from "./transfer.js";
 import { startServices, stopServices } from "./services.js";
+import { startEnvironments, stopEnvironments } from "./upstreams.js";
 
 const server = createServer();
 if (ensureTrustedKeys(ROOT)) log("restored server/trusted-keys.json");   // see trusted-keys.default.js
@@ -27,10 +28,11 @@ if (process.env.PA_SUPERVISED) {
 server.listen(PORT, HOST, () => {
   log(`pocket-agent server ${VERSION} on http://${HOST}:${PORT}`);
   startServices();   // background services Android's process kills took down (services.js)
+  startEnvironments();   // saved environments, once we can be reached too (upstreams.js)
   setTimeout(() => continueInterrupted().catch(e => log("continue failed", e?.message)), 3000);   // replies cut off by a kill
 });
 
-function shutdown() { stopServices(); for (const s of live.values()) s.close(); clearWorking(); process.exit(0); }
+function shutdown() { stopServices(); stopEnvironments(); for (const s of live.values()) s.close(); clearWorking(); process.exit(0); }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 process.on("unhandledRejection", e => log("unhandled", e?.message || e));

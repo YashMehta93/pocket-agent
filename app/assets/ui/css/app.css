@@ -572,8 +572,12 @@ body.tab-agents #chat, body.tab-agents #composer, body.tab-agents #todo-bar, bod
 .pdot.pc-amber, .pf-sw.pc-amber { background: var(--pf-amber); }
 .pdot.pc-green, .pf-sw.pc-green { background: var(--pf-green); }
 .pdot.pc-slate, .pf-sw.pc-slate { background: var(--pf-slate); }
-/* the drawer's filter: text chips, 28 px, the active one in the accent colour */
-#profile-filters { padding: 2px 14px 0; gap: 2px; }
+/* one compact filter row: profile chips first, a thin divider, then environment chips; each part
+   shows only when it has choices, and the row hides when neither does */
+.chat-filters { align-items: center; padding: 2px 14px 0; gap: 2px; }
+.chat-filters .filter-part:not([hidden]) { display: contents; }
+.chat-filters .filter-sep { flex: none; width: 1px; height: 16px; margin: 0 5px; background: var(--line); }
+/* the profile chips: text chips, 28 px, the active one in the accent colour */
 #profile-filters button { flex: none; height: 28px; padding: 0 9px; border: 0; border-radius: 6px; color: var(--muted); font-size: 12.5px; }
 #profile-filters button.on { color: var(--accent); font-weight: 500; }
 /* a new chat's folder, with the profile it falls in */
@@ -599,3 +603,34 @@ body.tab-agents #chat, body.tab-agents #composer, body.tab-agents #todo-bar, bod
 .pf-muted { color: var(--muted); font-weight: 400; }
 .pf-none { color: var(--muted); font-size: 13px; padding: 4px 0 2px; }
 .pf-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+/* ───── environments (#69): other Pocket Agent servers, its Settings page, the drawer's filter and chips, the
+   offline notice, and a new chat's "Where" row ───── */
+.dot.online { background: var(--green); }
+.dot.connecting { background: var(--blue); animation: pulse 1.4s ease-in-out infinite; }
+.dot.offline { background: var(--faint); }
+.dot.outdated { background: var(--yellow); }
+.dot.unauthorized { background: var(--red); }
+.env-row { width: 100%; text-align: left; gap: 12px; }
+.env-row .dot { width: 8px; height: 8px; }
+.env-row .l small { overflow-wrap: anywhere; }
+.env-add { width: 100%; text-align: left; color: var(--text2); font-size: 14.5px; min-height: 44px; }
+.env-addr { display: flex; align-items: center; gap: 8px; }
+.env-addr .field { flex: 1; min-width: 0; margin: 0; }
+.env-addr .chip { flex: none; }
+.env-err { color: var(--red); font-size: 13.5px; line-height: 1.45; margin: 0 0 8px; }
+.env-test { color: var(--muted); font: 12.5px/1.5 var(--mono); margin: 4px 0 8px; overflow-wrap: anywhere; }
+.env-test.err { color: var(--red); }
+#env-filters button { height: 28px; display: inline-flex; align-items: center; max-width: 132px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* a device's chat: dimmed, with its name in the meta line (at most 12 characters) */
+.sess.offline { opacity: .55; }
+.meta-env { display: inline-block; max-width: 12ch; padding: 0 5px; margin-right: 5px; border-radius: 4px; background: var(--bg3); color: var(--muted); font: 500 10.5px/1.5 var(--sans); vertical-align: 1px; }
+/* a chat on another device: "<name> is offline. The chat comes back when it's on." */
+#env-offline { max-width: 760px; width: 100%; margin: 0 auto 8px; padding: 8px 12px; display: flex; gap: 8px; align-items: center; border-radius: 8px; background: var(--bg2); color: var(--muted); font: 12px/1.4 var(--mono); }
+#env-offline svg { width: 14px; height: 14px; flex: none; color: var(--faint); }
+/* a new chat's Where row: Phone, then each device; only the online ones can be picked */
+#new-where { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin: -20px 0 26px; }
+#new-where .where-l { font: 600 10.5px/1 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin-right: 2px; }
+#new-where button { height: 28px; display: inline-flex; align-items: center; padding: 0 11px; border-radius: 9999px; border: 1px solid var(--line); color: var(--muted); font-size: 12.5px; max-width: 145px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#new-where button.on { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); }
+#new-where button:disabled { opacity: .45; }

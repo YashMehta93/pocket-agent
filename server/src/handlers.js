@@ -20,6 +20,7 @@ import { listProfiles, defaultProfileId, profileOf, saveProfile, removeProfile, 
 import { engineOf, copyEngine, forget, linkOf, engineList } from "./engines.js";
 import { PROTOCOL, environment, setEnvironment } from "./environment.js";
 import { listDevices, startPairing, revokeDevice, renameDevice } from "./devices.js";
+import { listEnvironments, addEnvironment, removeEnvironment, renameEnvironment, testUrl, reconnectEnvironment, remoteSessions } from "./upstreams.js";
 import { status as dsStatus, balance as dsBalance, setKey as dsSetKey, removeKey as dsRemoveKey, setDsSettings, chatSpend, isDeepseekModel, dsModel } from "./deepseek.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
@@ -44,8 +45,8 @@ export const handlers = {
   async hello({ tzOffset } = {}, ws) {
     // the phone's time zone (minutes, as getTimezoneOffset()), so DeepSeek spend is counted per local day
     if (ws?.principal?.kind !== "device" && Number.isFinite(tzOffset) && tzOffset >= -900 && tzOffset <= 900 && prefs.tzOffset !== tzOffset) { prefs.tzOffset = tzOffset; savePrefs(); }
-    const r = { version: VERSION, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
-      protocol: PROTOCOL, environment: environment(),
+    const r = { version: VERSION, protocol: PROTOCOL, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
+      environment: environment(), environments: listEnvironments(),
       defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account, usage: getUsage(),
       accounts: listAccounts(), defaultAccount: prefs.defaultAccount || "default", usageByAccount: getAllUsage(),
       profiles: listProfiles(), defaultProfile: defaultProfileId(),
@@ -55,7 +56,7 @@ export const handlers = {
       live: [...live.values()].map(s => s.info()), engines: engineList(), deepseek: dsStatus() };
     // A paired device has its own scopes: no account, usage, update or home details, unless it may read files.
     if (ws?.principal?.kind === "device") {
-      for (const k of ["githubToken", "updateChannel", "updateKind", "updateTrack", "devRepo", "usage", "usageByAccount", "account", "accounts", "defaultAccount", "deepseek", "home"]) delete r[k];
+      for (const k of ["githubToken", "updateChannel", "updateKind", "updateTrack", "devRepo", "usage", "usageByAccount", "account", "accounts", "defaultAccount", "deepseek", "home", "environments", "profiles", "defaultProfile"]) delete r[k];
       if (ws.principal.scopes.includes("files.read")) r.home = HOME;
     }
     return r;
@@ -75,7 +76,7 @@ export const handlers = {
   async "sessions.list"({ limit = 300, dir } = {}) {
     const list = await listSessions({ limit, ...(dir ? { dir } : {}) });
     const busy = busyElsewhere();
-    return { sessions: list.map(s => {
+    const sessions = list.map(s => {
       const engine = engineOf(s.sessionId), link = linkOf(s.sessionId), parent = link?.parent;
       return {
         sessionId: s.sessionId, title: s.customTitle || s.summary, firstPrompt: s.firstPrompt, cwd: s.cwd,
@@ -84,7 +85,12 @@ export const handlers = {
         live: live.get(s.sessionId)?.state || null, elsewhere: busy.get(s.sessionId)?.kind || null,
         ...(engine ? { engine } : {}), ...(parent ? { parent, worker: workerRun(link) } : {}), ...(engine === "deepseek" ? { spend: chatSpend(s.sessionId)?.usd ?? 0 } : {}),
       };
-    }) };
+    });
+    // The environments' chats come along (upstreams.js); the list stays newest first, like listSessions' own.
+    sessions.push(...await remoteSessions());
+    sessions.sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0) ||
+      (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0));
+    return { sessions };
   },
   async "session.history"({ sessionId }) {
     // The live seq as the transcript is read: the app subscribes after it and replays what the transcript
@@ -227,6 +233,15 @@ export const handlers = {
   async "deepseek.setKey"({ key }) { return { deepseek: await dsSetKey(key) }; },
   async "deepseek.removeKey"() { return { deepseek: dsRemoveKey() }; },
   async "deepseek.settings"({ settings }) { setDsSettings(settings); return { deepseek: dsStatus() }; },
+
+  // ───── environments: other Pocket Agent servers, whose chats this one proxies (upstreams.js) ─────
+  // (`environment` holds the id: over the WebSocket `id` is the request id)
+  async "environments.list"() { return { environments: listEnvironments() }; },
+  async "environments.add"({ url, code, token, profile, name } = {}) { return { environment: await addEnvironment({ url, code, token, profile, name }) }; },
+  async "environments.remove"({ environment } = {}) { return removeEnvironment(environment); },
+  async "environments.rename"({ environment, name } = {}) { return { environment: renameEnvironment(environment, name) }; },
+  async "environments.test"({ url } = {}) { return testUrl(url); },
+  async "environments.reconnect"({ environment } = {}) { return { environment: reconnectEnvironment(environment) }; },
 
   // ───── between servers (transfer.js) ─────
   /** Copy chats from another Pocket Agent server (e.g. Termux) into this one. */

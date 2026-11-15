@@ -20,10 +20,14 @@ function renderSessions() {
   const list = $("#session-list");
   const q = state.filter.toLowerCase();
   let items = state.sessions.filter(s => (!q || (s.title || "").toLowerCase().includes(q) || (s.firstPrompt || "").toLowerCase().includes(q) || (s.cwd || "").toLowerCase().includes(q))
-    && (!state.project || s.cwd === state.project));
+    && (!state.project || s.cwd === state.project)
+    && (typeof envFilterMatches !== "function" || envFilterMatches(s)));
   // live sessions not yet on disk (brand new)
   for (const id of Object.keys(state.liveInfo)) if (!state.sessions.some(s => s.sessionId === id)) {
-    const i = state.liveInfo[id]; items.unshift({ sessionId: id, title: i.title || "New chat", cwd: i.cwd, lastModified: Date.now(), engine: i.engine, parent: i.parent, profile: i.profile || profileOfCwd(i.cwd)?.id });
+    const i = state.liveInfo[id], env = typeof sessionEnvironment === "function" ? sessionEnvironment(id) : null;
+    items.unshift({ sessionId: id, title: i.title || "New chat", cwd: i.cwd, lastModified: Date.now(), engine: i.engine, parent: i.parent,
+      profile: i.profile || profileOfCwd(i.cwd)?.id,
+      ...(env ? { remote: true, environment: env.id, environmentName: env.name, offline: env.offline } : {}) });
   }
   // With two or more profiles, the drawer's filter hides the chats outside the chosen one; a worker follows its parent.
   const links = typeof dsLinks === "function" ? dsLinks() : {};
@@ -61,14 +65,21 @@ function renderSessions() {
 }
 function sessRow(s, nested, prof) {
   const st = nested ? sessionState(s.sessionId) : chatState(s.sessionId);
-  const row = h(`<button class="sess ${state.current?.sessionId === s.sessionId ? "on" : ""}${nested ? " kid" : ""}">
+  const env = typeof sessionEnvironment === "function" ? sessionEnvironment(s.sessionId) : null;
+  const offline = env ? env.offline : !!s.offline;
+  const row = h(`<button class="sess ${state.current?.sessionId === s.sessionId ? "on" : ""}${nested ? " kid" : ""}${offline ? " offline" : ""}">
     ${st || nested ? `<span class="dot ${st || ""}"></span>` : ""}${prof && typeof pdot === "function" ? pdot(prof) : ""}
     <div class="t"><div></div><div class="meta"></div></div>
     ${state.pinned.includes(s.sessionId) ? `<span class="pin">${icon("pin")}</span>` : ""}</button>`);
   row.querySelector(".t div").textContent = s.title || s.firstPrompt || "Untitled";
   // DeepSeek chats and worker chats say so (a nested worker's place already says it's a worker)
-  const eng = s.parent && !nested ? ` · ${s.engine === "deepseek" ? "DeepSeek" : "Claude"} worker` : s.engine === "deepseek" ? " · DeepSeek" : "";
-  row.querySelector(".meta").textContent = `${baseName(s.cwd)} · ${relTime(s.lastModified)}${st === "waiting" ? " · needs approval" : st === "running" ? " · working" : s.elsewhere ? " · open in Termux" : ""}${eng}`;
+  const eng = s.parent && !nested ? (s.engine === "deepseek" ? "DeepSeek worker" : "Claude worker") : s.engine === "deepseek" ? "DeepSeek" : "";
+  const meta = row.querySelector(".meta");
+  meta.textContent = [baseName(s.cwd), relTime(s.lastModified),
+    st === "waiting" ? "needs approval" : st === "running" ? "working" : s.elsewhere ? "open in Termux" : "",
+    offline ? "offline" : "", eng].filter(Boolean).join(" · ");
+  // a chat on another device says whose it is, first in the meta line
+  if (env?.name) { const chip = document.createElement("span"); chip.className = "meta-env"; chip.textContent = envShort(env.name); meta.prepend(chip); }
   row.onclick = () => { closeDrawer(); openSession(s.sessionId); };
   longPress(row, () => sessionMenu(s));
   return row;
@@ -109,7 +120,8 @@ $("#btn-menu").onclick = () => {
 };
 $("#scrim").onclick = closeDrawer;
 function closeDrawer() { document.body.classList.remove("drawer-open"); }
-$("#btn-new").onclick = () => { closeDrawer(); newChat(state.current?.cwd); };
+// keep the folder of a chat on this phone; a device's folder only exists there
+$("#btn-new").onclick = () => { closeDrawer(); const cur = state.current; newChat(cur && (typeof envIdOf !== "function" || !envIdOf(cur.sessionId)) ? cur.cwd : undefined); };
 $("#btn-settings").onclick = () => { closeDrawer(); openSettings(); };
 
 // A press and hold (480 ms) opens the row's menu; a tap opens the row. The press tolerates a little finger
@@ -248,10 +260,12 @@ async function openSession(sessionId, { keepScroll, keepChat } = {}) {
   showNextPermission();
   if (typeof accountsChatChanged === "function") accountsChatChanged();   // its account chip, and no old limit card
 }
-/** engine: "claude" | "deepseek"; by default the one Settings → DeepSeek starts new chats on. */
-function newChat(cwd, engine) {
+/** engine: "claude" | "deepseek"; by default the one Settings → DeepSeek starts new chats on.
+ *  envId: start it on another Pocket Agent server, with the id "<envId>:<uuid>" (the server proxies it). */
+function newChat(cwd, engine, envId) {
   if (state.current && !state.current.isNew) conn.call("unsubscribe", { sessionId: state.current.sessionId }).catch(() => {});
-  state.current = { sessionId: uuid(), cwd: cwd || state.defaults.cwd || state.home, title: "New chat", isNew: true, lastSeq: 0,
+  const env = envId && typeof envById === "function" ? envById(envId) : null;
+  state.current = { sessionId: (envId ? envId + ":" : "") + uuid(), cwd: cwd || (env ? env.home || "" : state.defaults.cwd || state.home), title: "New chat", isNew: true, lastSeq: 0,
     model: state.defaults.model || null, effort: state.defaults.effort || null, permissionMode: state.defaults.permissionMode || "default" };
   if (typeof applyEngine === "function") { applyEngine(state.current, engine || defaultEngine()); state.current.engineChosen = !!engine; }
   if (typeof accountsNewChat === "function") accountsNewChat();   // a new chat starts on the default account
@@ -265,7 +279,8 @@ function showEmpty() {
   $("#empty-greet").textContent = hr < 5 ? "Burning the midnight oil?" : hr < 12 ? "Good morning. What's the plan?" : hr < 18 ? "What should we build?" : "Good evening. What's next?";
   const prof = typeof profileMany === "function" && profileMany() ? profileOfCwd(cur?.cwd) : null;
   $("#empty-cwd").innerHTML = `in <b>${esc(shortPath(cur?.cwd) || "~")}</b>${prof && typeof profileChip === "function" ? " · " + profileChip(prof) : ""} · <button id="chg-dir">change folder</button>`;
-  $("#chg-dir").onclick = () => pickFolder(cur.cwd).then(d => { if (d) { cur.cwd = d; showEmpty(); updateHeader(); } });
+  $("#chg-dir").onclick = () => pickFolder(cur.cwd, typeof currentEnvId === "function" ? currentEnvId() : null).then(d => { if (d) { cur.cwd = d; showEmpty(); updateHeader(); } });
+  if (typeof renderNewChatWhere === "function") renderNewChatWhere();
   const sg = $("#suggestions"); sg.innerHTML = "";
   for (const s of SUGGESTIONS) { const b = h(`<button></button>`); b.textContent = s; b.onclick = () => { input.value = s; autosize(); input.focus(); }; sg.append(b); }
 }
@@ -279,6 +294,9 @@ function updateHeader() {
   // a worker says so (the drawer has it under the chat that started it; Android back returns there)
   const worker = !cur.isNew && typeof workerParentOf === "function" && workerParentOf(cur.sessionId) ? (ds ? " worker" : " · Claude worker") : "";
   const prof = typeof profileMany === "function" && profileMany() ? profileOfCwd(cur.cwd) : null;
-  $("#chat-sub").textContent = `${shortPath(cur.cwd)}${prof ? " · " + prof.name : ""}${ds}${worker}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
+  // a chat on another device names it first (environments.js)
+  const env = typeof sessionEnvironment === "function" ? sessionEnvironment(cur.sessionId) : null;
+  $("#chat-sub").textContent = `${env ? env.name + " · " : ""}${shortPath(cur.cwd)}${prof ? " · " + prof.name : ""}${ds}${worker}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
+  if (typeof renderEnvNotice === "function") renderEnvNotice();
   if (typeof renderTabs === "function") renderTabs();
 }

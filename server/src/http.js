@@ -30,6 +30,7 @@ import { validCode, installScript } from "./termux.js";
 import { proxy as dsProxy } from "./deepseek.js";
 import { PROTOCOL, environment } from "./environment.js";
 import { authenticate, allowed, startPairing, redeem } from "./devices.js";
+import { forwardIfRemote, splitRemoteSession } from "./upstreams.js";
 
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".woff2": "font/woff2" };
@@ -117,8 +118,13 @@ export function createServer() {
     }
     if (url.pathname === "/permission" && req.method === "POST") {
       let body = ""; for await (const c of req) body += c;
-      try { const m = JSON.parse(body || "{}"); return json(res, 200, { ok: getLive(m.sessionId).answer(m) }); }
-      catch (e) { return json(res, 400, { error: String(e.message) }); }
+      try {
+        const m = JSON.parse(body || "{}");
+        // A notification for a remote chat's approval answers it through that chat's environment.
+        const r = splitRemoteSession(m.sessionId);
+        if (r) return json(res, 200, { ok: await r.env.call("permission.reply", { ...m, sessionId: r.sid }) });
+        return json(res, 200, { ok: getLive(m.sessionId).answer(m) });
+      } catch (e) { return json(res, 400, { error: String(e.message) }); }
     }
     json(res, 404, { error: "not found" });
   });
@@ -127,7 +133,11 @@ export function createServer() {
   server.on("upgrade", (req, sock, head) => {
     const url = new URL(req.url, "http://x");
     const who = url.pathname === "/ws" ? authenticate(url.searchParams.get("token")) : null;
-    if (!who) { sock.destroy(); return; }
+    if (!who) {
+      if (url.pathname === "/ws") sock.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n", () => sock.destroy());
+      else sock.destroy();
+      return;
+    }
     wss.handleUpgrade(req, sock, head, ws => onSocket(ws, who));
   });
   return server;
@@ -152,9 +162,16 @@ function onSocket(ws, principal) {
     let m; try { m = JSON.parse(raw); } catch { return; }
     const reply = r => ws.readyState === 1 && ws.send(JSON.stringify({ ...r, t: "reply", id: m.id }));
     if (!allowed(ws.principal, m.t)) return reply({ error: "This device isn't allowed to do that", code: "forbidden" });
-    const h = handlers[m.t];
-    if (!h) return reply({ error: `unknown message ${m.t}` });
-    try { reply(await h(m, ws) || {}); }
+    try {
+      const f = await forwardIfRemote(m, ws);   // a chat on another environment, from upstreams.js
+      if (f !== undefined) return reply(f);
+      // A namespaced id that no environment took must never reach a local handler: subscribing would
+      // put it in ws.subs and relayed events would leak to this socket.
+      if (typeof m.sessionId === "string" && m.sessionId.includes(":")) return reply({ error: "No such chat", code: "not_found" });
+      const h = handlers[m.t];
+      if (!h) return reply({ error: `unknown message ${m.t}` });
+      reply(await h(m, ws) || {});
+    }
     catch (e) { log("handler error", m.t, e?.message); reply({ error: String(e?.message || e), code: e?.code, kind: e?.kind, short: e?.short }); }
   });
 }

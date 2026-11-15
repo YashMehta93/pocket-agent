@@ -18,7 +18,11 @@
     </div>
     <button class="new-chat" id="btn-new"><span data-icon="plus"></span>New chat</button>
     <div class="search"><span data-icon="search"></span><input id="session-search" type="search" placeholder="Search chats" autocomplete="off"></div>
-    <div class="filters prof-filters" id="profile-filters" role="group" aria-label="Filter chats by profile" hidden></div>
+    <div class="filters chat-filters" id="chat-filters" role="group" aria-label="Filter chats">
+      <div class="filter-part" id="profile-filters" hidden></div>
+      <span class="filter-sep" id="filter-sep" aria-hidden="true" hidden></span>
+      <div class="filter-part" id="env-filters" hidden></div>
+    </div>
     <div class="filters" id="project-filters"></div>
     <div id="session-list" class="session-list"></div>
     <button class="usage-meter" id="usage-meter" aria-label="Usage limits" hidden></button>
@@ -50,6 +54,7 @@
         <div class="logo big"></div>
         <h1 id="empty-greet">What should we build?</h1>
         <div class="empty-cwd" id="empty-cwd"></div>
+        <div class="where" id="new-where" hidden></div>
         <div class="suggestions" id="suggestions"></div>
       </div>
     </section>
@@ -60,6 +65,7 @@
     <button id="jump" hidden aria-label="Jump to latest" data-icon="down"></button>
 
     <footer id="composer">
+      <div id="env-offline" hidden></div>
       <div id="status-line" hidden></div>
       <button id="usage-note" hidden></button>
       <div id="account-limit" hidden></div>
@@ -104,6 +110,7 @@
 <script src="js/accounts.js"></script>
 <script src="js/devices.js"></script>
 <script src="js/profiles.js"></script>
+<script src="js/environments.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>
