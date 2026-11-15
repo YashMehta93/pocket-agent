@@ -6,20 +6,22 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
-import WebSocket from "ws";
+import WebSocket, { WebSocketServer } from "ws";
+import { DEVICE_EVENTS } from "../src/hub.js";
 
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "pa-hub-"));
 const U_HOME = path.join(T, "upstream");
 const H_HOME = path.join(T, "hub");
 const SEEDED = "11111111-2222-4333-8444-555555555555";   // tests/ui/fixtures/sample-chat.jsonl
-const U_PORT = 8772, H_PORT = 8773;
+const U_PORT = 8772, H_PORT = 8773, F_PORT = 8774;   // F: a fake other server, for live chats and events
 // The servers are started with these, so the test never has to read an app token file.
 const U_TOKEN = crypto.randomBytes(24).toString("hex");
 const H_TOKEN = crypto.randomBytes(24).toString("hex");
 
 let fails = 0;
 const ok = (name, cond, extra = "") => { console.log(cond ? "PASS" : "FAIL", name, extra); if (!cond) fails++; };
+ok("a device's events leave out environments and profiles", !["environments", "profiles", "environment"].some(x => DEVICE_EVENTS.has(x)));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 /** Polls fn until it returns something truthy, or gives up. */
 const poll = async (fn, ms, every = 150) => {
@@ -87,7 +89,66 @@ function connect(port, token) {
   });
 }
 
-let upstream, hub, client;
+/**
+ * A stand-in for another Pocket Agent server: says hello with three live chats, answers subscribe
+ * (one with an approval already pending) and sessions.list, and can emit events to its hub.
+ */
+async function startFakeUpstream(port) {
+  const seen = { hellos: 0, subs: [], conns: new Set() };
+  const wss = new WebSocketServer({ port });
+  await new Promise(r => wss.once("listening", r));
+  wss.on("connection", ws => {
+    seen.conns.add(ws);
+    ws.on("close", () => seen.conns.delete(ws));
+    ws.on("message", raw => {
+      let m; try { m = JSON.parse(raw); } catch { return; }
+      const reply = o => ws.send(JSON.stringify({ t: "reply", id: m.id, ...o }));
+      if (m.t === "hello") {
+        seen.hellos++;
+        reply({ version: "9.9.9", protocol: 1, environment: { id: "env-fake000001", name: "Fake laptop", protocol: 1, version: "9.9.9" },
+          live: ["live-1", "live-2", "live-3"].map(id => ({ sessionId: id, state: "idle", title: id === "live-1" ? "Fake live" : "Another live" })) });
+      } else if (m.t === "subscribe") {
+        seen.subs.push({ sessionId: m.sessionId, after: m.after });
+        reply({ sessionId: m.sessionId, info: { sessionId: m.sessionId, state: "idle", title: "Fake live", seq: 0,
+          pending: m.sessionId === "live-1" ? [{ requestId: "r-pending-1", toolName: "Bash", input: { command: "ls" }, title: "Fake live" }] : [] },
+          events: [] });
+      } else if (m.t === "sessions.list") {
+        reply({ sessions: [] });
+      } else reply({});
+    });
+  });
+  return {
+    seen,
+    emit(msg) { for (const ws of seen.conns) if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); },
+    drop() { for (const ws of seen.conns) try { ws.terminate(); } catch {} },   // the network goes away
+    close() { this.drop(); wss.close(); },
+  };
+}
+
+/** Reads the hub's SSE stream (v=2) into an array of parsed messages. */
+async function openSse() {
+  const ctl = new AbortController();
+  const res = await fetch(`http://127.0.0.1:${H_PORT}/events?token=${encodeURIComponent(H_TOKEN)}&v=2`, { signal: ctl.signal });
+  const events = [], reader = res.body.getReader(), dec = new TextDecoder();
+  (async () => {
+    let buf = "";
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf("\n\n")) >= 0) {
+          const block = buf.slice(0, i); buf = buf.slice(i + 2);
+          for (const line of block.split("\n")) if (line.startsWith("data: ")) { try { events.push(JSON.parse(line.slice(6))); } catch {} }
+        }
+      }
+    } catch {}
+  })();
+  return { events, close: () => ctl.abort() };
+}
+
+let upstream, hub, client, sse, fake;
 try {
   fs.mkdirSync(U_HOME, { recursive: true });
   fs.mkdirSync(H_HOME, { recursive: true });
@@ -177,7 +238,42 @@ try {
   const mode = tokenFilesNow.length === 1 ? fs.statSync(tokenFilesNow[0]).mode & 0o777 : 0;
   ok("there is one token file, mode 0600, holding the token", tokenFilesNow.length === 1 && mode === 0o600 && fs.readFileSync(tokenFilesNow[0], "utf8") === U_TOKEN, mode.toString(8));
 
-  // 9. removing deletes the token file and the chats
+  // 9. pairing for real: a code from the upstream, swapped for a device token (#69)
+  const uOwner = await connect(U_PORT, U_TOKEN);
+  const pairCode = async () => (await (await fetch(`http://127.0.0.1:${U_PORT}/devices/pair?token=${encodeURIComponent(U_TOKEN)}`, { method: "POST" })).json()).code;
+  await client.call("environments.add", { url: `127.0.0.1:${U_PORT}`, code: await pairCode() });
+  ok("a pairing code gets the hub online within 5 s", await poll(async () => (await envState(envId)) === "online", 5000));
+  const uDevices = (await uOwner.call("devices.list")).devices;
+  ok("the upstream has exactly one paired device", uDevices.length === 1, String(uDevices.length));
+  await uOwner.call("devices.revoke", { device: uDevices[0].id });
+  ok("revoking it makes the hub unauthorized within 5 s", await poll(async () => (await envState(envId)) === "unauthorized", 5000));
+  await client.call("environments.add", { url: `127.0.0.1:${U_PORT}`, code: await pairCode() });
+  ok("a new code pairs it again, online within 5 s", await poll(async () => (await envState(envId)) === "online", 5000));
+  uOwner.ws.close();
+
+  // 10. a device of the hub itself: another machine's chats are the owner's only (#69)
+  const hp = await (await fetch(`http://127.0.0.1:${H_PORT}/devices/pair?token=${encodeURIComponent(H_TOKEN)}`, { method: "POST" })).json();
+  const hr = await (await fetch(`http://127.0.0.1:${H_PORT}/devices/redeem`, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: hp.code, name: "Test phone" }) })).json();
+  const devClient = await connect(H_PORT, hr.token);
+  const devHello = await devClient.call("hello", {});
+  ok("a device's hello has no environments and no profiles",
+    !("environments" in devHello) && !("profiles" in devHello) && !("defaultProfile" in devHello) && devHello.protocol === 1);
+  let devSend = null; try { await devClient.call("send", { sessionId: remoteId, text: "hi" }); } catch (e) { devSend = e; }
+  ok("a device can't send to another machine's chat", devSend?.code === "forbidden" && /only for this phone's owner/.test(devSend.message), devSend?.message || "");
+  let devSub = null; try { await devClient.call("subscribe", { sessionId: remoteId, after: 0 }); } catch (e) { devSub = e; }
+  ok("a device can't subscribe to another machine's chat", devSub?.code === "forbidden", devSub?.message || "");
+  let devUnknown = null; try { await devClient.call("subscribe", { sessionId: "x:y", after: 0 }); } catch (e) { devUnknown = e; }
+  ok("a namespaced id no environment owns is not_found, never a local handler", devUnknown?.code === "not_found" && devUnknown.message === "No such chat", devUnknown?.message || "");
+  devClient.ws.close();
+
+  // 11. pairing with this same device is refused before its code is used (#69)
+  const selfPair = await (await fetch(`http://127.0.0.1:${H_PORT}/devices/pair?token=${encodeURIComponent(H_TOKEN)}`, { method: "POST" })).json();
+  let selfErr = null;
+  try { await client.call("environments.add", { url: `127.0.0.1:${H_PORT}`, code: selfPair.code }); } catch (e) { selfErr = e.message; }
+  ok("pairing with this same device is refused", selfErr === "That's this device", selfErr || "");
+
+  // 12. removing deletes the token file and the chats
   const removed = await client.call("environments.remove", { environment: envId });
   ok("environments.remove says ok", removed.ok === true);
   ok("removing deletes the token file", tokenFiles().length === 0);
@@ -191,11 +287,59 @@ try {
   let badAddr = null;
   try { await client.call("environments.test", { url: "ftp://nowhere" }); } catch (e) { badAddr = e.message; }
   ok("a bad address is refused in plain words", badAddr === "That address doesn't look right", badAddr || "");
+
+  // 13. approvals and done states from a remote live chat notify with no screen open (#69, R7)
+  sse = await openSse();
+  fake = await startFakeUpstream(F_PORT);
+  const fakeAdded = await client.call("environments.add", { url: `127.0.0.1:${F_PORT}`, token: "fake-token" });
+  const fakeId = fakeAdded.environment.id;
+  ok("the fake upstream's environment is online", await poll(async () => (await envState(fakeId)) === "online", 5000));
+  const fakeLive = ["live-1", "live-2", "live-3"];
+  ok("the hub subscribes to every chat in the upstream's hello.live",
+    await poll(() => fakeLive.every(id => fake.seen.subs.some(s => s.sessionId === id)), 5000),
+    fake.seen.subs.map(s => s.sessionId).join(", "));
+  const pendNote = await poll(() => sse.events.find(e => e.type === "notify" && e.spec?.id === "approval:r-pending-1"), 5000);
+  ok("an approval waiting in the subscribe reply notifies with no screen open", !!pendNote);
+  ok("its notification names the environment, with plain text", !!pendNote && typeof pendNote.spec.title === "string"
+    && /Fake laptop/.test(pendNote.spec.title) && pendNote.spec.text === "ls");
+
+  fake.emit({ t: "permission.request", sessionId: "live-1", requestId: "r-live-1", toolName: "Bash", input: { command: "npm test" }, title: "Fake live" });
+  const liveNote = await poll(() => sse.events.find(e => e.type === "notify" && e.spec?.id === "approval:r-live-1"), 5000);
+  ok("an approval from a remote live chat notifies with no screen open", !!liveNote && /Fake laptop/.test(liveNote.spec.title));
+  ok("the notification takes named fields only, as plain text", !!liveNote && liveNote.spec.text === "npm test" && typeof liveNote.spec.title === "string");
+
+  fake.emit({ t: "state", sessionId: "live-1", state: "running", info: { sessionId: "live-1", state: "running", title: "Fake live" } });
+  fake.emit({ t: "state", sessionId: "live-1", state: "idle", info: { sessionId: "live-1", state: "idle", title: "Fake live" } });
+  const doneNote = await poll(() => sse.events.find(e => e.type === "notify" && e.spec?.id === `done:${fakeId}:live-1`), 5000);
+  ok("a finished turn on a remote live chat notifies Done", !!doneNote && /Done: Fake laptop/.test(doneNote.spec.title), doneNote?.spec?.title || "");
+
+  // 14. an upstream event whose sessionId contains ":" keeps its whole id, prefixed once (#69, R3)
+  const colonFull = `${fakeId}:envB:abc`;
+  const subColon = await client.call("subscribe", { sessionId: colonFull, after: 0 });
+  ok("a subscribe to a doubly namespaced chat reaches the fake upstream", subColon.sessionId === colonFull && fake.seen.subs.some(s => s.sessionId === "envB:abc"));
+  const beforeEv = client.events.length;
+  fake.emit({ t: "ev", sessionId: "envB:abc", seq: 1, ev: { type: "assistant" } });
+  const gotEv = await poll(() => client.events.slice(beforeEv).find(e => e.t === "ev" && e.seq === 1), 3000);
+  ok("an upstream event whose sessionId contains ':' is mapped with the env prefix", gotEv?.sessionId === colonFull, gotEv?.sessionId || "");
+
+  // 15. after a reconnect it re-subscribes with after: lastSeq, and doesn't notify a pending approval twice (#69)
+  fake.emit({ t: "ev", sessionId: "live-1", seq: 7, ev: { type: "assistant" } });
+  await sleep(300);
+  const subsBefore = fake.seen.subs.length, hellosBefore = fake.seen.hellos;
+  fake.drop();
+  ok("the hub reconnects after the fake upstream drops", await poll(() => fake.seen.hellos > hellosBefore, 5000));
+  const resub = await poll(() => fake.seen.subs.slice(subsBefore).find(s => s.sessionId === "live-1" && s.after === 7), 5000);
+  ok("after a reconnect it re-subscribes with after: lastSeq", !!resub);
+  await sleep(500);
+  const pendCount = sse.events.filter(e => e.type === "notify" && e.spec?.id === "approval:r-pending-1").length;
+  ok("a pending approval is not notified twice after a reconnect", pendCount === 1, String(pendCount));
 } catch (e) {
   console.log("FAIL", e.stack);
   fails++;
 } finally {
   try { client?.ws.close(); } catch {}
+  try { sse?.close(); } catch {}
+  try { fake?.close(); } catch {}
   try { hub?.kill("SIGKILL"); } catch {}
   try { upstream?.kill("SIGKILL"); } catch {}
   await Promise.all([hub && exited(hub), upstream && exited(upstream)]);

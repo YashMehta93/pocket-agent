@@ -12,8 +12,8 @@ import { broadcastAll } from "./hub.js";
 /** Raise this whenever the WebSocket protocol changes in a way older apps can't handle. */
 export const PROTOCOL = 1;
 
-/** What this server can do. Later tasks add "devices" and "hub". */
-export const CAPS = ["sessions", "files", "workers", "accounts", "environment"];
+/** What this server can do: paired devices, and connecting to other servers (the hub). */
+export const CAPS = ["sessions", "files", "workers", "accounts", "environment", "devices", "hub"];
 
 /** The machine this server runs on: android-linux (the app's Linux, or Termux), windows, macos, or linux. */
 export function detectOs() {

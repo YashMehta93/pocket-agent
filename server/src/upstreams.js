@@ -13,6 +13,7 @@ import { toolDetail } from "./activity.js";
 export const MIN_PROTOCOL = 1;
 const DEFAULT_PORT = 8765;
 const MAX_BUFFER = 4000;
+const MAX_REMOTE_SUBS = 50;   // remote chats watched per environment, so a busy machine can't flood this one
 const BAD_ADDRESS = "That address doesn't look right";
 /** Chat requests forwarded to the environment as they are (besides subscribe / unsubscribe, below). */
 export const REMOTE_VERBS = new Set(["session.history", "session.open", "session.context", "send", "interrupt",
@@ -35,7 +36,9 @@ export function mapIds(obj, envId, depth = 0) {
   if (!plainObject(obj)) return obj;
   const out = {};
   for (const [k, v] of Object.entries(obj)) {
-    if (ID_FIELDS.has(k)) out[k] = typeof v === "string" && !v.includes(":") ? `${envId}:${v}` : v;
+    // Always prefix, even a value that already has ":": a machine that sends "envB:abc" becomes
+    // "envA:envB:abc" here, so it goes back only to envA (splitRemoteSession splits at the first ":").
+    if (ID_FIELDS.has(k)) out[k] = typeof v === "string" ? `${envId}:${v}` : v;
     else out[k] = depth < 4 && (Array.isArray(v) || plainObject(v)) ? mapIds(v, envId, depth + 1) : v;
   }
   return out;
@@ -99,6 +102,25 @@ const localEnvironment = () => localEnv ||= (async () => {
     return e && typeof e === "object" ? e : null;
   } catch { return null; }
 })();
+
+/** The profiles that exist here, with the default one; an older install without profiles.js has "personal". */
+async function localProfiles() {
+  try {
+    const m = await import("./profiles.js");
+    return { all: m.listProfiles(), def: m.defaultProfileId() };
+  } catch { return { all: [{ id: "personal", name: "Personal" }], def: "personal" }; }
+}
+
+/** Pairing with this same server would make a device of itself: /health says which server answers. */
+async function isSelf(base, local) {
+  if (!local?.id) return false;
+  try {
+    const r = await fetch(`${base}/health`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return false;
+    const h = await r.json().catch(() => null);
+    return !!h?.env && h.env === local.id;
+  } catch { return false; }
+}
 
 const announce = () => broadcastAll({ t: "environments", environments: listEnvironments() });
 
@@ -165,11 +187,19 @@ function handshake(base, token, timeoutMs = 8000) {
  * Pairs with (or re-pairs) an environment. With a code, the code is redeemed for a token; otherwise a token is required.
  * The answer may be unauthorized: it is saved then, so the list shows it and the person can pair again.
  */
-export async function addEnvironment({ url, code, token, profile = "personal", name } = {}) {
-  const base = baseUrl(url), prof = safeProfile(profile);
+export async function addEnvironment({ url, code, token, profile, name } = {}) {
+  const base = baseUrl(url);
   const local = await localEnvironment();
+  // Which profile the environment is paired into: the default one unless asked for another.
+  const { all, def } = await localProfiles();
+  const wanted = typeof profile === "string" && profile.trim() ? profile.trim() : def;
+  if (!all.some(p => p.id === wanted)) throw new Error("No such profile");
+  const prof = safeProfile(wanted);
   let tok = String(token || "").trim();
-  if (code) tok = String((await redeem(base, code, local?.name || "Pocket Agent")).token || "").trim();
+  if (code) {
+    if (await isSelf(base, local)) throw new Error("That's this device");
+    tok = String((await redeem(base, code, local?.name || "Pocket Agent")).token || "").trim();
+  }
   if (!tok) throw new Error("A token is needed to connect this device");
   let hello = null;
   try { hello = await handshake(base, tok); }
@@ -262,6 +292,8 @@ export async function forwardIfRemote(m, ws) {
   if (!m || typeof m !== "object") return undefined;
   const r = splitRemoteSession(m.sessionId);
   if (r) {
+    // Another machine's chats are the owner's: a paired device never reaches them.
+    if (ws?.principal?.kind !== "owner") throw ownerOnly();
     if (r.env.state !== "online") throw new Error(`${r.env.name} is offline`);
     if (m.t === "subscribe") return await r.env.localSubscribe(ws, r.sid, Number(m.after) || 0, r.full);
     if (m.t === "unsubscribe") return r.env.localUnsubscribe(ws, r.sid, r.full);
@@ -275,12 +307,20 @@ export async function forwardIfRemote(m, ws) {
   if (m.env && typeof m.t === "string" && (m.t.startsWith("files.") || m.t.startsWith("fs."))) {
     const env = connections.get(m.env);
     if (!env) return undefined;
+    if (ws?.principal?.kind !== "owner") throw ownerOnly();
     if (env.state !== "online") throw new Error(`${env.name} is offline`);
     const params = { ...m };
     delete params.t; delete params.id; delete params.env;
     return await env.call(m.t, params);
   }
   return undefined;
+}
+
+/** A request that would reach another machine, from someone who isn't this phone's owner. */
+function ownerOnly() {
+  const e = new Error("Chats on other machines are only for this phone's owner");
+  e.code = "forbidden";
+  return e;
 }
 
 /** A local socket that closes loses its remote subscriptions, like it loses its local ones. */
@@ -308,8 +348,9 @@ export class EnvironmentConnection {
     this.pending = new Map();   // request id -> { resolve, reject, timer }
     this.nextId = 1;
     this.helloId = null;
-    this.subs = new Map();      // remote session id -> { count, after, lastSeq, info, reply, events, ready }
+    this.subs = new Map();      // remote session id -> { count, bg, after, lastSeq, info, reply, events, ready }
     this.prevStates = new Map();// remote session id -> its last state, for a "done" notification
+    this.notifiedRequests = new Set();   // approvals already notified; a re-subscribe must not say them twice
     this.sessions = [];         // last chat list from this environment
     this.closed = false;
   }
@@ -461,11 +502,16 @@ export class EnvironmentConnection {
     this.setState("online", null);
     this.startHeartbeat();
     this.refreshSessions().catch(() => {});
+    // Re-subscribe the chats already watched, then watch every chat that is live upstream: their
+    // approvals and done states must notify even while no screen has them open.
     this.resubscribe();
+    for (const i of Array.isArray(m.live) ? m.live : []) this.ensureBgSub(i?.sessionId);
   }
 
   onEvent(m) {
-    const sid = typeof m.sessionId === "string" && !m.sessionId.includes(":") ? m.sessionId : null;
+    // A chat id from another machine may itself contain ":" (a hub of a hub): keep it whole as the
+    // subscription key, and let mapIds prefix it for this server's clients.
+    const sid = typeof m.sessionId === "string" && m.sessionId ? m.sessionId : null;
     if (m.t === "ev" && sid) {
       const sub = this.subs.get(sid);
       if (sub) {
@@ -473,7 +519,7 @@ export class EnvironmentConnection {
         sub.events.push({ seq: m.seq, ev: m.ev });
         if (sub.events.length > MAX_BUFFER) sub.events.splice(0, sub.events.length - MAX_BUFFER);
       }
-      return broadcast({ ...m, sessionId: `${this.id}:${sid}` });
+      return broadcast(mapIds({ ...m }, this.id));
     }
     if (!RELAY_TYPES.has(m.t)) return;
     const mapped = mapIds({ ...m, environment: this.id }, this.id);
@@ -489,12 +535,67 @@ export class EnvironmentConnection {
       const prev = this.prevStates.get(sid) || null;
       this.prevStates.set(sid, m.state);
       if (sub) sub.info = mapped.info || sub.info;
+      // A live chat is watched even with no screen on it; a closed one stops.
+      if (m.state === "closed") this.dropBgSub(sid); else this.ensureBgSub(sid);
       if ((prev === "running" || prev === "waiting") && m.state === "idle")
-        notifyNative({ type: "done", sessionId: mapped.sessionId, title: mapped.info?.title || "Session", text: "", envName: this.name });
+        notifyNative({ type: "done", sessionId: mapped.sessionId,
+          title: typeof mapped.info?.title === "string" ? mapped.info.title : "Session", envName: this.name });
     } else if (m.t === "permission.request") {
-      notifyNative({ type: "permission.request", ...mapped, input: toolDetail(m.toolName, m.input) || "", envName: this.name });
+      // Named fields only: never spread an environment's object into a notification.
+      if (typeof m.requestId === "string" && this.notifiedRequests.has(m.requestId)) return;
+      if (typeof m.requestId === "string") this.notifiedRequests.add(m.requestId);
+      notifyNative({ type: "permission.request", sessionId: mapped.sessionId, requestId: m.requestId,
+        toolName: typeof m.toolName === "string" ? m.toolName : "", input: toolDetail(m.toolName, m.input) || "",
+        title: typeof m.title === "string" ? m.title : typeof mapped.info?.title === "string" ? mapped.info.title : undefined,
+        envName: this.name });
     } else if (m.t === "permission.resolved") {
       notifyNative({ type: "permission.resolved", requestId: m.requestId });
+    }
+  }
+
+  /** Watch a live remote chat upstream, so its approvals and done states notify with no screen open. Bounded. */
+  ensureBgSub(sid) {
+    if (typeof sid !== "string" || !sid) return;
+    const existing = this.subs.get(sid);
+    if (existing) { existing.bg = true; return; }
+    if (this.subs.size >= MAX_REMOTE_SUBS) return;
+    const sub = { count: 0, bg: true, pending: true, after: 0, lastSeq: 0, info: null, reply: null, events: [] };
+    this.subs.set(sid, sub);
+    sub.ready = (async () => {
+      try {
+        const raw = await this.call("subscribe", { sessionId: sid, after: 0 }, 8000);
+        sub.reply = mapIds(raw, this.id);
+        sub.info = sub.reply.info || null;
+        sub.events = Array.isArray(raw.events) ? raw.events.slice(-MAX_BUFFER) : [];
+        sub.lastSeq = Math.max(Number(sub.info?.seq) || 0, ...sub.events.map(e => Number(e.seq) || 0));
+        this.notePending(sid, sub);
+      } finally { sub.pending = false; }
+    })();
+    sub.ready.catch(() => { if (this.subs.get(sid) === sub && !sub.count) this.subs.delete(sid); });
+  }
+
+  /** Stop watching a chat nobody here has open (a screen subscriber keeps it alive). */
+  dropBgSub(sid) {
+    const sub = this.subs.get(sid);
+    if (!sub || !sub.bg || sub.count > 0) return;
+    this.subs.delete(sid);
+    this.prevStates.delete(sid);
+    this.call("unsubscribe", { sessionId: sid }).catch(() => {});
+  }
+
+  /** A subscribe reply's `info.pending`: approvals that were waiting while no screen was open. Notify each once. */
+  notePending(sid, sub) {
+    const info = sub.info || sub.reply?.info;
+    for (const p of Array.isArray(info?.pending) ? info.pending : []) {
+      const requestId = p?.requestId;
+      if (typeof requestId !== "string" || this.notifiedRequests.has(requestId)) continue;
+      this.notifiedRequests.add(requestId);
+      const ev = { type: "permission.request", sessionId: `${this.id}:${sid}`, requestId,
+        input: toolDetail(p.toolName, p.input) || "", envName: this.name };
+      if (typeof p.toolName === "string") ev.toolName = p.toolName;
+      const title = typeof p.title === "string" ? p.title : info?.title;
+      if (typeof title === "string") ev.title = title;
+      notifyNative(ev);
     }
   }
 
@@ -524,15 +625,18 @@ export class EnvironmentConnection {
   /** After a reconnect, the environment forgot our subscriptions: ask again for each chat someone here watches. */
   async resubscribe() {
     for (const [sid, sub] of this.subs) {
-      if (!sub.count) continue;
+      if (!(sub.count > 0 || sub.bg) || sub.pending) continue;   // a new background subscribe is already in flight
       try {
+        // From the last seq seen: what happened during the gap comes back, and nothing is replayed twice.
         const raw = await this.call("subscribe", { sessionId: sid, after: sub.lastSeq || sub.after || 0 }, 8000);
+        if (this.subs.get(sid) !== sub) continue;   // a screen closed it meanwhile
         const mapped = mapIds(raw, this.id);
         sub.reply = mapped;
         sub.info = mapped.info || sub.info;
         for (const e of raw.events || []) sub.events.push(e);
         sub.events = sub.events.slice(-MAX_BUFFER);
         sub.lastSeq = sub.events.reduce((n, e) => Math.max(n, e.seq || 0), sub.lastSeq);
+        this.notePending(sid, sub);   // an approval that arrived during the gap
       } catch {}
     }
   }
@@ -552,11 +656,17 @@ export class EnvironmentConnection {
         sub.info = sub.reply.info || null;
         sub.events = Array.isArray(raw.events) ? raw.events.slice(-MAX_BUFFER) : [];
         sub.lastSeq = sub.events.reduce((n, e) => Math.max(n, e.seq || 0), 0);
+        this.notePending(sid, sub);   // approvals waiting while no screen was open
       })();
       sub.ready.catch(() => { if (this.subs.get(sid) === sub) this.subs.delete(sid); });
     } else if (!already) sub.count++;
+    // A background subscription (ensureBgSub) may still be waiting for its first reply: share it.
     try { await sub.ready; }
-    catch (e) { ws.subs.delete(full); unwatchRemoteSub(ws, full); sub.count--; throw e; }
+    catch (e) {
+      ws.subs.delete(full); unwatchRemoteSub(ws, full); sub.count--;
+      if (sub.count <= 0 && this.subs.get(sid) === sub) this.subs.delete(sid);
+      throw e;
+    }
     const reply = sub.reply || {};
     return { ...reply, sessionId: full, info: sub.info || reply.info || null,
       events: sub.events.filter(e => Number(e.seq || 0) > after) };
@@ -569,6 +679,7 @@ export class EnvironmentConnection {
     if (!sub) return {};
     sub.count--;
     if (sub.count <= 0) {
+      if (sub.bg) return {};   // still watching for approvals and done states
       this.subs.delete(sid);
       this.prevStates.delete(sid);
       this.call("unsubscribe", { sessionId: sid }).catch(() => {});
