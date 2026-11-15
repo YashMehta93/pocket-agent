@@ -363,6 +363,9 @@ textarea.field { min-height: 90px; resize: vertical; line-height: 1.5; }
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--line); font-size: 14.5px; }
 .set-row .l { flex: 1; } .set-row .l small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; line-height: 1.45; }
 .acc-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 62%; }
+/* Devices: the one-use pair code, big and monospace, with its countdown */
+.pair-code { font: 600 32px/1.2 var(--mono); letter-spacing: .14em; text-align: center; padding: 18px 0 4px; user-select: all; }
+.pair-exp { text-align: center; color: var(--muted); font-size: 12.5px; }
 /* Settings home: search + categories, each opening its own short page */
 .set-search { width: 100%; min-height: 48px; margin: 12px 0 6px; padding: 0 14px; border: 1px solid var(--line2); border-radius: 10px; background: var(--surface); color: var(--text); font: 400 15px var(--sans); }
 .set-search:focus { outline: 2px solid var(--text); outline-offset: 1px; }

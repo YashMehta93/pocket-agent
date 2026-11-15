@@ -148,6 +148,7 @@ function settingsSections() {
         + (standalone ? item(`<div class="set-row"><div class="l">Server log<small>For troubleshooting</small></div><button class="chip" id="s-log">View</button></div>`, "debug errors logs") : "") },
     typeof accountsSettingsSection === "function" && accountsSettingsSection(),   // accounts.js: several Claude logins
     typeof dsSettingsSection === "function" && dsSettingsSection(),   // deepseek.js; none on a server without DeepSeek
+    typeof devicesSettingsSection === "function" && devicesSettingsSection(),     // devices.js: other devices with their own token
     { id: "updates", title: "Updates", icon: "retry",
       summary: state.updateChannel ? `${state.updateChannel}${state.updateKind === "github" ? " · " + (state.updateTrack?.track === "pin" ? "pinned to " + state.updateTrack.tag : state.updateTrack?.track === "beta" ? "Beta" : "Stable") : ""}` : "Not set",
       html: () => item(`<div class="set-row"><div class="l">Get updates from<small id="u-src">${esc(state.updateChannel ? state.updateChannel + (state.updateKind === "github" && !state.githubToken ? " (no token)" : "") : "Not set: updates come with new app versions")}</small></div><button class="chip" id="u-set">${state.updateChannel ? "Change" : "Set"}</button></div>`, "source github folder")
@@ -265,6 +266,7 @@ function wireSettings(root) {
   if (native && root.querySelector("#termux-box")) renderTermux(root.querySelector("#termux-box"));
   if (typeof wireAccountsSettings === "function") wireAccountsSettings(root);
   if (typeof wireDsSettings === "function") wireDsSettings(root);
+  if (typeof wireDevicesSettings === "function") wireDevicesSettings(root);
 }
 // Another client renamed this device (or a hub changed its reaches): keep the row current.
 conn.on("environment", m => { if (!m.environment) return; state.environment = m.environment; if (page.isOpen) openSettingsRefresh(); });
