@@ -9,6 +9,7 @@ Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 - **Background workers** (#66): stopping a reply no longer stops the background workers that chat started; the Agents tab has **Stop all** for them, and closing a chat stops them. A follow-up to a worker can run in the background too.
 - Fixed: after switching Claude accounts, usage showed the previous account's numbers; an unused 5-hour window now shows 0% (#50).
 - **Security** (#65): only the phone's own server can use phone features; a server chosen in Settings gets notifications only, its pages never load in the app, and exporting the whole home is limited to a Termux server.
+- Fixed: tapping Send no longer drops the keyboard; long-pressing a chat opens its menu without also opening the chat (or closing the menu); the chat keeps following new output without the person scrolling (#57, #58, #56).
 
 ## 1.2.0
 

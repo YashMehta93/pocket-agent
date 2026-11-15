@@ -16,7 +16,13 @@ const dom = await JSDOM.fromURL(`http://127.0.0.1:${PORT}/ui/#token=${token}`, {
   runScripts: "dangerously", resources: "usable", pretendToBeVisual: true, virtualConsole: vc,
   beforeParse(w) {
     w.matchMedia = () => ({ matches: true, addEventListener() {} });
-    w.ResizeObserver = class { observe() {} };
+    w.__resizeObservers = [];
+    w.ResizeObserver = class {
+      constructor(cb) { this.cb = cb; this.targets = []; w.__resizeObservers.push(this); }
+      observe(t) { this.targets.push(t); }
+      unobserve() {}
+      disconnect() {}
+    };
     w.HTMLElement.prototype.scrollIntoView = () => {};
     if (!w.crypto.randomUUID) w.crypto.randomUUID = () => crypto.randomUUID();
   },
@@ -243,6 +249,66 @@ ok("account calls never send a param named id", accCheck.bad.length === 0 && ["a
 ev("sheet.close(true)");
 ev(`state.current = window.__save.cur; state.accounts = window.__save.accounts; state.defaultAccount = window.__save.defaultAccount; state.usageByAccount = window.__save.usageByAccount; state.newChatAccount = window.__save.newChatAccount;
   conn.call = window.__origCall; delete window.__save; delete window.__origCall; updateComposer()`);
+
+// #57 Send keeps the keyboard up: a tap on the button must not take focus from the field, and send() gives it back
+const pd = new w.Event("pointerdown", { bubbles: true, cancelable: true });
+$("#btn-send").dispatchEvent(pd);
+ok("a tap on Send keeps the field focused (the pointerdown's default is prevented)", pd.defaultPrevented);
+ev("window.__origCall = conn.call; window.__sendCalls = []; conn.call = (t, m) => { if (t === 'send') { window.__sendCalls.push(m); return Promise.resolve({}); } return window.__origCall(t, m); }");
+ev("input.value = 'keep the keyboard'; input.blur(); send(); window.__focusAfterSend = document.activeElement === input");
+await sleep(100);
+ok("after sending, the field has focus again and is empty", ev("window.__focusAfterSend") && $("#input").value === "" && ev("window.__sendCalls.length") === 1);
+ev("delete window.__focusAfterSend");
+ev("conn.call = window.__origCall; delete window.__origCall; delete window.__sendCalls");
+
+// #58 A long press opens the chat's menu; finger wobble doesn't cancel it, and the lift must not also open the chat
+// (or land on the menu's scrim and close it)
+await sleep(500);   // #57's send scheduled a drawer refresh; let it finish before picking a row to hold
+await ev("refreshSessions()");
+const drawerRow = $$("#session-list .sess")[0];
+const curBefore = ev("state.current");
+const touchRow = (type, x = 20, y = 20) => {
+  const e = new w.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(e, type === "touchend" ? "changedTouches" : "touches", { value: [{ clientX: x, clientY: y }] });
+  drawerRow.dispatchEvent(e);
+};
+ev("document.body.classList.add('drawer-open')");
+touchRow("touchstart");
+touchRow("touchmove", 24, 22);   // 4-5 px of wobble: still a press, not a drag
+await sleep(620);
+touchRow("touchend", 24, 22);
+drawerRow.click();
+await sleep(50);
+ok(`a long press opens the chat's menu, and the lift doesn't open the chat or close the menu: "${tx("#sheet h2")}"`,
+  ev("sheet.isOpen") && $$("#sheet .menu-item").length >= 4 && ev("state.current") === curBefore
+  && ev("document.body.classList.contains('drawer-open')"));
+ev("sheet.close(true)");
+drawerRow.dispatchEvent(new w.Event("contextmenu", { bubbles: true, cancelable: true }));
+await sleep(30);
+ok("a context menu during the press doesn't open the menu a second time", !ev("sheet.isOpen"));
+ev("document.body.classList.remove('drawer-open')");
+
+// #56 Only the person's own scrolling unpins; content growing keeps a pinned chat at the bottom
+const chatBox = $("#chat"), msgBox = $("#messages");
+Object.defineProperty(chatBox, "scrollHeight", { configurable: true, get: () => Number(chatBox.dataset.sh || 0) });
+Object.defineProperty(chatBox, "clientHeight", { configurable: true, get: () => 300 });
+chatBox.dataset.sh = 2000;
+await sleep(1600);   // let any earlier touch in the tests age out of the 1.5 s "the person is scrolling" window
+ev("scrollToBottom(true)");
+await sleep(80);
+ok("the chat sits at the bottom and is pinned", ev("pinned") === true && chatBox.scrollTop === 2000);
+const grow = w.document.createElement("div"); grow.style.height = "400px"; grow.textContent = "more output";
+msgBox.append(grow);
+chatBox.dataset.sh = 2400;
+chatBox.dispatchEvent(new w.Event("scroll"));   // what scroll anchoring sends when content grows under the reader
+ok("content growing doesn't unpin the chat", ev("pinned") === true);
+const messagesObserver = w.__resizeObservers.find(o => o.targets.includes(msgBox));
+messagesObserver?.cb([]);   // the browser reports that #messages grew
+await sleep(100);
+ok("a pinned chat follows the growth to the bottom", !!messagesObserver && chatBox.scrollTop === 2400);
+grow.remove();
+delete chatBox.scrollHeight; delete chatBox.clientHeight; delete chatBox.dataset.sh;
+chatBox.scrollTop = 0;
 
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");

@@ -145,10 +145,18 @@ conn.on("sessions.changed", () => debouncedRefresh());
 const debouncedRefresh = debounce(refreshSessions, 400);
 
 // ───────────── scrolling ─────────────
-const chatEl = $("#chat");
-let pinned = true;
+const chatEl = $("#chat"), messagesEl = $("#messages");
+let pinned = true, userScrollAt = 0;
+const nearBottom = () => chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 80;
+// Only the person's own scrolling can unpin: content growing, or the browser's scroll anchoring, must not (#56).
+const markUserScroll = () => { userScrollAt = Date.now(); };
+for (const ev of ["touchstart", "touchmove", "wheel"]) chatEl.addEventListener(ev, markUserScroll, { passive: true });
+document.addEventListener("keydown", e => {
+  if (/^(PageUp|PageDown|ArrowUp|ArrowDown|Home|End| )$/.test(e.key) && e.target === document.body) markUserScroll();
+});
 chatEl.addEventListener("scroll", () => {
-  pinned = chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 80;
+  if (nearBottom()) pinned = true;
+  else if (Date.now() - userScrollAt < 1500) pinned = false;   // the person (or their fling) moved away
   $("#jump").hidden = pinned;
   $("#topbar").classList.toggle("scrolled", chatEl.scrollTop > 4);
 }, { passive: true });
@@ -156,6 +164,8 @@ function scrollIfPinned() { if (pinned) chatEl.scrollTop = chatEl.scrollHeight; 
 function scrollToBottom(force) { if (force) pinned = true; requestAnimationFrame(() => { chatEl.scrollTop = chatEl.scrollHeight; }); }
 $("#jump").onclick = () => scrollToBottom(true);
 new ResizeObserver(() => scrollIfPinned()).observe($("#composer"));
+// Whatever makes the chat taller (streaming text, a fold opening, images loading) keeps a pinned chat at the bottom.
+new ResizeObserver(() => scrollIfPinned()).observe(messagesEl);
 // Live messages fade in (css .enter); history loads without animation.
 new MutationObserver(muts => {
   if (chat.loadingHistory) return;

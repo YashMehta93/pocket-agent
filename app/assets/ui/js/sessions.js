@@ -103,12 +103,39 @@ function closeDrawer() { document.body.classList.remove("drawer-open"); }
 $("#btn-new").onclick = () => { closeDrawer(); newChat(state.current?.cwd); };
 $("#btn-settings").onclick = () => { closeDrawer(); openSettings(); };
 
+// A press and hold (480 ms) opens the row's menu; a tap opens the row. The press tolerates a little finger
+// wobble, dies when Android cancels the touch, fires only once, and swallows the click the lifting finger sends
+// (it would otherwise open the chat under the menu, or hit the menu's scrim and close it) (#58).
 function longPress(el, fn) {
-  let t, moved = false;
-  el.addEventListener("touchstart", () => { moved = false; t = setTimeout(() => { if (!moved) { haptic("long"); fn(); } }, 480); }, { passive: true });
-  el.addEventListener("touchmove", () => { moved = true; clearTimeout(t); }, { passive: true });
-  el.addEventListener("touchend", e => { clearTimeout(t); }, { passive: true });
-  el.addEventListener("contextmenu", e => { e.preventDefault(); fn(); });
+  let timer = 0, eatTimer = 0, x0 = 0, y0 = 0, fired = false;
+  const point = e => (e.touches?.[0] || e.changedTouches?.[0] || {});
+  const clear = () => { if (timer) { clearTimeout(timer); timer = 0; } };
+  const eat = ev => { ev.preventDefault(); ev.stopPropagation(); };   // eats the click that ends the press
+  const expireEat = () => {
+    clearTimeout(eatTimer);
+    eatTimer = setTimeout(() => removeEventListener("click", eat, { capture: true }), 800);
+  };
+  el.addEventListener("touchstart", e => {
+    fired = false;
+    const p = point(e); x0 = p.clientX ?? 0; y0 = p.clientY ?? 0;
+    clear();
+    timer = setTimeout(() => {
+      timer = 0;
+      if (fired) return;
+      fired = true;
+      addEventListener("click", eat, { capture: true, once: true });
+      expireEat();
+      haptic("long");
+      fn();
+    }, 480);
+  }, { passive: true });
+  el.addEventListener("touchmove", e => {
+    const p = point(e);
+    if (Math.abs((p.clientX ?? 0) - x0) > 10 || Math.abs((p.clientY ?? 0) - y0) > 10) clear();
+  }, { passive: true });
+  el.addEventListener("touchend", () => { clear(); if (fired) expireEat(); }, { passive: true });
+  el.addEventListener("touchcancel", () => { clear(); removeEventListener("click", eat, { capture: true }); }, { passive: true });
+  el.addEventListener("contextmenu", e => e.preventDefault());   // never a second trigger
 }
 
 function sessionMenu(s) {
