@@ -16,9 +16,9 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 | `environment.get` | | `environment`: this server's self-description (see Environment below) |
 | `environment.set` | `name?, reaches?`: what to change; anything left out stays | `environment`: the saved self-description. A bad name or reach fails and changes nothing |
 | `sessions.list` | `limit?, dir?` | `sessions[]: { sessionId, title, firstPrompt, cwd, lastModified, pinned, live, elsewhere, engine?, parent?, worker?, spend?, profile }`: `engine` is `"deepseek"` for DeepSeek chats (absent = Claude), `parent` the calling chat of a worker, `worker` its latest run (`at, toolUseId, runAt, result: done\|stopped\|failed\|null, steps, ms, usd, endedAt`; `result` null and no `endedAt` while it runs), `spend` a DeepSeek chat's estimated USD, `profile` the profile its folder belongs to (an id) |
-| `session.history` | `sessionId` | `messages[]` (SDK `SessionMessage`), `info` |
+| `session.history` | `sessionId` | `messages[]` (SDK `SessionMessage`), `info`, `seq` (the live session's seq as the transcript was read; subscribe after it to catch up) |
 | `session.open` | `sessionId?, cwd?, model?, effort?, permissionMode?, engine?` | `sessionId, info`. `engine: "claude" \| "deepseek"` picks a new chat's engine (default: `defaults.engine`, else Claude); a chat keeps its engine for life, so asking an existing chat for the other one fails with `ENGINE_FIXED`. DeepSeek also fails with `NO_DEEPSEEK_KEY` or `FOLDER_BLOCKED` |
-| `subscribe` | `sessionId, after` | `info` (live session or null), `events[]` with `seq > after`, `settings`, `engine` (`"claude"` \| `"deepseek"`), `parent` (or null) |
+| `subscribe` | `sessionId, after` | `info` (live session or null), `events[]` with `seq > after`, `firstSeq` (the oldest seq still buffered, or null when not live: a client resuming from before it must reload the transcript), `settings`, `engine` (`"claude"` \| `"deepseek"`), `parent` (or null) |
 | `unsubscribe` | `sessionId` | |
 | `send` | `sessionId, text, images?[{mediaType,data}]`, plus `cwd/model/effort/permissionMode/engine` for a new chat | `sessionId, uuid` — may fail with `code: "BUSY_ELSEWHERE"`, or as `session.open` does |
 | `interrupt` | `sessionId` | stops the current reply. Background workers (`wait:false`) it started keep running: stop those with `workers.stopAll` |
@@ -201,7 +201,7 @@ The param is `profile`, because over the WebSocket `id` is the request id. `colo
 
 `hello` adds `profiles` and `defaultProfile`; `sessions.list` items carry `profile` (an id), and `info` carries the chat's `profile`. A `{ t: "profiles", profiles, defaultProfile }` event says the list changed (after save, remove or setDefault).
 
-## SSE `/events?v=2&api=<n>&token=` (Android background service)
+## SSE `/events?v=2&api=<n>&since=<ms>&token=` (Android background service)
 
 The app is a generic shell: the server decides what to show and do.
 
@@ -210,7 +210,9 @@ The app is a generic shell: the server decides what to show and do.
 | `notify` | `spec` (fields documented at the top of `Notifier.java`) | shows/updates a notification |
 | `cancel` | `id` | removes it |
 | `rpc` | `id, method, params` | runs a native capability, POSTs `{ id, result \| error }` to `/native/result` |
-| `batch` | `events[]` | all of the above, sent on connect to catch up |
+| `batch` | `events[]` | all of the above, sent on connect to catch up: open approvals, an activity for every live chat (idle ones as idle), and each idle chat's last done if newer than `since` |
+
+`since` is the phone's clock time of the last event it handled (`0` when it has none). A `done` newer than it is replayed once in the connect batch, so a turn that ended while the app was away still notifies, and a reconnect after handling it replays nothing. Apps that send no `since` (older ones) get no replay.
 
 Notification content is built in `server/src/notify.js`. Buttons POST their `body` to the `path` they name (e.g. `/permission`).
 Apps older than v0.1.6 connect with `v=1` and get raw events (`hello`, `permission.request`, `permission.resolved`, `done`, `activity`).

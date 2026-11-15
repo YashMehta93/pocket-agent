@@ -176,8 +176,51 @@ async function forkSession(id, upToMessageId) {
 }
 
 // ───────────── open / new chat ─────────────
-async function openSession(sessionId, { keepScroll } = {}) {
+/** A live event for the chat on screen: the socket's path and a reconnect's replay both go through here (#62a). */
+function chatLiveEvent(m) {
+  const cur = state.current;
+  if (!cur || m.sessionId !== cur.sessionId) return;
+  if (m.seq <= (cur.lastSeq || 0)) return;
+  cur.lastSeq = m.seq;
+  hideEmpty();
+  chat.event(m.ev);
+  if (m.ev.type === "system" && m.ev.subtype === "init") { cur.model = m.ev.model; updateComposer(); }
+}
+/** What a subscribe reply says about the chat on screen; seq is the position the transcript already covers. */
+function applySubscribe(sub, sessionId, seq) {
+  if (sub.engine || sub.info?.engine) state.current.engine = sub.engine || sub.info.engine;
+  state.current.account = sub.account || state.defaultAccount || "default";   // the Claude account this chat runs on
+  if (sub.parent && typeof parentOf === "function") state.links[sessionId] = { ...state.links[sessionId], parent: parentOf(sub.parent) };
+  if (sub.info) {
+    state.liveInfo[sessionId] = sub.info;
+    // An event may have arrived for this chat while the reply was in flight (and advanced the position):
+    // never rewind past it, or the same event would be drawn twice.
+    const at = Number.isFinite(seq) ? Math.min(seq, sub.info.seq) : sub.info.seq;
+    state.current.lastSeq = Math.max(state.current.lastSeq || 0, at);
+    if (sub.info.activity) state.activity[sessionId] = sub.info.activity;
+  } else if (sub.settings) Object.assign(state.current, { model: sub.settings.model ?? null, effort: sub.settings.effort ?? null, permissionMode: sub.settings.permissionMode || state.current.permissionMode });
+}
+
+async function openSession(sessionId, { keepScroll, keepChat } = {}) {
   const prev = state.current;
+  // Reconnecting the chat already on screen: if the server still has every event after its position, catch up
+  // from there instead of rebuilding the chat — the reader keeps their place and a reply keeps streaming (#62b).
+  if (keepChat && prev?.sessionId === sessionId && !prev.isNew && prev.lastSeq > 0) {
+    const resume = prev.lastSeq;   // the position to catch up from (an event may arrive while we ask)
+    try {
+      const sub = await conn.call("subscribe", { sessionId, after: resume });
+      if (state.current !== prev) return;
+      if (sub.info && sub.info.seq >= resume && Number.isFinite(sub.firstSeq) && resume + 1 >= sub.firstSeq) {
+        applySubscribe(sub, sessionId, resume);
+        for (const e of sub.events || []) chatLiveEvent({ sessionId, ...e });
+        setStatus(null); updateHeader(); updateComposer(); updateMenuBadge(); renderSessions();
+        if (!keepScroll) scrollToBottom(true);
+        showNextPermission();
+        if (typeof accountsChatChanged === "function") accountsChatChanged();
+        return;
+      }
+    } catch {}   // no catch-up possible: reload below
+  }
   if (prev && prev.sessionId !== sessionId && !prev.isNew) conn.call("unsubscribe", { sessionId: prev.sessionId }).catch(() => {});
   const meta = state.sessions.find(s => s.sessionId === sessionId) || {};
   const info = state.liveInfo[sessionId];
@@ -190,13 +233,13 @@ async function openSession(sessionId, { keepScroll } = {}) {
     if (state.current?.sessionId !== sessionId) return;
     if (hist.info) { state.current.cwd = hist.info.cwd || state.current.cwd; state.current.title = hist.info.customTitle || hist.info.summary || state.current.title; }
     chat.loadHistory(hist.messages || []);
-    // Live session: get only events newer than what the transcript already shows.
-    const sub = await conn.call("subscribe", { sessionId, after: 1e15 });
-    if (sub.engine || sub.info?.engine) state.current.engine = sub.engine || sub.info.engine;
-    state.current.account = sub.account || state.defaultAccount || "default";   // the Claude account this chat runs on
-    if (sub.parent && typeof parentOf === "function") state.links[sessionId] = { ...state.links[sessionId], parent: parentOf(sub.parent) };
-    if (sub.info) { state.liveInfo[sessionId] = sub.info; state.current.lastSeq = sub.info.seq; if (sub.info.activity) state.activity[sessionId] = sub.info.activity; }
-    else if (sub.settings) Object.assign(state.current, { model: sub.settings.model ?? null, effort: sub.settings.effort ?? null, permissionMode: sub.settings.permissionMode || state.current.permissionMode });
+    // Subscribe after the seq the transcript read covered, then replay what it missed. A reply that was
+    // mid-stream keeps its block start, and anything the transcript already has is deduped by uuid or block.
+    const histSeq = Number.isFinite(hist.seq) ? hist.seq : null;
+    const sub = await conn.call("subscribe", { sessionId, after: histSeq ?? 1e15 });
+    if (state.current?.sessionId !== sessionId) return;
+    applySubscribe(sub, sessionId, histSeq);
+    for (const e of sub.events || []) chatLiveEvent({ sessionId, ...e });
   } catch (e) { chat.note("Couldn't load this chat: " + e.message, true); }
   setStatus(null);
   if (chat.empty) showEmpty();

@@ -285,8 +285,18 @@ function openWorkerPage(id) {
       const hist = await conn.call("session.history", { sessionId: id });
       if (agentPage !== ctx) return;
       ctx.view.loadHistory(hist.messages || [], { live: AG_ACTIVE.has(dsLinkState(id)) });
-      const sub = await conn.call("subscribe", { sessionId: id, after: 1e15 });
-      if (sub.info) { state.liveInfo[id] = sub.info; ctx.lastSeq = sub.info.seq; if (sub.info.activity) state.activity[id] = sub.info.activity; }
+      // Subscribe after the seq the transcript read covered and replay the rest through the live path, so an
+      // event during the read is neither lost nor drawn twice (#62a).
+      const histSeq = Number.isFinite(hist.seq) ? hist.seq : null;
+      const sub = await conn.call("subscribe", { sessionId: id, after: histSeq ?? 1e15 });
+      if (agentPage !== ctx) return;
+      if (sub.info) {
+        state.liveInfo[id] = sub.info;
+        const at = histSeq == null ? sub.info.seq : Math.min(histSeq, sub.info.seq);
+        ctx.lastSeq = Math.max(ctx.lastSeq, at);   // a live event may already have advanced it
+        if (sub.info.activity) state.activity[id] = sub.info.activity;
+      } else ctx.lastSeq = 0;
+      for (const e of sub.events || []) workerLiveEvent({ sessionId: id, ...e });
     } catch (e) { ctx.view.note("Couldn't load this worker: " + e.message, true); }
     if (ctx.view.empty) ctx.view.note("Nothing here yet.");
     ctx.head();
@@ -294,12 +304,14 @@ function openWorkerPage(id) {
     if (state.pending.some(p => p.sessionId === id)) showNextPermission();   // a request it's waiting on shows here too
   });
 }
-conn.on("ev", m => {
+/** A worker's live event, on its page: the socket's path and the page's replay both come here (#62a). */
+function workerLiveEvent(m) {
   const p = agentPage;
   if (!p || p.kind !== "worker" || m.sessionId !== p.id || m.seq <= p.lastSeq) return;
   p.lastSeq = m.seq;
   p.view.event(m.ev);
-});
+}
+conn.on("ev", workerLiveEvent);
 
 /** A subagent's own conversation (Claude Code keeps it next to the chat's), or a background command. */
 function openTaskPage(a) {

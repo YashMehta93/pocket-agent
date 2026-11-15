@@ -401,6 +401,68 @@ ok("a folder takes its longest profile workspace", ev(`(() => {
     && profileOfCwd("/work/other").id === "personal" && profileOfCwd("/work/apple").id === "personal" && profileOfCwd("/elsewhere").id === "personal";
   state.profiles = save; state.defaultProfile = def;
   return r; })()`));
+// #62e A send that fails keeps the draft in the field, and the chat stays new until the server has it
+ev(`window.__origCall = conn.call; window.__saveCur62 = state.current; window.__saveEmpty62 = $("#empty").hidden;
+  state.current = { ...state.current, isNew: true, title: "New chat", sessionId: "cccccccc-0000-4000-8000-0000000000e9" };
+  input.value = "this draft must survive"; updateHeader(); hideEmpty();
+  conn.call = () => Promise.reject(new Error("Disconnected"))`);
+ev("send()");
+await sleep(100);
+ok("a failed send puts the draft back in the field", $("#input").value === "this draft must survive");
+ok("…and its new chat stays new", ev("state.current.isNew") === true && $("#chat-title").textContent === "New chat");
+ev(`conn.call = window.__origCall; delete window.__origCall; state.current = window.__saveCur62; delete window.__saveCur62;
+  input.value = ""; autosize(); updateHeader(); if (window.__saveEmpty62) hideEmpty(); else showEmpty(); delete window.__saveEmpty62`);
+
+// #62d connect() while the socket is already open must keep that one socket
+const twoConnects = ev(`(() => { const before = conn.ws; conn.connect(); conn.connect();
+  return { same: conn.ws === before, ok: conn.ok, state: conn.ws && conn.ws.readyState }; })()`);
+ok("calling connect twice while open keeps one socket", twoConnects.same && twoConnects.ok && twoConnects.state === 1);
+
+// #62a/b A reconnect keeps the chat on screen and replays only what it missed
+const r62 = await ev(`(async () => {
+  const sid = state.current.sessionId;
+  const send = (seq, e) => conn.fire("ev", { sessionId: sid, seq, ev: e });
+  const last0 = state.current.lastSeq, users0 = document.querySelectorAll(".user-msg").length;
+  // A reply is mid-stream when the connection drops: its block started and some words are drawn.
+  send(last0 + 1, { type: "stream_event", event: { type: "message_start", message: { id: "m-62-ghost" } } });
+  send(last0 + 2, { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+  send(last0 + 3, { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Before the drop" } } });
+  await new Promise(r => setTimeout(r, 150));
+  window.__ghost62 = document.querySelector("#messages .md.ghost");
+  const resume = state.current.lastSeq, count1 = document.querySelector("#messages").children.length;
+  const notes = { after: null, history: 0, subs: 0 };
+  const real = conn.call;
+  conn.call = (t, m = {}) => {
+    if (t === "session.history") { notes.history++; return real.call(conn, t, m); }
+    if (t === "subscribe") {
+      notes.subs++;
+      if (notes.subs === 1) {   // the server still has every event after the app's position
+        notes.after = m.after;
+        return Promise.resolve({ sessionId: sid, info: { sessionId: sid, state: "running", seq: resume + 2 }, firstSeq: resume + 1, events: [
+          { seq: resume + 1, ev: { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " and after." } } } },
+          { seq: resume + 2, ev: { type: "stream_event", event: { type: "content_block_stop", index: 0 } } }] });
+      }
+      return Promise.resolve({ sessionId: sid, info: { sessionId: sid, state: "idle", seq: resume + 30 }, firstSeq: resume + 20, events: [] });
+    }
+    return real.call(conn, t, m);
+  };
+  conn.ws.close();   // the socket drops; the app reconnects and catches up
+  for (let i = 0; i < 100 && !(conn.ok && notes.after === resume && state.current.lastSeq === resume + 2); i++) await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 150));
+  const kept = { resume, after: notes.after, history: notes.history, same: state.current.sessionId === sid, ok: conn.ok,
+    count: document.querySelector("#messages").children.length, users: document.querySelectorAll(".user-msg").length,
+    ghost: !!window.__ghost62 && window.__ghost62.isConnected, text: window.__ghost62 ? window.__ghost62.textContent.trim() : "",
+    copies: [...document.querySelectorAll("#messages .md")].filter(m => m.textContent.includes("Before the drop and after.")).length };
+  // A position the buffer no longer reaches must reload the transcript instead.
+  await openSession(sid, { keepChat: true });
+  const fellBack = { history: notes.history, ghost: document.querySelectorAll("#messages .md.ghost").length };
+  conn.call = real;
+  return { kept, fellBack, count1, users0 };
+})()`);
+ok(`(#62b) a reconnect resumes after the old seq (${r62.kept.after}) and keeps the chat`, r62.kept.ok && r62.kept.same && r62.kept.after === r62.kept.resume
+  && r62.kept.history === 0 && r62.kept.count === r62.count1 && r62.kept.users === r62.users0);
+ok(`(#62a) …and a mid-stream block keeps streaming, once: "${r62.kept.text}"`, r62.kept.ghost && r62.kept.text === "Before the drop and after." && r62.kept.copies === 1);
+ok("(#62b) a position the buffer no longer reaches reloads the transcript", r62.fellBack.history === 1 && r62.fellBack.ghost === 0);
 
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");

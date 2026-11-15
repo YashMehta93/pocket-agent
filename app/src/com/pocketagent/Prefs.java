@@ -50,4 +50,8 @@ final class Prefs {
 
     static boolean notifyApproval(Context c) { return ui(c).optBoolean("notifyApproval", true); }
     static boolean notifyDone(Context c) { return ui(c).optBoolean("notifyDone", true); }
+
+    /** When the background service last handled an event; a reconnect asks only for "done"s after it (#62f). */
+    static long sseSince(Context c) { return sp(c).getLong("sseSince", 0); }
+    static void setSseSince(Context c, long ms) { sp(c).edit().putLong("sseSince", ms).apply(); }
 }

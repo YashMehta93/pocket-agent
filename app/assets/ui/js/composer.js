@@ -70,46 +70,51 @@ async function interrupt() {
     if (/not (running|live|open)|no live/i.test(e.message)) { delete state.liveInfo[state.current.sessionId]; updateComposer(); toast("Already stopped"); } else toast(e.message);
   }
 }
+let sending = false;   // one message at a time: the draft stays in the field until the server has it (#62e)
 async function send(textOverride) {
+  if (sending) return;
   const cur = state.current;
   let text = (textOverride ?? input.value).trim();
   if (!text && !attachments.length) return;
   if (!conn.ok) return toast("Not connected to the server yet");
   haptic("tick");
+  const draft = textOverride === undefined ? input.value : null;   // what leaves the field once the send lands
   const images = attachments.filter(a => a.kind === "image").map(a => ({ mediaType: a.mediaType, data: a.data }));
-  let wasNew = false;
+  const wasNew = cur.isNew;
   const files = attachments.filter(a => a.kind === "file");
+  sending = true;
+  if (textOverride === undefined) input.focus({ preventScroll: true });   // the keyboard stays up while the send is in flight
   try {
     if (files.length) {
       const paths = [];
       for (const f of files) { const r = await conn.call("upload", { cwd: cur.cwd, name: f.name, data: f.data }); paths.push(r.path); }
       text = (text ? text + "\n\n" : "") + paths.map(p => `Attached file: @${p}`).join("\n");
     }
-    if (textOverride === undefined) { input.value = ""; attachments = []; renderAttachments(); autosize(); input.focus({ preventScroll: true }); }
     $("#popup").hidden = true;
     hideEmpty();
     const s = currentSettings();
-    const msg = { sessionId: cur.sessionId, text, images };
+    // The uuid makes a resend after a dropped connection harmless: the server accepts it once (#62e).
+    const msg = { sessionId: cur.sessionId, text, images, uuid: uuid() };
     // A new chat, or one whose process was closed (idle, restart): start it with what the composer shows.
     if (cur.isNew || !state.liveInfo[cur.sessionId]) Object.assign(msg, { model: s.model || undefined, effort: s.effort || undefined, permissionMode: s.permissionMode });
     if (cur.isNew) {
       msg.cwd = cur.cwd; msg.engine = s.engine || "claude";
       // with several Claude accounts, the chip's pick (or the default) runs this new chat
-      if (state.accounts?.length >= 2) { msg.account = state.newChatAccount || state.defaultAccount; cur.account = msg.account; }
+      if (state.accounts?.length >= 2) msg.account = state.newChatAccount || state.defaultAccount;
     }
-    wasNew = cur.isNew;
-    if (cur.isNew) { cur.isNew = false; cur.title = text.slice(0, 60); updateHeader(); }
     await conn.call("send", msg);
+    // The server has it: only now is this chat no longer new, and only now does the draft leave the field.
+    if (wasNew) { cur.isNew = false; cur.title = text.slice(0, 60); if (msg.account) cur.account = msg.account; updateHeader(); }
+    if (draft !== null && input.value === draft) { input.value = ""; attachments = []; renderAttachments(); autosize(); input.focus({ preventScroll: true }); }
     scrollToBottom(true);
     debouncedRefresh();
   } catch (e) {
     if (e.code === "BUSY_ELSEWHERE") return busySheet(e, text, images);
-    if (/^(NO_DEEPSEEK_KEY|ENGINE_FIXED|FOLDER_BLOCKED)$/.test(e.code || "")) {
-      if (wasNew && cur === state.current) { cur.isNew = true; cur.title = "New chat"; updateHeader(); showEmpty(); }
-      restoreDraft(text); return toast(e.message, 5000);
-    }
+    if (wasNew && cur === state.current) showEmpty();   // the first message never landed: still a new chat
+    restoreDraft(text);
+    if (/^(NO_DEEPSEEK_KEY|ENGINE_FIXED|FOLDER_BLOCKED)$/.test(e.code || "")) return toast(e.message, 5000);
     toast(e.message); chat.note("Couldn't send: " + e.message, true);
-  }
+  } finally { sending = false; }
 }
 
 // The chat is open in another Claude Code process (a terminal or background session): ask how to continue.
