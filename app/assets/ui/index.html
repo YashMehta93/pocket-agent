@@ -18,6 +18,7 @@
     </div>
     <button class="new-chat" id="btn-new"><span data-icon="plus"></span>New chat</button>
     <div class="search"><span data-icon="search"></span><input id="session-search" type="search" placeholder="Search chats" autocomplete="off"></div>
+    <div class="filters" id="env-filters" aria-label="Chats on" hidden></div>
     <div class="filters" id="project-filters"></div>
     <div id="session-list" class="session-list"></div>
     <button class="usage-meter" id="usage-meter" aria-label="Usage limits" hidden></button>
@@ -49,6 +50,7 @@
         <div class="logo big"></div>
         <h1 id="empty-greet">What should we build?</h1>
         <div class="empty-cwd" id="empty-cwd"></div>
+        <div class="where" id="new-where" hidden></div>
         <div class="suggestions" id="suggestions"></div>
       </div>
     </section>
@@ -56,6 +58,7 @@
     <button id="jump" hidden aria-label="Jump to latest" data-icon="down"></button>
 
     <footer id="composer">
+      <div id="env-offline" hidden></div>
       <div id="status-line" hidden></div>
       <button id="usage-note" hidden></button>
       <div id="account-limit" hidden></div>
@@ -98,6 +101,7 @@
 <script src="js/agents.js"></script>
 <script src="js/deepseek.js"></script>
 <script src="js/accounts.js"></script>
+<script src="js/environments.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>
