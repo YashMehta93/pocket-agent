@@ -66,9 +66,10 @@ export const handlers = {
         ...(engine ? { engine } : {}), ...(parent ? { parent, worker: workerRun(link) } : {}), ...(engine === "deepseek" ? { spend: chatSpend(s.sessionId)?.usd ?? 0 } : {}),
       };
     });
-    // The environments' chats come along (upstreams.js); the list stays newest first.
+    // The environments' chats come along (upstreams.js); the list stays newest first, like listSessions' own.
     sessions.push(...await remoteSessions());
-    sessions.sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
+    sessions.sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0) ||
+      (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0));
     return { sessions };
   },
   async "session.history"({ sessionId }) {
