@@ -19,10 +19,11 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 | `subscribe` | `sessionId, after` | `info` (live session or null), `events[]` with `seq > after`, `settings`, `engine` (`"claude"` \| `"deepseek"`), `parent` (or null) |
 | `unsubscribe` | `sessionId` | |
 | `send` | `sessionId, text, images?[{mediaType,data}]`, plus `cwd/model/effort/permissionMode/engine` for a new chat | `sessionId, uuid` — may fail with `code: "BUSY_ELSEWHERE"`, or as `session.open` does |
-| `interrupt` | `sessionId` | |
+| `interrupt` | `sessionId` | stops the current reply. Background workers (`wait:false`) it started keep running: stop those with `workers.stopAll` |
+| `workers.stopAll` | `sessionId` | `stopped`: how many background workers this chat started were stopped (the ones waiting for a slot and the ones running) |
 | `permission.reply` | `sessionId, requestId, behavior: allow\|deny, always?, allowAll?, message?, updatedInput?` | `ok`. `allowAll` (a worker's request, "Allow all for this worker"): this one, the worker's other waiting requests, and the rest of its turn are allowed without asking; questions and plans still ask, and a follow-up asks again |
 | `set` | `sessionId, model?, effort?, permissionMode?` | `info`. A model must suit the chat's engine ("That model isn't available on DeepSeek/Claude."); on DeepSeek, `flash`/`pro` are accepted and an empty effort means `max` |
-| `session.close` | `sessionId` | stops the Claude process (chat stays on disk) |
+| `session.close` | `sessionId` | stops the Claude process and the background workers it started (chat stays on disk) |
 | `session.rename` / `session.delete` / `session.pin` | `sessionId, title` / `sessionId` / `sessionId, pinned` | |
 | `session.fork` | `sessionId, upToMessageId?, title?` | `sessionId` of the copy (on the same engine) |
 | `session.continueHere` | `sessionId, mode: fork\|stop` | `sessionId` to continue in |

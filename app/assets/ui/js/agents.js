@@ -143,6 +143,12 @@ function setTab(tab) {
 }
 $("#tab-chat").onclick = () => setTab("chat");
 $("#tab-agents").onclick = () => setTab("agents");
+/** Stops every background worker this chat started: a reply's interrupt leaves them running (#66). */
+$("#ag-stop-all").onclick = async () => {
+  const sessionId = state.current?.sessionId;
+  if (!sessionId) return;
+  try { await conn.call("workers.stopAll", { sessionId }); toast("Stopping workers…"); } catch (e) { toast(e.message); }
+};
 /** A new chat on screen starts on its Chat tab. */
 function agentsChatChanged() {
   if (state.backTo && state.current?.sessionId !== state.backTo.worker) state.backTo = null;
@@ -172,6 +178,11 @@ function agentsChatChanged() {
 function renderAgentsView(agents = chatAgents()) {
   const list = $("#agents-view .ag-list");
   if (!list || state.tab !== "agents") return;
+  // a worker still at work (running or waiting its turn behind other workers) can be stopped all at once
+  const atWork = agents.some(a => a.kind === "worker" && AG_ACTIVE.has(a.status));
+  const top = $("#agents-view .ag-top");
+  if (top) top.hidden = !atWork;
+  $("#ag-stop-all").hidden = !atWork;
   const keep = new Map([...list.querySelectorAll(".ag-row")].map(r => [r.dataset.key, r]));
   list.querySelector(".ag-none")?.remove();
   agents.forEach((a, i) => {

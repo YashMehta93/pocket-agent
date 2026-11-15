@@ -494,6 +494,7 @@ pre.has-btns { position: relative; padding-top: 34px; }
 body.tab-agents #chat, body.tab-agents #composer, body.tab-agents #todo-bar, body.tab-agents #jump { display: none !important; }
 #agents-view { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 6px 0 32px; }
 #agents-view .ag-list { max-width: 760px; margin: 0 auto; padding: 0 18px; }
+#agents-view .ag-top { max-width: 760px; margin: 0 auto; padding: 8px 18px 0; display: flex; justify-content: flex-end; }
 .ag-none { color: var(--muted); font-size: 14px; padding: 18px 0; }
 /* a row: the tile (tinted by engine, showing the state), the title, the state with what it's doing, then the numbers */
 .ag-row { display: flex; gap: 14px; align-items: flex-start; width: 100%; text-align: left; padding: 14px 2px; border-bottom: 1px solid var(--line); min-height: 64px; transition: background .15s; }

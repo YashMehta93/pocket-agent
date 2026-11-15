@@ -292,8 +292,10 @@ async function unitTests() {
     ok("a chat in Bypass needs no OK (owner's rule)", /Folder not found/.test(resultText(r)));
     r = await call(fake({ permissionMode: "bypassPermissions" }), { task: "Again.", continue_chat: "cccccccc-0000-4000-8000-000000000003" });
     ok("continue_chat reaches only this chat's own workers", /isn't one of this chat's workers/.test(resultText(r)));
-    r = await call(fake({ permissionMode: "bypassPermissions" }), { task: "Again.", continue_chat: "cccccccc-0000-4000-8000-000000000003", wait: false });
-    ok("wait:false can't continue a worker", /can't be used with wait:false/.test(resultText(r)), resultText(r));
+    // a follow-up can run in the background too; its own parent keeps it out of the collect checks below
+    r = await call(fake({ permissionMode: "bypassPermissions", sessionId: "aaaaaaaa-0000-4000-8000-0000000000f1" }), { task: "Again.", continue_chat: "cccccccc-0000-4000-8000-000000000003", wait: false });
+    ok("wait:false can continue a worker", !/can't be used with wait:false/.test(resultText(r)) && /^DeepSeek worker: (started|queued)$/m.test(resultText(r))
+      && /^Job: [0-9a-f]{8}$/m.test(resultText(r)) && /^Title: Follow-up$/m.test(resultText(r)), resultText(r));
     // Three workers already busy no longer refuse a fourth: it joins the queue instead (the queue tests show it waiting, then running)
     const { live } = await import("../src/live-session.js");
     const fakes = [1, 2, 3].map(i => `busy-worker-${i}`);
@@ -326,6 +328,15 @@ async function unitTests() {
     ok("worker_results: waits for the job, returns its report and marks it collected",
       /^Workers: 1 done, 0 not finished/.test(collected) && /Folder not found/.test(collected), collected);
     ok("worker_results: nothing left to collect", resultText(await collect({})) === "No workers to collect.");
+  });
+
+  // ───── stopping background workers (#66): an interrupt leaves them, workers.stopAll stops them ─────
+  await step("stopping workers", async () => {
+    const { handlers } = await import("../src/handlers.js");
+    ok("workers.stopAll is a request handler", typeof handlers["workers.stopAll"] === "function");
+    const src = fs.readFileSync(path.join(REPO, "server/src/handlers.js"), "utf8");
+    const interruptSrc = /async interrupt\([^)]*\)\s*\{[\s\S]*?\n  \},/.exec(src)?.[0] || "";
+    ok("a plain interrupt no longer stops background workers", interruptSrc.length > 0 && !/stopJobsOf/.test(interruptSrc), interruptSrc);
   });
 
   await step("report", async () => {
