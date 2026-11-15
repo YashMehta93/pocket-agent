@@ -369,6 +369,23 @@ const r53 = ev(`(() => {
 ok(`(#53) an empty thought block adds no entry: "${r53.label}" · ${r53.mds.length} entr${r53.mds.length === 1 ? "y" : "ies"}`,
   r53.label === "Thought" && r53.mds.length === 1 && r53.mds[0] === "The thought, summarised.");
 
+// #62e A send that fails keeps the draft in the field, and the chat stays new until the server has it
+ev(`window.__origCall = conn.call; window.__saveCur62 = state.current; window.__saveEmpty62 = $("#empty").hidden;
+  state.current = { ...state.current, isNew: true, title: "New chat", sessionId: "cccccccc-0000-4000-8000-0000000000e9" };
+  input.value = "this draft must survive"; updateHeader(); hideEmpty();
+  conn.call = () => Promise.reject(new Error("Disconnected"))`);
+ev("send()");
+await sleep(100);
+ok("a failed send puts the draft back in the field", $("#input").value === "this draft must survive");
+ok("…and its new chat stays new", ev("state.current.isNew") === true && $("#chat-title").textContent === "New chat");
+ev(`conn.call = window.__origCall; delete window.__origCall; state.current = window.__saveCur62; delete window.__saveCur62;
+  input.value = ""; autosize(); updateHeader(); if (window.__saveEmpty62) hideEmpty(); else showEmpty(); delete window.__saveEmpty62`);
+
+// #62d connect() while the socket is already open must keep that one socket
+const twoConnects = ev(`(() => { const before = conn.ws; conn.connect(); conn.connect();
+  return { same: conn.ws === before, ok: conn.ok, state: conn.ws && conn.ws.readyState }; })()`);
+ok("calling connect twice while open keeps one socket", twoConnects.same && twoConnects.ok && twoConnects.state === 1);
+
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");
 ev(`state.models = [{ value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)" }, { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5" }]`);

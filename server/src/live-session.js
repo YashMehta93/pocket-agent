@@ -60,6 +60,7 @@ export class LiveSession {
     this.tasks = new Map();     // task_id -> background agent or command (noteTask)
     this.quietTasks = new Set(); // task_ids of Claude Code's own housekeeping tasks (ambient): not shown as agents
     this.inbox = new Inbox();
+    this.seenUuids = new Map();   // the last 200 message uuids accepted: a resend after a drop queues once (#62e)
     this.activity = new Activity(snap => this.publishActivity(snap));
     if (this.engine === "deepseek") this.activity.who = "DeepSeek";
 
@@ -286,13 +287,17 @@ export class LiveSession {
 
   // ───── input ─────
   send({ text, images = [], uuid }) {
+    const id = uuid || crypto.randomUUID();
+    if (this.seenUuids.has(id)) return id;   // a resend after a dropped connection: already queued (#62e)
     const content = [];
     for (const img of images) content.push({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } });
     if (text) content.push({ type: "text", text });
-    const msg = { type: "user", message: { role: "user", content }, parent_tool_use_id: null, uuid: uuid || crypto.randomUUID() };
+    const msg = { type: "user", message: { role: "user", content }, parent_tool_use_id: null, uuid: id };
     this.emit({ type: "pa_user", uuid: msg.uuid, text, images: images.map(i => ({ mediaType: i.mediaType, data: i.data })) });
     this.activity.turn();
     this.inbox.push(msg);
+    this.seenUuids.set(id, Date.now());
+    if (this.seenUuids.size > 200) this.seenUuids.delete(this.seenUuids.keys().next().value);   // bounded
     this.setState("running");
     if (!this.title && text) this.title = text.slice(0, 60);
     return msg.uuid;

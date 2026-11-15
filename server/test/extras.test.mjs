@@ -138,6 +138,17 @@ try {
     const [a, b2] = await Promise.all([openSession({ sessionId: id, cwd: HOME }), openSession({ sessionId: id, cwd: HOME })]);
     ok("two opens of one chat at once share one Claude process", a === b2 && live.get(id) === a);
     ok("a later open returns the live one", await openSession({ sessionId: id }) === a);
+    // A send that fails after the server queued it is resent with the same uuid: it must queue once (#62e).
+    // (The SDK pulls items out of the inbox, so count pushes rather than what is left in it.)
+    let queued = 0; const push = a.inbox.push.bind(a.inbox); a.inbox.push = v => { queued++; return push(v); };
+    const msgId = "99999999-8888-4777-8666-555555555555";
+    const firstSend = a.send({ text: "once", uuid: msgId });
+    const resent = a.send({ text: "once", uuid: msgId });
+    ok("sending the same uuid twice queues one message", firstSend === msgId && resent === msgId && queued === 1,
+      `queued=${queued}`);
+    const otherId = "99999999-8888-4777-8666-555555555556";
+    ok("a new uuid still queues", a.send({ text: "twice", uuid: otherId }) === otherId && queued === 2, `queued=${queued}`);
+    ok("the accepted uuids are kept, bounded", a.seenUuids.has(msgId) && a.seenUuids.size <= 200);
     a.close();
   }
 

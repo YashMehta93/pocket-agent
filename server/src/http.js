@@ -96,7 +96,16 @@ export function createServer() {
 function onSocket(ws) {
   ws.subs = new Set();
   clients.add(ws);
-  ws.on("close", () => clients.delete(ws));
+  // A silent socket (Wi-Fi changed, a phone slept, a Tailscale peer went away) looks connected for minutes
+  // and a send just hangs. Ping every 25 s; a socket that missed one pong is dead (#62c).
+  ws.isAlive = true;
+  ws.on("pong", () => { ws.isAlive = true; });
+  const heartbeat = setInterval(() => {
+    if (ws.isAlive === false) return ws.terminate();
+    ws.isAlive = false;
+    try { ws.ping(); } catch { ws.terminate(); }
+  }, 25_000);
+  ws.on("close", () => { clearInterval(heartbeat); clients.delete(ws); });
   ws.on("error", () => {});
   ws.on("message", async raw => {
     let m; try { m = JSON.parse(raw); } catch { return; }

@@ -16,6 +16,10 @@ conn.on("retrying", async n => {
   else if (standalone) showBanner(state.updating ? "Installing the update… back in a few seconds." : "Restarting Pocket Agent's server…");
   else showBanner(native ?"Starting the Claude server in Termux… If this takes long, open Termux and run: pocket-agent start" : "Can't reach the server.", native ? "Open Termux" : null, () => nativeCall("openTermux"));
 });
+// Back to the screen, or the network is back: retry now rather than at the end of the backoff (#62d).
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") conn.reconnect(); });
+window.addEventListener("online", () => conn.reconnect());
+
 async function pairServer() {
   const tok = await promptSheet({ title: "Pair with the server", placeholder: "Paste the token here", ok: "Pair",
     value: "" });

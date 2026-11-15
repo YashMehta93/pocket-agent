@@ -119,6 +119,9 @@ const conn = {
     try { const r = await fetch(this.base() + "/health", { cache: "no-store" }); return r.ok ? "up" : "down"; } catch { return "down"; }
   },
   connect() {
+    // One socket at a time: a second call while connecting or open would replace this.ws and leave the
+    // first socket running with nothing pointing at it (#62d). Retries and the resume handlers call this.
+    if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) return;
     clearTimeout(this.timer);
     let ws;
     try { ws = new WebSocket(this.url()); } catch (e) { return this.scheduleRetry(); }
@@ -137,6 +140,13 @@ const conn = {
       if (m.t === "reply") { const cb = this.waiting.get(m.id); this.waiting.delete(m.id); cb?.(m); return; }
       this.fire(m.t, m);
     };
+  },
+  /** Try again now (the screen is back, or the network returned) instead of waiting for the backoff. */
+  reconnect() {
+    if (this.ok) return;
+    clearTimeout(this.timer);
+    this.retry = 0;
+    this.connect();
   },
   scheduleRetry() {
     this.retry++;
