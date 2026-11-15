@@ -226,6 +226,33 @@ ev("sheet.close(true)");
 ev(`state.current = window.__save.cur; state.accounts = window.__save.accounts; state.defaultAccount = window.__save.defaultAccount; state.usageByAccount = window.__save.usageByAccount; state.newChatAccount = window.__save.newChatAccount;
   conn.call = window.__origCall; delete window.__save; delete window.__origCall; updateComposer()`);
 
+// environments (#69): the Settings row, the page the "environments" event renders, a device's chat in the drawer,
+// and the new-chat Where row. The device requests themselves are covered by tests/ui/environments.test.mjs.
+ev("openSettings()");
+const envCat = $('[data-sec="environments"]');
+ok(`Settings has an Environments row: "${envCat?.querySelector("small")?.textContent}"`, !!envCat && envCat.textContent.includes("Environments") && envCat.querySelector("small").textContent === "None");
+ev("page.close()");
+const testEnvs = [
+  { id: "env-test-a", name: "Laptop", url: "http://100.64.1.1:8765", profile: "personal", state: "online", version: "1.3.0", protocol: 1, error: null, lastOnlineAt: Date.now() },
+  { id: "env-test-b", name: "Studio PC", url: "http://100.64.1.2:8765", profile: "personal", state: "offline", version: null, protocol: null, error: "Can't reach 100.64.1.2:8765", lastOnlineAt: null },
+];
+ev(`conn.fire("environments", { environments: ${JSON.stringify(testEnvs)} })`);
+ev("openSettings()"); ev(`document.querySelector('[data-sec="environments"]').click()`);
+const envRows = $$("#page-body .env-row");
+ok("the environments event lists them on the page, with the right dots", envRows.length === 2 && !!envRows[0].querySelector(".dot.online") && !!envRows[1].querySelector(".dot.offline"));
+ev("page.close()");
+const savedSessions = ev("JSON.stringify(state.sessions)"), savedCurrent = ev("JSON.stringify(state.current)");
+ev(`state.sessions = [{ sessionId: "env-test-b:11111111-2222-4333-8444-555555555555", title: "Laptop work", cwd: "/home/me/work", lastModified: Date.now(), remote: true, environment: "env-test-b", environmentName: "Studio PC", offline: true }, ...state.sessions]; renderSessions()`);
+const dimRow = $$("#session-list .sess").find(x => /Laptop work/.test(x.textContent));
+ok("a device's offline chat is dimmed, says offline and shows its chip", !!dimRow && dimRow.classList.contains("offline") && /offline/.test(dimRow.querySelector(".meta").textContent) && dimRow.querySelector(".meta .meta-env")?.textContent === "Studio PC");
+ev(`state.sessions = ${savedSessions}; renderSessions()`);
+ev(`conn.fire("environments", { environments: [${JSON.stringify({ ...testEnvs[1], state: "offline" })}] }); newChat()`);
+ok("no online device: no Where row", $("#new-where").hidden);
+ev(`conn.fire("environments", { environments: ${JSON.stringify(testEnvs)} }); newChat()`);
+const whereBtns = $$("#new-where button");
+ok("an online device adds the Where row: Phone and each device, offline disabled", !$("#new-where").hidden && whereBtns.map(b => b.textContent).join(" | ") === "Phone | Laptop | Studio PC" && whereBtns.filter(b => b.disabled).length === 1);
+ev(`state.current = ${savedCurrent}; conn.fire("environments", { environments: [] }); state.envFilter = ""; renderEnvFilters(); renderSessions(); updateHeader(); updateComposer()`);
+
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");
 ev(`state.models = [{ value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)" }, { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5" }]`);
