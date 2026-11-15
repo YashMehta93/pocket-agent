@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { DATA, CLAUDE_DIR, CLAUDE, prefs, savePrefs, log } from "./config.js";
+import { IS_WIN, linkShared } from "./platform.js";
 
 export const ACCOUNTS_DIR = path.join(DATA, "accounts");
 
@@ -44,8 +45,9 @@ export function ensureLinks(dir) {
     if (item === "projects") fs.mkdirSync(target, { recursive: true });
     if (!fs.existsSync(target)) continue;   // a link to nothing could break Claude Code creating its own
     let st = null; try { st = fs.lstatSync(link); } catch {}
-    if (st) continue;
-    try { fs.symlinkSync(target, link); }
+    if (st && !IS_WIN) continue;
+    // Windows: a symlink, junction or refreshed copy (platform.js); removing the account folder leaves the targets alone.
+    try { if (IS_WIN) linkShared(target, link); else fs.symlinkSync(target, link); }
     catch (e) {
       if (item === "projects") throw e;   // without it the account's chats would vanish from the chat list
       log("accounts: couldn't link", item, e?.message);

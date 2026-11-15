@@ -30,6 +30,14 @@ Pocket Agent is a phone UI for **Claude Code**. The model runs on Anthropic's se
 |---|---|---|---|
 | **Standalone** (default) | built into the app: Alpine Linux via proot (`Linux.java`) | started and supervised by the app, port 8790 | automatically, with the app's own token |
 | **Server** | Termux on this phone (set up by `server/devtools/termux-install.sh`, from Settings → Termux), or a computer | `pocket-agent start` (port 8765) | Settings → "Claude runs on" → address + token |
+| **Windows computer** | none: Windows itself, as a normal user (no admin); shell commands run in Git Bash | `node server/bin/pocket-agent.mjs start` (port 8765, `127.0.0.1` only) | through a link to the phone |
+
+**Windows** (`server/src/platform.js`):
+- **Supervisor:** `pocket-agent.mjs` runs `node.exe` under a small supervisor, with no admin rights or service. Exit code 75 means "start me again": Windows has no SIGUSR2, so restart-when-idle, updates and restored backups go through `requestRestart()`. The supervisor gives up after 5 crashes in 10 minutes instead of looping.
+- **Commands:** shell commands run in Git Bash (`PA_SHELL` picks another), `tar` is Windows' own `tar.exe` (Git's GNU tar reads `C:` as a remote host), and `npm` runs as `node npm-cli.js`.
+- **Claude Code:** found in `~/.local/bin`, on `PATH` or in the VS Code extension.
+- **Shared folders:** without Developer Mode there are no symlinks, so what an extra account or DeepSeek shares from `~/.claude` becomes junctions (folders) and refreshed copies (files). Removing an account folder never follows a junction.
+- **Listening:** the server listens on `127.0.0.1` only; reaching it from the phone is the link's job.
 
 In standalone mode Claude can still use Termux: `termux <command>` (`server/devtools/termux`) goes through the server to the app, which runs it with Termux's `RUN_COMMAND` service and returns the output.
 

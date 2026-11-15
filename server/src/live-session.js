@@ -33,6 +33,7 @@ import { phoneContext } from "./devtools.js";
 import { engineOptions, engineOf, recordEngine, linkOf, recordLink, detectEngine } from "./engines.js";
 import { ready as dsReady, revokeToken, requireReady, checkFolder, dsModel, isDeepseekModel, dsSettings, chatSpend } from "./deepseek.js";
 import { accountOf, accountEnv, setChatAccount } from "./accounts.js";
+import { IS_WIN, pidAlive } from "./platform.js";
 
 let toolProvider = () => undefined;
 /** delegate.js registers Pocket Agent's own MCP tools here, which keeps the import one-way (no cycle). */
@@ -383,15 +384,19 @@ export function busyElsewhere() {
   for (const f of files) {
     try {
       const s = JSON.parse(fs.readFileSync(path.join(CLAUDE_DIR, "sessions", f), "utf8"));
-      if (!s.sessionId || live.has(s.sessionId) || !s.pid || !fs.existsSync(`/proc/${s.pid}`)) continue;
+      if (!s.sessionId || live.has(s.sessionId) || !s.pid || !pidAlive(s.pid)) continue;   // platform.js: /proc, or signal 0 on Windows
       if (s.entrypoint && /^sdk/.test(s.entrypoint)) continue;   // sessions run by this server
-      out.set(s.sessionId, { kind: s.kind === "bg" ? "background" : "terminal", pid: s.pid, short: s.sessionId.slice(0, 8) });
+      out.set(s.sessionId, { kind: s.kind === "bg" ? "background" : "terminal", pid: s.pid, short: s.sessionId.slice(0, 8), entrypoint: s.entrypoint || null });
     } catch {}
   }
   return out;
 }
 function busyError(sessionId, info) {
-  const e = new Error(info.kind === "background" ? "This chat is running as a Claude background session in Termux." : "This chat is open in a Claude terminal in Termux.");
+  // Windows: the other copy is in VS Code (entrypoint claude-vscode) or a terminal on the same computer, not Termux.
+  const e = new Error(IS_WIN
+    ? (info.kind === "background" ? "This chat is running as a Claude background session on this computer."
+      : info.entrypoint === "claude-vscode" ? "This chat is open in VS Code on this computer." : "This chat is open in a Claude terminal on this computer.")
+    : info.kind === "background" ? "This chat is running as a Claude background session in Termux." : "This chat is open in a Claude terminal in Termux.");
   return Object.assign(e, { code: "BUSY_ELSEWHERE", kind: info.kind, short: info.short, sessionId });
 }
 export function runClaude(args, timeoutMs = 30000) {

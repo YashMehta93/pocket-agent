@@ -18,6 +18,7 @@ import { getUsage, getAllUsage, refreshUsage } from "./usage.js";
 import { listAccounts, addAccount, renameAccount, removeAccount, setDefaultAccount, setChatAccount, loginStart, loginCode, authStatus, accountOf } from "./accounts.js";
 import { engineOf, copyEngine, forget, linkOf, engineList } from "./engines.js";
 import { status as dsStatus, balance as dsBalance, setKey as dsSetKey, removeKey as dsRemoveKey, setDsSettings, chatSpend, isDeepseekModel, dsModel } from "./deepseek.js";
+import { IS_WIN, requestRestart } from "./platform.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
 /** The account list for a reply or the "accounts" broadcast (each account's usage is a separate, slower question). */
@@ -74,6 +75,8 @@ export const handlers = {
   async "working.clear"() { clearWorking(); return {}; },
   /** Inside the app only (it restarts us): restart now; replies in progress continue afterwards. */
   async "server.restartContinuing"() { if (!process.env.PA_SUPERVISED) throw new Error("Only inside the app"); restartContinuing(); return {}; },
+  /** Restart once no chat is mid-reply: SIGUSR2 on POSIX; how `pocket-agent.mjs restart --when-idle` asks on Windows. */
+  async "server.restartWhenIdle"() { requestRestart(); return {}; },
 
   // ───── usage limits ─────
   async "usage.get"({ refresh } = {}) {
@@ -169,7 +172,9 @@ export const handlers = {
     if (mode === "fork") { const r = await forkSession(sessionId); copyEngine(sessionId, r.sessionId); changed(); return { sessionId: r.sessionId }; }
     if (mode !== "stop") throw new Error("unknown mode");
     const busy = busyElsewhere().get(sessionId);
-    if (busy?.kind === "terminal") throw new Error("That chat is open in a Termux terminal. Close it there (type /exit), then try again.");
+    if (busy?.kind === "terminal") throw new Error(!IS_WIN ? "That chat is open in a Termux terminal. Close it there (type /exit), then try again."
+      : busy.entrypoint === "claude-vscode" ? "That chat is open in VS Code on this computer. Close it there, then try again."
+      : "That chat is open in a Claude terminal on this computer. Close it there (type /exit), then try again.");
     if (busy) {
       const r = await runClaude(["stop", busy.short]);
       for (let i = 0; i < 20 && busyElsewhere().has(sessionId); i++) await new Promise(res => setTimeout(res, 300));
@@ -214,8 +219,8 @@ export const handlers = {
     savePrefs(); clearReleaseCache();
     return { track: prefs.updateTrack };
   },
-  /** Pulls the update, then restarts once no chat is mid-reply (SIGUSR2, see index.js). */
-  async "update.apply"(m) { const ch = m.url || m.path || m.github ? m : prefs.updateChannel; if (!ch) throw new Error("No update source set"); return await applyUpdate(ch, () => process.kill(process.pid, "SIGUSR2")); },
+  /** Pulls the update, then restarts once no chat is mid-reply (requestRestart, see platform.js and index.js). */
+  async "update.apply"(m) { const ch = m.url || m.path || m.github ? m : prefs.updateChannel; if (!ch) throw new Error("No update source set"); return await applyUpdate(ch, () => requestRestart()); },
 
   /** "Move from Termux": runs in the background; progress arrives as { t: "migrate", job } events. */
   async "migrate.run"({ url, token }) { return { job: runMigration({ url, token }) }; },
@@ -230,7 +235,7 @@ export const handlers = {
   async "backup.restore"({ file }) {
     const r = await restoreBackup(file);
     changed();
-    setTimeout(() => process.kill(process.pid, "SIGUSR2"), 500);   // reload restored preferences: restart when idle
+    setTimeout(() => requestRestart(), 500);   // reload restored preferences: restart when idle
     return r;
   },
   // ───── background services kept running across app restarts (services.js) ─────

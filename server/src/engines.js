@@ -10,6 +10,7 @@ import path from "node:path";
 import { getSessionMessages } from "@anthropic-ai/claude-agent-sdk";
 import { VERSION, PORT, HOST, DATA, CLAUDE_DIR, SECRETS_DIR, DS_DIR, prefs, savePrefs, log } from "./config.js";
 import { ready, readKey, issueToken, dsModel, upstream } from "./deepseek.js";
+import { IS_WIN, linkShared } from "./platform.js";
 
 // ───── the engine record (never trimmed: a lost entry would send a DeepSeek chat to Anthropic) ─────
 export const engineOf = id => (id && prefs.chatEngine?.[id]) || null;   // "deepseek" | null (Claude)
@@ -129,6 +130,7 @@ export function ensureDsDir() {
     try {
       if (!fs.existsSync(target)) continue;   // a link to nothing could break Claude Code creating its own
       let st = null; try { st = fs.lstatSync(link); } catch {}
+      if (IS_WIN) { linkShared(target, link); continue; }   // symlink, junction or refreshed copy (platform.js); never moves a copy aside
       if (st?.isSymbolicLink()) { if (fs.readlinkSync(link) === target) continue; fs.unlinkSync(link); }
       else if (st) { const aside = `${link}.old-${Date.now()}`; fs.renameSync(link, aside); log("deepseek: moved", link, "to", aside); }
       fs.symlinkSync(target, link);

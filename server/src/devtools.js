@@ -7,8 +7,8 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { HOME, CLAUDE_DIR, prefs, savePrefs, log, githubRepo } from "./config.js";
+import { IS_WIN, shellSpawn } from "./platform.js";
 import { broadcastAll, callNative } from "./hub.js";
 import { ROOT } from "./transfer.js";
 
@@ -21,7 +21,7 @@ const ALPINE_EDGE = "https://dl-cdn.alpinelinux.org/alpine/edge";
 const exists = p => { try { fs.lstatSync(p); return true; } catch { return false; } };
 export function sh(cmd, onLine, opts = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn("/bin/sh", ["-c", cmd], { stdio: ["ignore", "pipe", "pipe"], ...opts });
+    const p = shellSpawn(cmd, { stdio: ["ignore", "pipe", "pipe"], ...opts });
     let out = "";
     const on = d => { out += d; if (onLine) for (const l of d.toString().split("\n")) if (l.trim()) onLine(l); };
     p.stdout.on("data", on); p.stderr.on("data", on);
@@ -158,6 +158,9 @@ export function devRepo() {
 // ───── what Claude is told about this phone ─────
 export function phoneContext() {
   const standalone = process.env.PA_MODE === "standalone";
+  // A Windows computer has none of the phone tools below (termux, cs, pa-service aren't on its PATH).
+  if (IS_WIN) return ["# Pocket Agent",
+    "You're running through Pocket Agent, an Android app: the user is on their phone, driving this Windows computer, so keep replies compact and readable on a small screen."].join("\n");
   const lines = [
     "# Pocket Agent",
     "You're running through Pocket Agent, an Android app; the user is on their phone, so keep replies compact and readable on a small screen.",

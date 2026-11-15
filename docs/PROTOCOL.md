@@ -23,6 +23,7 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 | `permission.reply` | `sessionId, requestId, behavior: allow\|deny, always?, allowAll?, message?, updatedInput?` | `ok`. `allowAll` (a worker's request, "Allow all for this worker"): this one, the worker's other waiting requests, and the rest of its turn are allowed without asking; questions and plans still ask, and a follow-up asks again |
 | `set` | `sessionId, model?, effort?, permissionMode?` | `info`. A model must suit the chat's engine ("That model isn't available on DeepSeek/Claude."); on DeepSeek, `flash`/`pro` are accepted and an empty effort means `max` |
 | `session.close` | `sessionId` | stops the Claude process (chat stays on disk) |
+| `server.restartWhenIdle` | | `{}`. The server restarts once no chat is mid-reply. On POSIX this is the same as SIGUSR2; under `pocket-agent.mjs` the server exits with 75 and its supervisor starts it again (`server/src/platform.js`) |
 | `session.rename` / `session.delete` / `session.pin` | `sessionId, title` / `sessionId` / `sessionId, pinned` | |
 | `session.fork` | `sessionId, upToMessageId?, title?` | `sessionId` of the copy (on the same engine) |
 | `session.continueHere` | `sessionId, mode: fork\|stop` | `sessionId` to continue in |
