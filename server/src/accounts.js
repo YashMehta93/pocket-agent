@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { DATA, CLAUDE_DIR, CLAUDE, prefs, savePrefs, log } from "./config.js";
+import { profileOf } from "./profiles.js";
 
 export const ACCOUNTS_DIR = path.join(DATA, "accounts");
 
@@ -96,9 +97,9 @@ export function removeAccount(id) {
   savePrefs();
 }
 
-/** Which account a chat runs on: its own choice, else the default, else the default account. */
-export function accountOf(sessionId) {
-  const a = prefs.chatAccount?.[sessionId] || prefs.defaultAccount || "default";
+/** Which account a chat runs on: its own choice, else its folder's profile, else the default account. */
+export function accountOf(sessionId, cwd) {
+  const a = prefs.chatAccount?.[sessionId] || (cwd ? profileOf(cwd).accounts?.local : null) || prefs.defaultAccount || "default";
   return a === "default" || (prefs.accounts || []).some(x => x.id === a) ? a : "default";
 }
 
