@@ -226,6 +226,66 @@ ev("sheet.close(true)");
 ev(`state.current = window.__save.cur; state.accounts = window.__save.accounts; state.defaultAccount = window.__save.defaultAccount; state.usageByAccount = window.__save.usageByAccount; state.newChatAccount = window.__save.newChatAccount;
   conn.call = window.__origCall; delete window.__save; delete window.__origCall; updateComposer()`);
 
+// streaming placeholders (#54, #55): a final block takes only its own ghost, and each parent has its own message
+const r54 = ev(`(() => {
+  const send = e => chat.event({ type: "stream_event", event: e });
+  const before = document.querySelectorAll("#messages > .md").length;
+  send({ type: "message_start", message: { id: "m-54" } });
+  send({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } });
+  send({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Second block." } });
+  send({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+  send({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "First block." } });
+  send({ type: "content_block_stop", index: 1 });   // the blocks finish out of order
+  send({ type: "content_block_stop", index: 0 });
+  const ghosts = [...document.querySelectorAll("#messages > .md.ghost")];
+  chat.event({ type: "assistant", uuid: "u-54", message: { id: "m-54", content: [
+    { type: "text", text: "First block." }, { type: "text", text: "Second block." } ] } });
+  const after = [...document.querySelectorAll("#messages > .md")];
+  return { before, ghosts: ghosts.length, kept: after.length === before + 2 && ghosts.every((el, i) => el === after[after.length - 2 + i]),
+    texts: after.slice(-2).map(el => el.textContent.replace(/\\s+/g, " ").trim()), left: document.querySelectorAll("#messages > .md.ghost").length };
+})()`);
+ok(`(#54) a final block takes only its own placeholder: ${r54.texts.join(" / ")}`, r54.ghosts === 2 && r54.kept && r54.left === 0 && r54.texts.join("|") === "Second block.|First block.");
+
+const r55 = ev(`(() => {
+  const send = (parent, e) => chat.event({ type: "stream_event", parent_tool_use_id: parent, event: e });
+  chat.event({ type: "assistant", uuid: "u-55-card", message: { id: "m-55-card", content: [
+    { type: "tool_use", id: "tu-x", name: "Task", input: { description: "Subagent stream check" } } ] } });
+  send(null, { type: "message_start", message: { id: "m-55-main" } });
+  send("tu-x", { type: "message_start", message: { id: "m-55-sub" } });
+  send(null, { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+  send("tu-x", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+  send("tu-x", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Inside the subagent." } });
+  send(null, { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "On the main thread." } });
+  // the main reply finishes first, while the subagent's stream is still open
+  chat.event({ type: "assistant", uuid: "u-55-main", message: { id: "m-55-main", content: [{ type: "text", text: "On the main thread." }] } });
+  chat.event({ type: "assistant", uuid: "u-55-sub", parent_tool_use_id: "tu-x", message: { id: "m-55-sub", content: [{ type: "text", text: "Inside the subagent." }] } });
+  const card = [...document.querySelectorAll("#messages .tool")].find(t => t.querySelector(".ts")?.textContent === "Subagent stream check");
+  return { found: !!card, sub: card ? [...card.querySelectorAll(".subagent .md")].map(m => m.textContent.trim()) : [],
+    main: [...document.querySelectorAll("#messages > .md")].map(m => m.textContent.replace(/\\s+/g, " ").trim()),
+    ghosts: card ? card.querySelectorAll(".md.ghost").length : -1 };
+})()`);
+ok(`(#55) interleaved subagent streams stay on their own message: "${r55.sub.join(" / ")}"`, r55.found && r55.ghosts === 0
+  && r55.sub.length === 1 && r55.sub[0] === "Inside the subagent."
+  && r55.main.includes("On the main thread.") && !r55.main.some(t => /Inside the subagent/.test(t)));
+
+const r53 = ev(`(() => {
+  const send = e => chat.event({ type: "stream_event", event: e });
+  chat.event({ type: "assistant", uuid: "u-53-sep", message: { id: "m-53-sep", content: [{ type: "text", text: "Separator." }] } });
+  send({ type: "message_start", message: { id: "m-53" } });
+  send({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } });   // withheld: no text
+  send({ type: "content_block_stop", index: 0 });
+  send({ type: "content_block_start", index: 1, content_block: { type: "thinking", thinking: "" } });
+  send({ type: "content_block_delta", index: 1, delta: { type: "thinking_delta", thinking: "The thought, summarised." } });
+  send({ type: "content_block_stop", index: 1 });
+  chat.event({ type: "assistant", uuid: "u-53", message: { id: "m-53", content: [
+    { type: "thinking", thinking: "", signature: "sig-53" }, { type: "thinking", thinking: "The thought, summarised." } ] } });
+  const th = [...document.querySelectorAll("#messages > .thinking")].pop();
+  return { label: th?.querySelector("summary span")?.textContent,
+    mds: th ? [...th.querySelectorAll(".th-body > .md")].map(m => m.textContent.replace(/\\s+/g, " ").trim()) : [] };
+})()`);
+ok(`(#53) an empty thought block adds no entry: "${r53.label}" · ${r53.mds.length} entr${r53.mds.length === 1 ? "y" : "ies"}`,
+  r53.label === "Thought" && r53.mds.length === 1 && r53.mds[0] === "The thought, summarised.");
+
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");
 ev(`state.models = [{ value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)" }, { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5" }]`);
