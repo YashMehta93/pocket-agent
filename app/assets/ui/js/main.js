@@ -48,7 +48,7 @@ async function onConnected() {
   $("#conn-foot").innerHTML = `${icon("wifi")}<span>${esc(where)} · server ${esc(hello.version)}</span>`;
   await refreshSessions();
   const cur = state.current;
-  if (cur && !cur.isNew) await openSession(cur.sessionId, { keepScroll: true });
+  if (cur && !cur.isNew) await openSession(cur.sessionId, { keepScroll: true, keepChat: true });   // catch up in place if the server still has the gap (#62b)
   else updateHeader();
   updateComposer();
   if (window.__pendingIntent) { const i = window.__pendingIntent; window.__pendingIntent = null; handleIntent(i); }
@@ -106,15 +106,7 @@ function showBanner(text, action, fn) {
 function hideBanner() { $("#banner").hidden = true; }
 
 // ───────────── server events ─────────────
-conn.on("ev", m => {
-  const cur = state.current;
-  if (!cur || m.sessionId !== cur.sessionId) return;
-  if (m.seq <= (cur.lastSeq || 0)) return;
-  cur.lastSeq = m.seq;
-  hideEmpty();
-  chat.event(m.ev);
-  if (m.ev.type === "system" && m.ev.subtype === "init") { cur.model = m.ev.model; updateComposer(); }
-});
+conn.on("ev", chatLiveEvent);   // sessions.js: the chat on screen, live or caught up by a reconnect (#62a)
 conn.on("state", m => {
   state.liveInfo[m.sessionId] = m.info;
   if (m.state === "closed") delete state.liveInfo[m.sessionId];

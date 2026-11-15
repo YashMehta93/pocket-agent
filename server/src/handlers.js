@@ -66,8 +66,11 @@ export const handlers = {
     }) };
   },
   async "session.history"({ sessionId }) {
+    // The live seq as the transcript is read: the app subscribes after it and replays what the transcript
+    // missed, so nothing that happens during this read is lost (#62a).
+    const seq = live.get(sessionId)?.seq || 0;
     const [messages, info] = await Promise.all([getSessionMessages(sessionId), getSessionInfo(sessionId).catch(() => undefined)]);
-    return { sessionId, messages, info };
+    return { sessionId, messages, info, seq };
   },
 
   /** Before a restart on purpose: replies it stops shouldn't continue afterwards. */
@@ -106,6 +109,9 @@ export const handlers = {
     ws.subs.add(sessionId);
     const s = live.get(sessionId);
     return { sessionId, info: s ? s.info() : null, events: s ? s.buffer.filter(e => e.seq > after) : [], settings: chatSettings(sessionId),
+      // The oldest event still buffered: a client resuming from before it has a gap it can't fill and
+      // must reload the transcript instead (#62b).
+      firstSeq: s ? (s.buffer[0]?.seq ?? s.seq + 1) : null,
       engine: s?.engine || engineOf(sessionId) || "claude", parent: s?.link?.parent || linkOf(sessionId)?.parent || null,
       account: accountOf(sessionId) };
   },

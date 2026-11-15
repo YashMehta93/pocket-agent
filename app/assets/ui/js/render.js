@@ -118,6 +118,7 @@ class ChatView {
     this.userTexts = new Map();  // uuid -> text
     this.rendered = new Set();   // uuids already rendered
     this.renderedBlocks = new Set(); // `${msgId}:${blockKey}` already rendered
+    this.doneMsgs = new Set();    // message ids drawn whole: a replayed stream for one adds no second ghost
     this.todos = null;
     this.lastText = "";
     this.turnStart = null;
@@ -188,6 +189,7 @@ class ChatView {
     if (msgId == null) return;   // a block whose message start we missed: its final message draws it
     const key = `${pkey}:${msgId}:${e.index}`;
     if (e.type === "content_block_start") {
+      if (this.doneMsgs.has(msgId)) return;   // the whole message is already drawn (the transcript overlapped the replay)
       const b = e.content_block;
       if (b.type === "text" || b.type === "thinking") {
         if (b.type === "text") {
@@ -259,7 +261,9 @@ class ChatView {
 
   // ───── assistant content ─────
   assistant(msg, parentId, uuid, history) {
-    if (!msg || !Array.isArray(msg.content)) return;
+    if (!msg) return;
+    if (msg.id) this.doneMsgs.add(msg.id);   // a later stream_event for this message (a replay overlap) is history
+    if (!Array.isArray(msg.content)) return;
     const parent = this.container(parentId);
     msg.content.forEach((b, i) => {
       const bkey = `${msg.id}:${b.type}:${b.id || i}:${(b.text || b.thinking || "").length}`;

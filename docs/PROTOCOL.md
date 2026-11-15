@@ -14,9 +14,9 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 |---|---|---|
 | `hello` | `tzOffset?` (minutes, from `new Date().getTimezoneOffset()`; DeepSeek spend is counted per local day) | `version, uiVersion, home, host, platform, defaults, pinned, commands, models, account, live[], engines[], deepseek` (see DeepSeek below) |
 | `sessions.list` | `limit?, dir?` | `sessions[]: { sessionId, title, firstPrompt, cwd, lastModified, pinned, live, elsewhere, engine?, parent?, worker?, spend? }`: `engine` is `"deepseek"` for DeepSeek chats (absent = Claude), `parent` the calling chat of a worker, `worker` its latest run (`at, toolUseId, runAt, result: done\|stopped\|failed\|null, steps, ms, usd, endedAt`; `result` null and no `endedAt` while it runs), `spend` a DeepSeek chat's estimated USD |
-| `session.history` | `sessionId` | `messages[]` (SDK `SessionMessage`), `info` |
+| `session.history` | `sessionId` | `messages[]` (SDK `SessionMessage`), `info`, `seq` (the live session's seq as the transcript was read; subscribe after it to catch up) |
 | `session.open` | `sessionId?, cwd?, model?, effort?, permissionMode?, engine?` | `sessionId, info`. `engine: "claude" \| "deepseek"` picks a new chat's engine (default: `defaults.engine`, else Claude); a chat keeps its engine for life, so asking an existing chat for the other one fails with `ENGINE_FIXED`. DeepSeek also fails with `NO_DEEPSEEK_KEY` or `FOLDER_BLOCKED` |
-| `subscribe` | `sessionId, after` | `info` (live session or null), `events[]` with `seq > after`, `settings`, `engine` (`"claude"` \| `"deepseek"`), `parent` (or null) |
+| `subscribe` | `sessionId, after` | `info` (live session or null), `events[]` with `seq > after`, `firstSeq` (the oldest seq still buffered, or null when not live: a client resuming from before it must reload the transcript), `settings`, `engine` (`"claude"` \| `"deepseek"`), `parent` (or null) |
 | `unsubscribe` | `sessionId` | |
 | `send` | `sessionId, text, images?[{mediaType,data}]`, plus `cwd/model/effort/permissionMode/engine` for a new chat | `sessionId, uuid` — may fail with `code: "BUSY_ELSEWHERE"`, or as `session.open` does |
 | `interrupt` | `sessionId` | stops the current reply. Background workers (`wait:false`) it started keep running: stop those with `workers.stopAll` |
