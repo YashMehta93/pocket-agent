@@ -135,7 +135,8 @@ function longPress(el, fn) {
   }, { passive: true });
   el.addEventListener("touchend", () => { clear(); if (fired) expireEat(); }, { passive: true });
   el.addEventListener("touchcancel", () => { clear(); removeEventListener("click", eat, { capture: true }); }, { passive: true });
-  el.addEventListener("contextmenu", e => e.preventDefault());   // never a second trigger
+  // A touch press is handled above, so its contextmenu must not open the menu twice; a mouse's right-click still does.
+  el.addEventListener("contextmenu", e => { e.preventDefault(); if (!fired && !timer) fn(); });
 }
 
 function sessionMenu(s) {
