@@ -12,7 +12,7 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 
 | `t` | Args | Reply |
 |---|---|---|
-| `hello` | `tzOffset?` (minutes, from `new Date().getTimezoneOffset()`; DeepSeek spend is counted per local day) | `version, uiVersion, home, host, platform, defaults, pinned, commands, models, account, live[], engines[], deepseek` (see DeepSeek below) |
+| `hello` | `tzOffset?` (minutes, from `new Date().getTimezoneOffset()`; DeepSeek spend is counted per local day) | `version, protocol, uiVersion, home, host, platform, environments[], defaults, pinned, commands, models, account, live[], engines[], deepseek` (see DeepSeek and Environments below) |
 | `sessions.list` | `limit?, dir?` | `sessions[]: { sessionId, title, firstPrompt, cwd, lastModified, pinned, live, elsewhere, engine?, parent?, worker?, spend? }`: `engine` is `"deepseek"` for DeepSeek chats (absent = Claude), `parent` the calling chat of a worker, `worker` its latest run (`at, toolUseId, runAt, result: done\|stopped\|failed\|null, steps, ms, usd, endedAt`; `result` null and no `endedAt` while it runs), `spend` a DeepSeek chat's estimated USD |
 | `session.history` | `sessionId` | `messages[]` (SDK `SessionMessage`), `info` |
 | `session.open` | `sessionId?, cwd?, model?, effort?, permissionMode?, engine?` | `sessionId, info`. `engine: "claude" \| "deepseek"` picks a new chat's engine (default: `defaults.engine`, else Claude); a chat keeps its engine for life, so asking an existing chat for the other one fails with `ENGINE_FIXED`. DeepSeek also fails with `NO_DEEPSEEK_KEY` or `FOLDER_BLOCKED` |
@@ -67,6 +67,27 @@ Token-protected HTTP routes another server pulls from (see `server/src/transfer.
 | `link` | `parent, child, engine, title, toolUseId`, and when the run ends `result, steps, ms, usd, endedAt` | a worker chat started (or got a follow-up) for `parent` (then `sessions.changed`); sent again with how the run went |
 
 `info` (in `state` events, `hello.live` and `subscribe`) has `sessionId, cwd, state, seq, model, effort, permissionMode, title, pending[], activity, tasks[], engine, parent`, plus `spend` (estimated USD so far) in DeepSeek chats and `allowAll: true` while a worker runs without asking. `tasks[]`: the subagents and background commands Claude started, `{ id, kind: agent|command, description, status: running|completed|stopped|failed, activity, tokens, tools, ms, startedAt, endedAt, summary, agentType, toolUseId, taskType }` (Claude Code's own housekeeping tasks aren't listed). In `ev`, besides SDK messages: `pa_user` (a sent message), `pa_error`, and `pa_cost` `{ usd }` after each DeepSeek turn (what that turn cost, estimated).
+
+## Environments (other Pocket Agent servers)
+
+A server can connect to other Pocket Agent servers ("environments", e.g. a laptop) and proxy their chats. The app still talks only to the phone's server. A remote chat's id is `<envId>:<sessionId>`; local ids never contain `:`. A server hears about this hub through its normal `/ws`: the hub connects with the environment's token and sends `hello`.
+
+| `t` | Args | Reply |
+|---|---|---|
+| `environments.list` | | `environments[]: { id, name, url, profile, state, version, protocol, error, lastOnlineAt }`; `state`: `connecting \| online \| offline \| unauthorized \| outdated` |
+| `environments.add` | `url` (`host:port`, or with `http(s)://` / `ws(s)://`), `code` (a pairing code) or `token`, `profile?` (default `personal`), `name?` | `environment` (the public record). With a code it is redeemed at `POST <url>/devices/redeem`; a wrong code is `That code is wrong or has expired`. A wrong token is saved as `unauthorized` (`Pair this device again`), so it can be paired again under the same id |
+| `environments.remove` | `environment` | `{ ok: true }`; stops the connection and deletes its token file |
+| `environments.rename` | `environment, name` (trimmed, 1–40) | `environment` |
+| `environments.test` | `url` | `{ ok: true, version, protocol, ms }` or `{ ok: false, error: "Can't reach <host:port>" }` (the reply carries `ok: false`; it is not an error reply) |
+| `environments.reconnect` | `environment` | `environment`; resets the backoff and connects now |
+
+The id goes in `environment`, because over the WebSocket `id` is the request id. Tokens are stored per profile in the server's secrets folder (0600, folders 0700) and never appear in prefs, a reply, an event or the log. A wrong WebSocket token is answered with `401 Unauthorized` before the upgrade, so a hub can tell it from a network error.
+
+**Forwarded requests.** A request whose `sessionId` is `<knownEnvId>:<sid>` goes to that environment: `subscribe` (the first local subscriber sends upstream `subscribe { sessionId, after }`; the last `unsubscribe` sends upstream `unsubscribe`), `unsubscribe`, and `session.history`, `session.open`, `session.context`, `send`, `interrupt`, `permission.reply`, `session.rename`, `session.pin`, `session.close`, `session.fork`. Any other request for a remote chat fails with `Not available for chats on other devices yet`. Replies are mapped like the events below. `fs.list` / `fs.search` / `fs.read` / `fs.mkdir` (and `files.*`) with `env: <envId>` go to that environment without `env`. An offline environment fails with `<name> is offline`.
+
+**Merged chat list.** `sessions.list` appends each environment's chats: `sessionId` becomes `<envId>:<sid>`, with `environment`, `environmentName`, `remote: true`, `offline`, and `profile`; `parent` and the other chat-id fields are mapped the same way. The list stays newest first.
+
+**Events.** `hello` and the `environments` event carry the public list. `{ t: "environments", environments }` is sent to every client when an environment or its state changes. A remote `ev` is relayed as `{ t: "ev", sessionId: "<envId>:<sid>", … }` to subscribed clients. These chat events are relayed to everyone with mapped ids and `environment: <envId>`: `activity`, `state`, `permission.request`, `permission.resolved`, `tasks`, `account.limit`, `sessions.changed`, `link`. Nothing else is relayed (usage, accounts, settings, DeepSeek and the remote's own environment list must not overwrite this phone's state). A remote approval or finished reply also gets a phone notification headed with the environment's name; its buttons answer through the hub (`POST /permission` forwards too).
 
 ## DeepSeek
 
