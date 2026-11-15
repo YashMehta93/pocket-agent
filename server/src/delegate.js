@@ -126,7 +126,6 @@ async function run(parent, engine, args, extra) {
   const approved = takeApprovalFor(parent, toolName, callId);
   // Defence in depth: Claude Code only runs this after canUseTool allowed it. Without a recorded OK, only a chat in Bypass may go on.
   if (!approved && parent.permissionMode !== "bypassPermissions") return fail("This needs your OK on the phone, and there wasn't one.");
-  if (args.wait === false && args.continue_chat) return fail("continue_chat can't be used with wait:false.");
   if (args.wait === false) return startJob(parent, engine, args, callId, approved);
   // A normal call waits its turn in the queue; extra's stop signal still ends the worker.
   return queue.run(() => runWorker(parent, engine, args, extra, callId, approved, () => {}), parent.sessionId);
@@ -134,7 +133,10 @@ async function run(parent, engine, args, extra) {
 
 /** Start a wait:false worker now: it queues like any other run, and its report waits in `jobs` for worker_results. */
 async function startJob(parent, engine, args, callId, approved) {
-  const job = { id: randomBytes(4).toString("hex"), parent: parent.sessionId, engine, title: oneLine(args.title) || firstLine(args.task),
+  // a follow-up keeps the worker chat's title when it's known, else it's just a follow-up
+  const title = args.continue_chat ? (live.get(args.continue_chat)?.title || linkOf(args.continue_chat)?.title || "Follow-up")
+    : oneLine(args.title) || firstLine(args.task);
+  const job = { id: randomBytes(4).toString("hex"), parent: parent.sessionId, engine, title,
     state: "queued", chat: null, report: null, collected: false };
   jobs.set(job.id, job);
   job.promise = queue.run(() => { job.state = "running"; return runWorker(parent, engine, args, null, callId, approved, id => { job.chat = id; }); }, parent.sessionId)
@@ -145,7 +147,7 @@ async function startJob(parent, engine, args, callId, approved) {
     "Title: " + job.title, "Queue: " + queue.running + " running, " + queue.waiting + " waiting", "---", "Collect its report with worker_results."].join("\n") }] };
 }
 
-/** The person stopped a chat: drop the workers it had waiting for a slot and interrupt the ones it started. */
+/** The person stopped a chat or its workers: drop the workers it had waiting for a slot and interrupt the ones it started. */
 export function stopJobsOf(parentId) {
   let n = queue.cancel(tag => tag === parentId);
   for (const job of jobs.values()) {
@@ -187,7 +189,7 @@ async function runWorker(parent, engine, args, extra, callId, approved, onChat) 
   onChat(worker.sessionId);
   const linkEv = { t: "link", parent: parent.sessionId, child: worker.sessionId, engine, title: worker.title, toolUseId: callId || approved };
   // this run: no outcome yet (a follow-up clears the last one); the app's Agents tab reads it after a restart
-  updateLink(worker.sessionId, { runAt: Date.now(), toolUseId: linkEv.toolUseId, result: null, steps: null, ms: null, usd: null, endedAt: null });
+  updateLink(worker.sessionId, { title: worker.title, runAt: Date.now(), toolUseId: linkEv.toolUseId, result: null, steps: null, ms: null, usd: null, endedAt: null });
   broadcastAll(linkEv);
   broadcastAll({ t: "sessions.changed" });
   log("worker", worker.sessionId.slice(0, 8), "for", parent.sessionId.slice(0, 8), engine, mode);

@@ -144,6 +144,24 @@ ok("a short swipe does nothing", ev("state.tab") === "chat");
 ev(`delete state.liveInfo[state.current.sessionId].tasks; renderTabs()`);
 ok("no agents, no switch", $("#chat-tabs").hidden && ev("state.tab") === "chat");
 
+// background workers (#66): the Agents tab offers "Stop all" while one is at work; it calls workers.stopAll
+const wsid = "cccccccc-0000-4000-8000-0000000000e1", wid = "cccccccc-0000-4000-8000-0000000000e2";
+ev(`window.__saveCur = state.current; state.current = { ...state.current, sessionId: "${wsid}", isNew: false };
+  state.links["${wid}"] = { parent: "${wsid}", engine: "deepseek", title: "Background probe", at: Date.now(), runAt: Date.now(), result: null };
+  state.liveInfo["${wid}"] = { sessionId: "${wid}", state: "running", parent: "${wsid}", engine: "deepseek", title: "Background probe" };
+  renderTabs(); setTab("agents")`);
+ok(`a running background worker offers "Stop all" in the Agents tab: "${tx("#ag-stop-all")}"`, ev("state.tab") === "agents" && !$("#ag-stop-all").hidden
+  && tx("#ag-stop-all") === "Stop all" && $("#ag-stop-all").classList.contains("chip")
+  && $$("#agents-view .ag-row").some(r => r.querySelector(".ag-ti")?.textContent === "Background probe"));
+ev(`window.__origCall = conn.call; window.__calls = []; conn.call = (t, m) => { window.__calls.push([t, m]); return Promise.resolve({ stopped: 1 }); }`);
+$("#ag-stop-all").click();
+await sleep(50);
+ok("Stop all asks the server to stop this chat's workers", ev(`__calls.some(([t, m]) => t === "workers.stopAll" && m.sessionId === "${wsid}")`));
+ev(`conn.call = window.__origCall; delete window.__origCall; delete window.__calls;
+  delete state.links["${wid}"]; delete state.liveInfo["${wid}"]; renderAgentsView()`);
+ok("with no worker at work the button goes", $("#ag-stop-all").hidden && $("#agents-view .ag-top").hidden);
+ev(`state.current = window.__saveCur; delete window.__saveCur; setTab("chat"); renderTabs()`);
+
 // usage limits: drawer meter, the note above the message box from 90%, the details sheet, the settings row
 ev(`state.usage = { windows: { five_hour: { used: 91, resetsAt: Date.now() + 3 * 3600e3 + 50 * 60e3, status: "allowed_warning" }, seven_day: { used: 64, resetsAt: Date.now() + 4 * 86400e3, status: "allowed" } }, models: [{ name: "Fable", used: 40, resetsAt: Date.now() + 4 * 86400e3 }], at: Date.now() }; renderUsage()`);
 ok("drawer shows the 5-hour and weekly limits", !$("#usage-meter").hidden && $$("#usage-meter .u-row").length === 2 && /91%.*resets in 3h \d+m/.test($("#usage-meter").textContent) && $("#usage-meter .u-row.warn") !== null);

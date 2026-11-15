@@ -116,13 +116,22 @@ export const handlers = {
     ws.subs.add(s.sessionId);
     return { sessionId: s.sessionId, uuid: s.send(m) };
   },
+  // Stops the reply only: background workers (wait:false) it started keep running; workers.stopAll stops them.
   async interrupt({ sessionId }) {
     await getLive(sessionId).q.interrupt();
-    const { stopJobsOf } = await import("./delegate.js");   // dynamic: delegate.js imports live-session.js, which imports this
-    stopJobsOf(sessionId);
     return {};
   },
-  async "session.close"({ sessionId }) { live.get(sessionId)?.close(); return {}; },
+  /** Stops every background worker this chat started: the ones waiting for a slot and the ones running. */
+  async "workers.stopAll"({ sessionId }) {
+    const { stopJobsOf } = await import("./delegate.js");   // dynamic: delegate.js imports live-session.js, which imports this
+    return { stopped: stopJobsOf(sessionId) };
+  },
+  async "session.close"({ sessionId }) {
+    const { stopJobsOf } = await import("./delegate.js");   // dynamic: delegate.js imports live-session.js, which imports this
+    stopJobsOf(sessionId);
+    live.get(sessionId)?.close();
+    return {};
+  },
   async "permission.reply"(m) { return { ok: getLive(m.sessionId).answer(m) }; },
   async set(m) {
     const s = live.get(m.sessionId);
