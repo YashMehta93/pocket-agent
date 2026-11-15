@@ -79,7 +79,14 @@ public class NotifyService extends Service {
             case "batch": { JSONArray a = ev.optJSONArray("events"); if (a != null) for (int i = 0; i < a.length(); i++) handle(a.optJSONObject(i)); break; }
             case "rpc": {
                 final String id = ev.optString("id");
-                Rpc.call(this, ev.optString("method"), ev.optJSONObject("params"), new Rpc.Done() {
+                final String method = ev.optString("method");
+                // The phone's own server may run any capability; a server chosen in Settings (another machine)
+                // only notifications, so a compromised or hostile remote server can't drive the phone. See #65.
+                if (!Prefs.standalone(this) && !Rpc.REMOTE_ALLOWED.contains(method)) {
+                    postResult(id, null, "Not allowed from another server");
+                    break;
+                }
+                Rpc.call(this, method, ev.optJSONObject("params"), new Rpc.Done() {
                     @Override public void ok(Object result) { postResult(id, result, null); }
                     @Override public void err(String message) { postResult(id, null, message); }
                 });

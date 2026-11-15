@@ -7,6 +7,7 @@
 //   POST /native/result?token= result of a server → phone RPC call (hub.callNative)
 //   GET  /apk/download?token=  latest built APK, for in-app updates
 //   GET  /bundle/info, /bundle.tgz, /export/sessions.tgz (?token=)  for another server's update / chat import
+//   GET  /export/migration.tgz (?token=)  the whole home for a migration; Termux servers only (#65)
 //   GET  /termux/install.sh, /termux/bundle.tgz (?code=)  Termux setup, with a 30-minute code (termux.js)
 //   POST /deepseek/v1/messages[/count_tokens]  the DeepSeek key keeper (deepseek.js): DeepSeek chats only, with their
 //                              own per-chat token instead of the app token
@@ -52,7 +53,13 @@ export function createServer() {
     if (url.pathname === "/bundle/info") return json(res, 200, await bundleInfo());
     if (url.pathname === "/apk/info") { try { return json(res, 200, JSON.parse(await fsp.readFile(APK_INFO, "utf8"))); } catch { return json(res, 200, { versionCode: 0 }); } }
     if (url.pathname === "/bundle.tgz") { res.writeHead(200, { "content-type": "application/gzip" }); return bundleStream().pipe(res); }
-    if (url.pathname === "/export/migration.tgz") { res.writeHead(200, { "content-type": "application/gzip" }); return (await migrationStream()).pipe(res); }
+    if (url.pathname === "/export/migration.tgz") {
+      // The whole home leaves the phone only from the server it was made for: a Termux install. Pocket
+      // Agent's built-in Linux (or any other server) must never stream it out. See issue #65.
+      if (!(process.env.PREFIX || "").includes("com.termux")) { res.writeHead(403, { "content-type": "text/plain" }); return res.end("Only a Termux server exports its home."); }
+      res.writeHead(200, { "content-type": "application/gzip" }); return (await migrationStream()).pipe(res);
+    }
+    // Every project's chats, for another server's import. Still scoped by the app token; scoped device tokens come later (#65).
     if (url.pathname === "/export/sessions.tgz") { res.writeHead(200, { "content-type": "application/gzip" }); return tarStream(CLAUDE_DIR, ["projects"]).pipe(res); }
     if (url.pathname === "/apk/download") {
       try {
