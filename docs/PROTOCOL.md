@@ -79,19 +79,27 @@ A server can connect to other Pocket Agent servers ("environments", e.g. a lapto
 | `t` | Args | Reply |
 |---|---|---|
 | `environments.list` | | `environments[]: { id, name, url, profile, state, version, protocol, error, lastOnlineAt }`; `state`: `connecting \| online \| offline \| unauthorized \| outdated` |
-| `environments.add` | `url` (`host:port`, or with `http(s)://` / `ws(s)://`), `code` (a pairing code) or `token`, `profile?` (default `personal`), `name?` | `environment` (the public record). With a code it is redeemed at `POST <url>/devices/redeem`; a wrong code is `That code is wrong or has expired`. A wrong token is saved as `unauthorized` (`Pair this device again`), so it can be paired again under the same id |
+| `environments.add` | `url` (`host:port`, or with `http(s)://` / `ws(s)://`), `code` (a pairing code) or `token`, `profile?` (default: the default profile), `name?` | `environment` (the public record). With a code it is redeemed at `POST <url>/devices/redeem`, sending this server's `environment().name`; a wrong code is `That code is wrong or has expired`, a locked server `Too many tries…`, an old server `That server is too old to pair…`. An unknown profile is `No such profile`. A wrong token is saved as `unauthorized` (`Pair this device again`), so it can be paired again under the same id |
 | `environments.remove` | `environment` | `{ ok: true }`; stops the connection and deletes its token file |
 | `environments.rename` | `environment, name` (trimmed, 1–40) | `environment` |
 | `environments.test` | `url` | `{ ok: true, version, protocol, ms }` or `{ ok: false, error: "Can't reach <host:port>" }` (the reply carries `ok: false`; it is not an error reply) |
 | `environments.reconnect` | `environment` | `environment`; resets the backoff and connects now |
 
-The id goes in `environment`, because over the WebSocket `id` is the request id. Tokens are stored per profile in the server's secrets folder (0600, folders 0700) and never appear in prefs, a reply, an event or the log. A wrong WebSocket token is answered with `401 Unauthorized` before the upgrade, so a hub can tell it from a network error.
+The id goes in `environment`, because over the WebSocket `id` is the request id. Tokens are stored per profile in the server's secrets folder (0600, folders 0700) and never appear in prefs, a reply, an event or the log. A wrong WebSocket token is answered with `401 Unauthorized` before the upgrade, so a hub can tell it from a network error. Before redeeming a code, `environments.add` asks `GET <url>/health`: if its `env` is this server's own environment id it fails with `That's this device`, and the code is not used.
 
-**Forwarded requests.** A request whose `sessionId` is `<knownEnvId>:<sid>` goes to that environment: `subscribe` (the first local subscriber sends upstream `subscribe { sessionId, after }`; the last `unsubscribe` sends upstream `unsubscribe`), `unsubscribe`, and `session.history`, `session.open`, `session.context`, `send`, `interrupt`, `permission.reply`, `session.rename`, `session.pin`, `session.close`, `session.fork`. Any other request for a remote chat fails with `Not available for chats on other devices yet`. Replies are mapped like the events below. `fs.list` / `fs.search` / `fs.read` / `fs.mkdir` (and `files.*`) with `env: <envId>` go to that environment without `env`. An offline environment fails with `<name> is offline`.
+**Forwarded requests — the owner's only.** A request whose `sessionId` is `<knownEnvId>:<sid>` goes to that environment: `subscribe` (the first local subscriber sends upstream `subscribe { sessionId, after }`; the last `unsubscribe` sends upstream `unsubscribe`), `unsubscribe`, and `session.history`, `session.open`, `session.context`, `send`, `interrupt`, `permission.reply`, `session.rename`, `session.pin`, `session.close`, `session.fork`. Any other request for a remote chat fails with `Not available for chats on other devices yet`. Replies are mapped like the events below. `fs.list` / `fs.search` / `fs.read` / `fs.mkdir` (and `files.*`) with `env: <envId>` go to that environment without `env`. An offline environment fails with `<name> is offline`.
+
+A paired device never reaches another machine: such a request (a namespaced `sessionId`, or `env` on an `fs.`/`files.` call) fails with `{ error: "Chats on other machines are only for this phone's owner", code: "forbidden" }`. `POST /permission` likewise forwards a remote approval for the owner only (a device gets `403`). A namespaced id that no saved environment owns is `{ error: "No such chat", code: "not_found" }` and never reaches a local handler (otherwise `subscribe` would put it in the socket's subscriptions and relayed events could leak to it).
+
+**Ids.** Every chat-id field from an environment (`sessionId`, `parent`, `parentSessionId`, `childSessionId`, at any depth) is always prefixed `<envId>:` — even a value that already contains `:`. A machine that sends `envB:abc` arrives here as `envA:envB:abc` and goes back only to `envA`; `splitRemoteSession` splits at the **first** `:`.
 
 **Merged chat list.** `sessions.list` appends each environment's chats: `sessionId` becomes `<envId>:<sid>`, with `environment`, `environmentName`, `remote: true`, `offline`, and `profile`; `parent` and the other chat-id fields are mapped the same way. The list stays newest first.
 
-**Events.** `hello` and the `environments` event carry the public list. `{ t: "environments", environments }` is sent to every client when an environment or its state changes. A remote `ev` is relayed as `{ t: "ev", sessionId: "<envId>:<sid>", … }` to subscribed clients. These chat events are relayed to everyone with mapped ids and `environment: <envId>`: `activity`, `state`, `permission.request`, `permission.resolved`, `tasks`, `account.limit`, `sessions.changed`, `link`. Nothing else is relayed (usage, accounts, settings, DeepSeek and the remote's own environment list must not overwrite this phone's state). A remote approval or finished reply also gets a phone notification headed with the environment's name; its buttons answer through the hub (`POST /permission` forwards too).
+**Events.** `hello` and the `environments` event carry the public list. `{ t: "environments", environments }` is sent to every client when an environment or its state changes. A remote `ev` is relayed as `{ t: "ev", sessionId: "<envId>:<sid>", … }` to subscribed clients. These chat events are relayed to everyone with mapped ids and `environment: <envId>`: `activity`, `state`, `permission.request`, `permission.resolved`, `tasks`, `account.limit`, `sessions.changed`, `link`. Nothing else is relayed (usage, accounts, settings, DeepSeek and the remote's own environment list must not overwrite this phone's state). A remote approval or finished reply also gets a phone notification headed with the environment's name; its buttons answer through the hub (`POST /permission` forwards too). Notification fields are named and plain: `type`, the mapped `sessionId`, `requestId`, `toolName`, `input` (from `toolDetail`), `title`, `envName`; an environment's object is never spread into them.
+
+**Live chats without a screen.** The hub subscribes upstream to every chat that is live on its environment — from the upstream's `hello.live` and its `state` events — not only the chats a screen has open, so approvals and Done notify while the app is closed. It remembers each subscription's last `seq` and re-subscribes with `after: lastSeq` when the connection returns; an approval still waiting comes back in the subscribe reply's `info.pending` and is notified once (request ids already notified are remembered). At most 50 remote chats are watched per environment.
+
+**hello views.** A device's `hello` leaves out `environments`, `profiles` and `defaultProfile` too (a device has no other machines, and the profile list is the owner's).
 
 ## DeepSeek
 
@@ -160,7 +168,7 @@ Every server says what machine it is, so a hub (another Pocket Agent server that
   accounts: ["default"],    // Claude account ids
   reaches: [],              // up to 8 short names of what this server reaches
   limits: { symlinks: true },
-  protocol: 1, version: "1.2.0", caps: ["sessions", "files", "workers", "accounts", "environment"] }
+  protocol: 1, version: "1.2.0", caps: ["sessions", "files", "workers", "accounts", "environment", "devices", "hub"] }
 ```
 
 `protocol` rises whenever the WebSocket protocol changes in a way older apps can't handle. `caps` lists what this server can do.
@@ -202,7 +210,9 @@ node server/src/pair-cli.js [--port N] [--name "Phone hub"] [--scopes chat,files
 | `files.write` | `fs.mkdir`, `upload` |
 | `workers` | worker messages (none yet) |
 
-Everything else — settings and prefs, `accounts.*`, `deepseek.*`, `devices.*`, `environment.set`, updates and channels, backups, `termux.*`, `services.*`, `native.call`, `session.delete` — is the owner's. A message a device may not send gets `{ error: "This device isn't allowed to do that", code: "forbidden" }`. `hello` leaves out what a device has no business seeing: `githubToken`, `updateChannel`, `updateKind`, `updateTrack`, `devRepo`, `usage`, `usageByAccount`, `account`, `accounts`, `defaultAccount`, `deepseek` and `home` (`home` stays if the device has `files.read`).
+Everything else — settings and prefs, `accounts.*`, `deepseek.*`, `devices.*`, `environment.set`, updates and channels, backups, `termux.*`, `services.*`, `native.call`, `session.delete` — is the owner's. A message a device may not send gets `{ error: "This device isn't allowed to do that", code: "forbidden" }`. `hello` leaves out what a device has no business seeing: `githubToken`, `updateChannel`, `updateKind`, `updateTrack`, `devRepo`, `usage`, `usageByAccount`, `account`, `accounts`, `defaultAccount`, `deepseek`, `environments`, `profiles`, `defaultProfile` and `home` (`home` stays if the device has `files.read`).
+
+A device also never reaches chats on other machines, even with `chat` (see Environments): the reply is `code: "forbidden"`.
 
 Over HTTP, a device may fetch `/export/sessions.tgz` with `export.sessions` and `/bundle/info` / `/bundle.tgz` with `update.source`; every other token-protected route answers `403 { error: "forbidden" }`. An unknown token is `401 { error: "bad token" }`.
 
