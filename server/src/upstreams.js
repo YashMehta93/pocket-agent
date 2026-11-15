@@ -174,7 +174,10 @@ export async function addEnvironment({ url, code, token, profile = "personal", n
   let hello = null;
   try { hello = await handshake(base, tok); }
   catch (e) { if (e.code !== "UNAUTHORIZED") throw e; }
-  const id = safeEnvId(hello?.environment?.id) || derivedId(base);
+  // A wrong token never reaches hello: keep the record already saved for this address, so re-pairing
+  // replaces its token instead of adding a second environment for the same machine.
+  const known = saved().find(e => e.url === base);
+  const id = safeEnvId(hello?.environment?.id) || known?.id || derivedId(base);
   if (local?.id && id === local.id) throw new Error("That's this device");
   const fallbackName = new URL(base).hostname.replace(/^\[|\]$/g, "");
   const named = String(name || hello?.environment?.name || "").trim().slice(0, 40) || fallbackName;

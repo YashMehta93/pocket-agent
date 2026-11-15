@@ -104,6 +104,12 @@ try {
   ok("the hub server starts", await waitHealth(H_PORT));
   if (!(await health(H_PORT))) console.log(serverOutput(hub));
 
+  // The upstream describes itself now (environment.js): give it a name to check the hub shows it.
+  const U_NAME = "Test upstream";
+  const uClient = await connect(U_PORT, U_TOKEN);
+  await uClient.call("environment.set", { name: U_NAME });
+  uClient.ws.close();
+
   client = await connect(H_PORT, H_TOKEN);
   const list = async () => (await client.call("environments.list")).environments;
   const envState = async id => (await list()).find(e => e.id === id)?.state;
@@ -113,12 +119,12 @@ try {
   const added = await client.call("environments.add", { url: `127.0.0.1:${U_PORT}`, token: U_TOKEN });
   const envId = added.environment.id;
   const remoteId = `${envId}:${SEEDED}`;
-  ok("environments.add returns a public record with no token", typeof envId === "string" && !JSON.stringify(added).includes(U_TOKEN) && added.environment.name === "127.0.0.1");
+  ok("environments.add returns a public record with no token", typeof envId === "string" && !JSON.stringify(added).includes(U_TOKEN) && added.environment.name === U_NAME);
   ok("the environment is online within 5 s", await poll(async () => (await envState(envId)) === "online", 5000));
 
   // 2. its chat list, namespaced
   const item = await poll(() => remoteItem(remoteId), 5000);
-  ok("sessions.list has the remote chat", !!item && item.remote === true && item.environment === envId && item.environmentName === "127.0.0.1" && item.offline === false);
+  ok("sessions.list has the remote chat", !!item && item.remote === true && item.environment === envId && item.environmentName === U_NAME && item.offline === false);
   ok("its timestamp is numeric, so the merged list sorts like the local one", typeof item?.lastModified === "number");
 
   // 3. its history
