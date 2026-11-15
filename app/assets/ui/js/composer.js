@@ -55,6 +55,9 @@ input.addEventListener("keydown", e => {
   if (!$("#popup").hidden && popupKey(e)) return;
   if (e.key === "Enter" && !e.shiftKey && (settings.enterToSend || e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
 });
+// A tap on Send must not take focus out of the field (Android would drop the keyboard); the click still sends,
+// and the same button still stops a running reply (#57).
+$("#btn-send").addEventListener("pointerdown", e => e.preventDefault());
 $("#btn-send").onclick = () => {
   const st = sessionState(state.current?.sessionId);
   if ((st === "running" || st === "waiting") && !input.value.trim() && !attachments.length) return interrupt();
@@ -82,7 +85,7 @@ async function send(textOverride) {
       for (const f of files) { const r = await conn.call("upload", { cwd: cur.cwd, name: f.name, data: f.data }); paths.push(r.path); }
       text = (text ? text + "\n\n" : "") + paths.map(p => `Attached file: @${p}`).join("\n");
     }
-    if (textOverride === undefined) { input.value = ""; attachments = []; renderAttachments(); autosize(); }
+    if (textOverride === undefined) { input.value = ""; attachments = []; renderAttachments(); autosize(); input.focus({ preventScroll: true }); }
     $("#popup").hidden = true;
     hideEmpty();
     const s = currentSettings();
@@ -145,7 +148,7 @@ function busySheet(e, text, images) {
   });
   b.querySelector('[data-a="cancel"]').onclick = () => { sheet.close(true); restoreDraft(text); };
 }
-function restoreDraft(text) { if (text && !input.value) { input.value = text; autosize(); } }
+function restoreDraft(text) { if (text && !input.value) { input.value = text; autosize(); input.focus({ preventScroll: true }); } }
 
 // attachments
 $("#btn-attach").onclick = () => menuSheet("Attach", [
