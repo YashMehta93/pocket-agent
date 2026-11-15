@@ -137,6 +137,7 @@ function settingsSections() {
         + item(`<div class="set-row"><div class="l">Model<small>${esc(modelLabel(d.model))}</small></div><button class="chip" id="d-model">Change</button></div>`, "opus sonnet haiku default")
         + item(`<div class="set-row"><div class="l">Effort</div></div><div class="seg" id="d-effort">${["", ...EFFORTS].map(e => `<button data-v="${e}" class="${(d.effort || "") === e ? "on" : ""}">${e || "auto"}</button>`).join("")}</div>`, "thinking reasoning default")
         + item(`<div class="set-row"><div class="l">Permission mode</div></div><div class="seg" id="d-mode">${MODES.slice(0, 4).map(m => `<button data-v="${m.id}" class="${(d.permissionMode || "default") === m.id ? "on" : ""}">${m.short}</button>`).join("")}</div>`, "ask auto bypass plan approvals default") },
+    typeof profilesSettingsSection === "function" && profilesSettingsSection(),   // profiles.js: whose work a chat is
     { id: "claude", title: "Claude and connection", icon: "globe",
       summary: `${settings.server ? settings.server.replace(/^https?:\/\//, "") : native ? "Runs on this phone" : location.host}${state.account?.email ? " · " + state.account.email : ""}`,
       html: () => item(`<div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server || (native ? "This phone (built-in)" : location.host))}</small></div><button class="chip" id="s-server">Change</button></div>`, "server termux computer pc remote connection")
@@ -256,6 +257,7 @@ function wireSettings(root) {
   on("#s-restart", async () => { try { await conn.call("working.clear"); } catch {} nativeCall("restartServer"); toast("Restarting server…"); });
   if (native && root.querySelector("#phone-ctl")) renderPhoneControl(root.querySelector("#phone-ctl"));
   if (native && root.querySelector("#termux-box")) renderTermux(root.querySelector("#termux-box"));
+  if (typeof wireProfilesSettings === "function") wireProfilesSettings(root);
   if (typeof wireAccountsSettings === "function") wireAccountsSettings(root);
   if (typeof wireDsSettings === "function") wireDsSettings(root);
 }

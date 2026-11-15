@@ -555,3 +555,43 @@ body.tab-agents #chat, body.tab-agents #composer, body.tab-agents #todo-bar, bod
 @media (prefers-reduced-motion: no-preference) {
   #agents-view:not([hidden]) .ag-list { animation: rise .45s var(--ease) both; }
 }
+
+/* Profiles (#68): a colour per profile, the drawer's filter row, profile dots, and Settings → Profiles.
+   The colours reuse the existing semantic hues where one matches (blue, green, amber, rose). */
+:root { --pf-teal: #2F6E66; --pf-blue: var(--blue); --pf-violet: #5C4B9E; --pf-rose: var(--red); --pf-amber: var(--yellow); --pf-green: var(--green); --pf-slate: #5C666B; }
+:root[data-theme="dark"] { --pf-teal: #86C9BF; --pf-violet: #BCAFEC; --pf-slate: #A8B1B5; }
+.pdot { width: 6px; height: 6px; border-radius: 50%; flex: none; display: inline-block; background: var(--pf-slate); }
+.pdot.pc-teal, .pf-sw.pc-teal { background: var(--pf-teal); }
+.pdot.pc-blue, .pf-sw.pc-blue { background: var(--pf-blue); }
+.pdot.pc-violet, .pf-sw.pc-violet { background: var(--pf-violet); }
+.pdot.pc-rose, .pf-sw.pc-rose { background: var(--pf-rose); }
+.pdot.pc-amber, .pf-sw.pc-amber { background: var(--pf-amber); }
+.pdot.pc-green, .pf-sw.pc-green { background: var(--pf-green); }
+.pdot.pc-slate, .pf-sw.pc-slate { background: var(--pf-slate); }
+/* the drawer's filter: text chips, 28 px, the active one in the accent colour */
+#profile-filters { padding: 2px 14px 0; gap: 2px; }
+#profile-filters button { flex: none; height: 28px; padding: 0 9px; border: 0; border-radius: 6px; color: var(--muted); font-size: 12.5px; }
+#profile-filters button.on { color: var(--accent); font-weight: 500; }
+/* a new chat's folder, with the profile it falls in */
+.pchip { display: inline-flex; align-items: center; gap: 5px; vertical-align: 1px; padding: 1px 7px 1px 6px; border: 1px solid var(--line); border-radius: 9999px; color: var(--muted); font-size: 11.5px; line-height: 1.35; }
+.pchip .pdot { width: 5px; height: 5px; }
+/* Settings → Profiles: the list, then one profile's editor */
+.prof-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 13px 0; border-bottom: 1px solid var(--line); text-align: left; font-size: 14.5px; color: var(--text); }
+.prof-row:active { background: var(--bg2); }
+.prof-row .l { flex: 1; min-width: 0; }
+.prof-row .l small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; line-height: 1.45; }
+.prof-row .go { flex: none; color: var(--muted); font-size: 22px; line-height: 1; }
+.prof-row .pdot { width: 8px; height: 8px; }
+.prof-new { display: block; width: 100%; padding: 16px 0; text-align: left; color: var(--text2); font-size: 14.5px; text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px; }
+.pf-colours { display: flex; flex-wrap: wrap; gap: 11px; padding: 7px 0 9px; }
+.pf-sw { width: 22px; height: 22px; border-radius: 50%; flex: none; }
+.pf-sw.on { outline: 2px solid var(--text); outline-offset: 2px; }
+.pf-folder .l { font: 12.5px/1.5 var(--mono); overflow-wrap: anywhere; }
+.pf-x { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; color: var(--faint); flex: none; }
+.pf-x svg { width: 16px; height: 16px; }
+.pf-env { min-height: 130px; font: 12.5px/1.6 var(--mono); }
+.pf-hint { display: block; color: var(--muted); font-size: 12.5px; line-height: 1.45; margin: 2px 0 0; }
+.pf-err { color: var(--red); font-size: 12.5px; line-height: 1.45; margin: 6px 0 0; }
+.pf-muted { color: var(--muted); font-weight: 400; }
+.pf-none { color: var(--muted); font-size: 13px; padding: 4px 0 2px; }
+.pf-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
