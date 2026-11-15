@@ -142,13 +142,16 @@ try {
   }
 
   // ───── Termux setup routes ─────
-  const server = spawn("node", [path.join(REPO, "server/src/index.js"), "--port", "8769"], { env: process.env, stdio: "ignore" });
+  // PREFIX without com.termux: these tests run on a computer / in the app's Linux, never as the Termux server.
+  const server = spawn("node", [path.join(REPO, "server/src/index.js"), "--port", "8769"], { env: { ...process.env, PREFIX: "/usr" }, stdio: "ignore" });
   try {
     for (let i = 0; i < 40; i++) { try { if ((await fetch("http://127.0.0.1:8769/health")).ok) break; } catch {} await new Promise(r => setTimeout(r, 250)); }
     const bad = await fetch("http://127.0.0.1:8769/termux/install.sh?code=nope");
     ok("an unknown code is refused", bad.status === 403);
     const { default: WebSocket } = await import(path.join(REPO, "server/node_modules/ws/index.js"));
     const token = fs.readFileSync(path.join(process.env.PA_DATA, "token"), "utf8").trim();
+    const migration = await fetch(`http://127.0.0.1:8769/export/migration.tgz?token=${token}`);
+    ok("a server that isn't Termux doesn't export the whole home", migration.status === 403 && (await migration.text()) === "Only a Termux server exports its home.");
     // A token of the right length in characters but not in bytes used to throw inside the comparison:
     // a hung request over HTTP, and a dead server over the WebSocket upgrade.
     const odd = encodeURIComponent("é".repeat(token.length));
