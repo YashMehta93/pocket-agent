@@ -16,6 +16,7 @@ import { installCommand } from "./termux.js";
 import { listServices, addService, removeService, setServiceEnabled, restartService, serviceLogs } from "./services.js";
 import { getUsage, getAllUsage, refreshUsage } from "./usage.js";
 import { listAccounts, addAccount, renameAccount, removeAccount, setDefaultAccount, setChatAccount, loginStart, loginCode, authStatus, accountOf } from "./accounts.js";
+import { listProfiles, defaultProfileId, profileOf, saveProfile, removeProfile, setDefaultProfile } from "./profiles.js";
 import { engineOf, copyEngine, forget, linkOf, engineList } from "./engines.js";
 import { status as dsStatus, balance as dsBalance, setKey as dsSetKey, removeKey as dsRemoveKey, setDsSettings, chatSpend, isDeepseekModel, dsModel } from "./deepseek.js";
 
@@ -44,6 +45,7 @@ export const handlers = {
     return { version: VERSION, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
       defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account, usage: getUsage(),
       accounts: listAccounts(), defaultAccount: prefs.defaultAccount || "default", usageByAccount: getAllUsage(),
+      profiles: listProfiles(), defaultProfile: defaultProfileId(),
       updateChannel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null,
       updateKind: prefs.updateChannel ? (prefs.updateChannel.github ? "github" : prefs.updateChannel.path ? "path" : "server") : null,
       githubToken: !!prefs.updateChannel?.token, defaultRepo: DEFAULT_REPO, mode: process.env.PA_MODE || "server", devRepo: devRepo(), updateTrack: prefs.updateTrack || { track: "stable" },
@@ -59,7 +61,7 @@ export const handlers = {
       return {
         sessionId: s.sessionId, title: s.customTitle || s.summary, firstPrompt: s.firstPrompt, cwd: s.cwd,
         lastModified: s.lastModified, createdAt: s.createdAt, gitBranch: s.gitBranch, tag: s.tag,
-        custom: !!s.customTitle, pinned: prefs.pinned.includes(s.sessionId),
+        custom: !!s.customTitle, pinned: prefs.pinned.includes(s.sessionId), profile: profileOf(s.cwd).id,
         live: live.get(s.sessionId)?.state || null, elsewhere: busy.get(s.sessionId)?.kind || null,
         ...(engine ? { engine } : {}), ...(parent ? { parent, worker: workerRun(link) } : {}), ...(engine === "deepseek" ? { spend: chatSpend(s.sessionId)?.usd ?? 0 } : {}),
       };
@@ -99,6 +101,13 @@ export const handlers = {
   /** Continue a chat on another account: its process closes, and the next message reopens it there (history is shared). */
   async "chat.account"({ sessionId, account } = {}) { setChatAccount(sessionId, account); live.get(sessionId)?.close(); return {}; },
 
+  // ───── profiles: whose work a chat is (folders, account, env, its own secrets folder) ─────
+  // The param is `profile`: over the WebSocket `id` is the request id.
+  async "profiles.list"() { return { profiles: listProfiles(), defaultProfile: defaultProfileId() }; },
+  async "profiles.save"({ profile } = {}) { return { profile: saveProfile(profile, listAccounts().map(a => a.id)) }; },
+  async "profiles.remove"({ profile } = {}) { return removeProfile(profile); },
+  async "profiles.setDefault"({ profile } = {}) { setDefaultProfile(profile); return { profiles: listProfiles(), defaultProfile: defaultProfileId() }; },
+
   // ───── live sessions ─────
   // (`link` is the server's own: only delegate.js makes worker chats)
   async "session.open"(m, ws) { const s = await openSession({ ...m, link: undefined }); ws.subs.add(s.sessionId); return { sessionId: s.sessionId, info: s.info() }; },
@@ -107,7 +116,7 @@ export const handlers = {
     const s = live.get(sessionId);
     return { sessionId, info: s ? s.info() : null, events: s ? s.buffer.filter(e => e.seq > after) : [], settings: chatSettings(sessionId),
       engine: s?.engine || engineOf(sessionId) || "claude", parent: s?.link?.parent || linkOf(sessionId)?.parent || null,
-      account: accountOf(sessionId) };
+      account: accountOf(sessionId, s?.cwd) };
   },
   async unsubscribe({ sessionId }, ws) { ws.subs.delete(sessionId); return {}; },
   async send(m, ws) {
