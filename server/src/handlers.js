@@ -17,6 +17,7 @@ import { listServices, addService, removeService, setServiceEnabled, restartServ
 import { getUsage, getAllUsage, refreshUsage } from "./usage.js";
 import { listAccounts, addAccount, renameAccount, removeAccount, setDefaultAccount, setChatAccount, loginStart, loginCode, authStatus, accountOf } from "./accounts.js";
 import { engineOf, copyEngine, forget, linkOf, engineList } from "./engines.js";
+import { PROTOCOL, environment, setEnvironment } from "./environment.js";
 import { status as dsStatus, balance as dsBalance, setKey as dsSetKey, removeKey as dsRemoveKey, setDsSettings, chatSpend, isDeepseekModel, dsModel } from "./deepseek.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
@@ -42,6 +43,7 @@ export const handlers = {
     // the phone's time zone (minutes, as getTimezoneOffset()), so DeepSeek spend is counted per local day
     if (Number.isFinite(tzOffset) && tzOffset >= -900 && tzOffset <= 900 && prefs.tzOffset !== tzOffset) { prefs.tzOffset = tzOffset; savePrefs(); }
     return { version: VERSION, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
+      protocol: PROTOCOL, environment: environment(),
       defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account, usage: getUsage(),
       accounts: listAccounts(), defaultAccount: prefs.defaultAccount || "default", usageByAccount: getAllUsage(),
       updateChannel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null,
@@ -49,6 +51,10 @@ export const handlers = {
       githubToken: !!prefs.updateChannel?.token, defaultRepo: DEFAULT_REPO, mode: process.env.PA_MODE || "server", devRepo: devRepo(), updateTrack: prefs.updateTrack || { track: "stable" },
       live: [...live.values()].map(s => s.info()), engines: engineList(), deepseek: dsStatus() };
   },
+
+  // ───── this device (environment.js) ─────
+  async "environment.get"() { return { environment: environment() }; },
+  async "environment.set"({ name, reaches } = {}) { return { environment: setEnvironment({ name, reaches }) }; },
 
   // ───── session list & history ─────
   async "sessions.list"({ limit = 300, dir } = {}) {

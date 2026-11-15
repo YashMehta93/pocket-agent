@@ -25,6 +25,7 @@ import { live, getLive } from "./live-session.js";
 import { handlers } from "./handlers.js";
 import { validCode, installScript } from "./termux.js";
 import { proxy as dsProxy } from "./deepseek.js";
+import { PROTOCOL, environment } from "./environment.js";
 
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".woff2": "font/woff2" };
@@ -33,7 +34,7 @@ const json = (res, code, v) => { res.writeHead(code, { "content-type": "applicat
 export function createServer() {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://x");
-    if (url.pathname === "/health") { res.setHeader("access-control-allow-origin", "*"); return json(res, 200, { ok: true, version: VERSION, live: live.size }); }
+    if (url.pathname === "/health") { res.setHeader("access-control-allow-origin", "*"); return json(res, 200, { ok: true, version: VERSION, live: live.size, protocol: PROTOCOL, env: environment().id }); }
     if (url.pathname === "/" || url.pathname.startsWith("/ui/")) return serveUi(url.pathname, res);
     if (url.pathname.startsWith("/deepseek/")) return dsProxy(req, res, url);   // checks its own per-chat tokens
     if (url.pathname.startsWith("/termux/")) {
