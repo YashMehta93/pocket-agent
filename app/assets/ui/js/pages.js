@@ -139,7 +139,8 @@ function settingsSections() {
         + item(`<div class="set-row"><div class="l">Permission mode</div></div><div class="seg" id="d-mode">${MODES.slice(0, 4).map(m => `<button data-v="${m.id}" class="${(d.permissionMode || "default") === m.id ? "on" : ""}">${m.short}</button>`).join("")}</div>`, "ask auto bypass plan approvals default") },
     { id: "claude", title: "Claude and connection", icon: "globe",
       summary: `${settings.server ? settings.server.replace(/^https?:\/\//, "") : native ? "Runs on this phone" : location.host}${state.account?.email ? " · " + state.account.email : ""}`,
-      html: () => item(`<div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server || (native ? "This phone (built-in)" : location.host))}</small></div><button class="chip" id="s-server">Change</button></div>`, "server termux computer pc remote connection")
+      html: () => item(`<div class="set-row"><div class="l">This device<small id="env-name">${esc(state.environment?.name || "…")}</small></div><button class="chip" id="env-rename">Rename</button></div>`, "device name rename this phone computer")
+        + item(`<div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server || (native ? "This phone (built-in)" : location.host))}</small></div><button class="chip" id="s-server">Change</button></div>`, "server termux computer pc remote connection")
         + (standalone ? item(`<div class="set-row"><div class="l">Claude sign-in<small id="s-auth">Checking…</small></div><button class="chip" id="s-login">Sign in again</button></div>`, "login account logout") : "")
         + item(`<div class="set-row"><div class="l">${esc(state.account?.email || state.account?.organization || "Claude account")}<small>${esc(state.account?.subscriptionType || state.account?.apiKeySource || "Signed in through Claude Code")}</small></div></div>`, "account plan subscription")
         + item(`<div class="set-row"><div class="l">Usage limits<small>${esc(usageSummary())}</small></div><button class="chip" id="s-usage">Show</button></div>`, "usage limits quota 5-hour weekly plan")
@@ -227,6 +228,12 @@ function wireSettings(root) {
       b.querySelector("#dm").append(o);
     }
   });
+  on("#env-rename", async () => {
+    const name = await promptSheet({ title: "Name this device", value: state.environment?.name || "" });
+    if (!name) return;
+    try { state.environment = (await conn.call("environment.set", { name })).environment; toast("Renamed"); openSettingsRefresh(); }
+    catch (e) { toast(e.message, 4000); }
+  });
   on("#s-server", () => chooseServer());
   on("#u-set", () => chooseUpdateSource());
   on("#d-open", () => openDevSetup());
@@ -259,6 +266,8 @@ function wireSettings(root) {
   if (typeof wireAccountsSettings === "function") wireAccountsSettings(root);
   if (typeof wireDsSettings === "function") wireDsSettings(root);
 }
+// Another client renamed this device (or a hub changed its reaches): keep the row current.
+conn.on("environment", m => { if (!m.environment) return; state.environment = m.environment; if (page.isOpen) openSettingsRefresh(); });
 /** Re-renders the settings page on screen (home or a category) so it shows changed values. */
 function openSettingsRefresh() {
   const top = page.stack[page.stack.length - 1];

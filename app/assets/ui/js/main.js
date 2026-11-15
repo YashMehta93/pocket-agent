@@ -30,7 +30,7 @@ async function onConnected() {
   // The server serves the UI; if its files changed since this page loaded, reload to pick them up.
   if (window.__uiVersion && hello.uiVersion && hello.uiVersion !== window.__uiVersion && !Object.values(hello.live || {}).some(i => i.state === "running")) { location.reload(); return; }
   window.__uiVersion = hello.uiVersion;
-  Object.assign(state, { home: hello.home, hostName: hello.host, defaults: hello.defaults || {}, pinned: hello.pinned || [],
+  Object.assign(state, { home: hello.home, hostName: hello.host, environment: hello.environment || null, defaults: hello.defaults || {}, pinned: hello.pinned || [],
     commands: hello.commands || [], models: hello.models || [], account: hello.account, usage: hello.usage || null,
     accounts: hello.accounts || [], defaultAccount: hello.defaultAccount || "default", usageByAccount: hello.usageByAccount || {} });
   if (typeof dsHello === "function") dsHello(hello);   // engines and the DeepSeek status (deepseek.js)
