@@ -33,6 +33,7 @@ import { phoneContext } from "./devtools.js";
 import { engineOptions, engineOf, recordEngine, linkOf, recordLink, detectEngine } from "./engines.js";
 import { ready as dsReady, revokeToken, requireReady, checkFolder, dsModel, isDeepseekModel, dsSettings, chatSpend } from "./deepseek.js";
 import { accountOf, accountEnv, setChatAccount } from "./accounts.js";
+import { profileOf, listProfiles, chatEnv, profileGuard } from "./profiles.js";
 
 let toolProvider = () => undefined;
 /** delegate.js registers Pocket Agent's own MCP tools here, which keeps the import one-way (no cycle). */
@@ -82,7 +83,17 @@ export class LiveSession {
     if (effort) options.effort = effort;
     if (resume) options.resume = sessionId; else { options.sessionId = sessionId; if (title) options.title = title; }
     Object.assign(options, engineOptions(this));   // DeepSeek: its config dir, env, model, the tripwire (engines.js)
-    if (this.engine !== "deepseek") { this.account = accountOf(sessionId); if (this.account !== "default") options.env = accountEnv(this.account); }   // an extra Claude account: its own login folder
+    if (this.engine !== "deepseek") { this.account = accountOf(sessionId, cwd); if (this.account !== "default") options.env = accountEnv(this.account); }   // an extra Claude account: its own login folder
+    // The chat's profile comes from its folder: its env on top of the engine's, and (with several profiles)
+    // a guard against other profiles' secrets folders. Profile env can't set ANTHROPIC_/CLAUDE_ keys (profiles.js).
+    const prof = profileOf(cwd); this.profile = prof.id;
+    options.env = chatEnv(prof, options.env || process.env);
+    if (listProfiles().length > 1) {
+      options.hooks = { ...(options.hooks || {}) };
+      options.hooks.PreToolUse = [...(options.hooks.PreToolUse || []), { hooks: [profileGuard(prof)] }];
+      options.systemPrompt = { ...options.systemPrompt,
+        append: (options.systemPrompt.append || "") + `\nThis chat is in the "${prof.name}" profile. Its own secrets folder is $PA_PROFILE_SECRETS; other profiles' secrets folders are off limits.` };
+    }
     try { const servers = toolProvider(this); if (servers) options.mcpServers = servers; }
     catch (e) { log("pocket tools not added:", e?.message); }
     this.q = query({ prompt: this.inbox, options });
@@ -118,7 +129,7 @@ export class LiveSession {
     return { sessionId: this.sessionId, cwd: this.cwd, state: this.state, seq: this.seq, model: this.model, effort: this.effort,
       permissionMode: this.permissionMode, title: this.title, pending: [...this.pending.values()].map(p => p.info),
       activity: this.activity.snapshot(), tasks: [...this.tasks.values()],
-      engine: this.engine, parent: this.link?.parent || null, account: this.account || "default",
+      engine: this.engine, parent: this.link?.parent || null, account: this.account || "default", profile: this.profile,
       ...(this.engine === "deepseek" ? { spend: chatSpend(this.sessionId)?.usd ?? 0 } : {}),
       ...(this.allowAll ? { allowAll: true } : {}) };
   }

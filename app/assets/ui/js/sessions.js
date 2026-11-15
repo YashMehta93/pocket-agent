@@ -23,10 +23,18 @@ function renderSessions() {
     && (!state.project || s.cwd === state.project));
   // live sessions not yet on disk (brand new)
   for (const id of Object.keys(state.liveInfo)) if (!state.sessions.some(s => s.sessionId === id)) {
-    const i = state.liveInfo[id]; items.unshift({ sessionId: id, title: i.title || "New chat", cwd: i.cwd, lastModified: Date.now(), engine: i.engine, parent: i.parent });
+    const i = state.liveInfo[id]; items.unshift({ sessionId: id, title: i.title || "New chat", cwd: i.cwd, lastModified: Date.now(), engine: i.engine, parent: i.parent, profile: i.profile || profileOfCwd(i.cwd)?.id });
+  }
+  // With two or more profiles, the drawer's filter hides the chats outside the chosen one; a worker follows its parent.
+  const links = typeof dsLinks === "function" ? dsLinks() : {};
+  if (typeof profileMany === "function" && profileMany() && state.profileFilter) {
+    // parents that search or the folder filter hid still say which profile their worker is in
+    const byId = new Map(state.sessions.map(s => [s.sessionId, s]));
+    for (const [id, i] of Object.entries(state.liveInfo)) if (!byId.has(id)) byId.set(id, { ...i, sessionId: id });
+    items = items.filter(s => sessionProfileId(s, byId, links) === state.profileFilter);
   }
   // Workers sit under the chat that started them, folded (#52). A search lists whatever matches, workers too.
-  const links = typeof dsLinks === "function" ? dsLinks() : {}, listed = new Set(items.map(s => s.sessionId)), kids = {};
+  const listed = new Set(items.map(s => s.sessionId)), kids = {};
   if (!q) items = items.filter(s => { const par = links[s.sessionId]?.parent; if (!par || !listed.has(par)) return true; (kids[par] ||= []).push(s); return false; });
   const curParent = links[state.current?.sessionId]?.parent;
   if (curParent) state.openKids.add(curParent);   // the worker on screen is never hidden
@@ -44,16 +52,17 @@ function renderSessions() {
     if (!arr.length) continue;
     list.append(h(`<div class="group-label">${g}</div>`));
     for (const s of arr) {
-      list.append(sessRow(s));
-      if (kids[s.sessionId]) list.append(kidsBlock(s.sessionId, kids[s.sessionId]));
+      const prof = typeof profileOfSession === "function" ? profileOfSession(s) : null;
+      list.append(sessRow(s, false, prof));
+      if (kids[s.sessionId]) list.append(kidsBlock(s.sessionId, kids[s.sessionId], prof));
     }
   }
   if (!list.children.length) list.innerHTML = `<div class="group-label" style="text-transform:none">${state.filter ? "No matching chats" : "No chats yet"}</div>`;
 }
-function sessRow(s, nested) {
+function sessRow(s, nested, prof) {
   const st = nested ? sessionState(s.sessionId) : chatState(s.sessionId);
   const row = h(`<button class="sess ${state.current?.sessionId === s.sessionId ? "on" : ""}${nested ? " kid" : ""}">
-    ${st || nested ? `<span class="dot ${st || ""}"></span>` : ""}
+    ${st || nested ? `<span class="dot ${st || ""}"></span>` : ""}${prof && typeof pdot === "function" ? pdot(prof) : ""}
     <div class="t"><div></div><div class="meta"></div></div>
     ${state.pinned.includes(s.sessionId) ? `<span class="pin">${icon("pin")}</span>` : ""}</button>`);
   row.querySelector(".t div").textContent = s.title || s.firstPrompt || "Untitled";
@@ -65,13 +74,13 @@ function sessRow(s, nested) {
   return row;
 }
 /** "▸ 2 workers · 1 needs you" under a chat; a tap shows them, folded again with another. */
-function kidsBlock(parent, arr) {
+function kidsBlock(parent, arr, prof) {
   const open = state.openKids.has(parent), states = arr.map(s => sessionState(s.sessionId));
   const needs = states.filter(x => x === "waiting").length, busy = states.filter(x => x === "running" || x === "starting").length;
   const box = h(`<div class="sess-kids${open ? " open" : ""}"><button class="kids-toggle" aria-expanded="${open}"><span class="kt-chev" aria-hidden="true">›</span>
     <span class="meta-part kt-n">${arr.length} worker${arr.length === 1 ? "" : "s"}</span>${needs ? `<span class="meta-sep"> · </span><span class="meta-part kt-st needs">${needs} need${needs === 1 ? "s" : ""} you</span>` : busy ? `<span class="meta-sep"> · </span><span class="meta-part kt-st">${busy} working</span>` : ""}</button>
     <div class="kids-list"></div></div>`);
-  if (open) for (const s of arr) box.querySelector(".kids-list").append(sessRow(s, true));
+  if (open) for (const s of arr) box.querySelector(".kids-list").append(sessRow(s, true, prof));
   box.querySelector(".kids-toggle").onclick = () => { if (state.openKids.has(parent)) state.openKids.delete(parent); else state.openKids.add(parent); renderSessions(); };
   return box;
 }
@@ -211,7 +220,8 @@ function showEmpty() {
   $("#empty").hidden = false;
   const hr = new Date().getHours();
   $("#empty-greet").textContent = hr < 5 ? "Burning the midnight oil?" : hr < 12 ? "Good morning. What's the plan?" : hr < 18 ? "What should we build?" : "Good evening. What's next?";
-  $("#empty-cwd").innerHTML = `in <b>${esc(shortPath(cur?.cwd) || "~")}</b> · <button id="chg-dir">change folder</button>`;
+  const prof = typeof profileMany === "function" && profileMany() ? profileOfCwd(cur?.cwd) : null;
+  $("#empty-cwd").innerHTML = `in <b>${esc(shortPath(cur?.cwd) || "~")}</b>${prof && typeof profileChip === "function" ? " · " + profileChip(prof) : ""} · <button id="chg-dir">change folder</button>`;
   $("#chg-dir").onclick = () => pickFolder(cur.cwd).then(d => { if (d) { cur.cwd = d; showEmpty(); updateHeader(); } });
   const sg = $("#suggestions"); sg.innerHTML = "";
   for (const s of SUGGESTIONS) { const b = h(`<button></button>`); b.textContent = s; b.onclick = () => { input.value = s; autosize(); input.focus(); }; sg.append(b); }
@@ -225,6 +235,7 @@ function updateHeader() {
   const ds = typeof chatEngine === "function" && chatEngine(cur.sessionId) === "deepseek" ? " · DeepSeek" : "";
   // a worker says so (the drawer has it under the chat that started it; Android back returns there)
   const worker = !cur.isNew && typeof workerParentOf === "function" && workerParentOf(cur.sessionId) ? (ds ? " worker" : " · Claude worker") : "";
-  $("#chat-sub").textContent = `${shortPath(cur.cwd)}${ds}${worker}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
+  const prof = typeof profileMany === "function" && profileMany() ? profileOfCwd(cur.cwd) : null;
+  $("#chat-sub").textContent = `${shortPath(cur.cwd)}${prof ? " · " + prof.name : ""}${ds}${worker}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
   if (typeof renderTabs === "function") renderTabs();
 }

@@ -12,10 +12,10 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 
 | `t` | Args | Reply |
 |---|---|---|
-| `hello` | `tzOffset?` (minutes, from `new Date().getTimezoneOffset()`; DeepSeek spend is counted per local day) | `version, uiVersion, home, host, platform, protocol, environment, defaults, pinned, commands, models, account, live[], engines[], deepseek` (see DeepSeek and Environment below) |
+| `hello` | `tzOffset?` (minutes, from `new Date().getTimezoneOffset()`; DeepSeek spend is counted per local day) | `version, uiVersion, home, host, platform, protocol, environment, defaults, pinned, commands, models, account, live[], engines[], deepseek, profiles[], defaultProfile` (see DeepSeek, Environment and Profiles below) |
 | `environment.get` | | `environment`: this server's self-description (see Environment below) |
 | `environment.set` | `name?, reaches?`: what to change; anything left out stays | `environment`: the saved self-description. A bad name or reach fails and changes nothing |
-| `sessions.list` | `limit?, dir?` | `sessions[]: { sessionId, title, firstPrompt, cwd, lastModified, pinned, live, elsewhere, engine?, parent?, worker?, spend? }`: `engine` is `"deepseek"` for DeepSeek chats (absent = Claude), `parent` the calling chat of a worker, `worker` its latest run (`at, toolUseId, runAt, result: done\|stopped\|failed\|null, steps, ms, usd, endedAt`; `result` null and no `endedAt` while it runs), `spend` a DeepSeek chat's estimated USD |
+| `sessions.list` | `limit?, dir?` | `sessions[]: { sessionId, title, firstPrompt, cwd, lastModified, pinned, live, elsewhere, engine?, parent?, worker?, spend?, profile }`: `engine` is `"deepseek"` for DeepSeek chats (absent = Claude), `parent` the calling chat of a worker, `worker` its latest run (`at, toolUseId, runAt, result: done\|stopped\|failed\|null, steps, ms, usd, endedAt`; `result` null and no `endedAt` while it runs), `spend` a DeepSeek chat's estimated USD, `profile` the profile its folder belongs to (an id) |
 | `session.history` | `sessionId` | `messages[]` (SDK `SessionMessage`), `info` |
 | `session.open` | `sessionId?, cwd?, model?, effort?, permissionMode?, engine?` | `sessionId, info`. `engine: "claude" \| "deepseek"` picks a new chat's engine (default: `defaults.engine`, else Claude); a chat keeps its engine for life, so asking an existing chat for the other one fails with `ENGINE_FIXED`. DeepSeek also fails with `NO_DEEPSEEK_KEY` or `FOLDER_BLOCKED` |
 | `subscribe` | `sessionId, after` | `info` (live session or null), `events[]` with `seq > after`, `settings`, `engine` (`"claude"` \| `"deepseek"`), `parent` (or null) |
@@ -70,7 +70,7 @@ Token-protected HTTP routes another server pulls from (see `server/src/transfer.
 | `link` | `parent, child, engine, title, toolUseId`, and when the run ends `result, steps, ms, usd, endedAt` | a worker chat started (or got a follow-up) for `parent` (then `sessions.changed`); sent again with how the run went |
 | `environment` | `environment`: the whole self-description | this server's name or reaches changed (`environment.set`) |
 
-`info` (in `state` events, `hello.live` and `subscribe`) has `sessionId, cwd, state, seq, model, effort, permissionMode, title, pending[], activity, tasks[], engine, parent`, plus `spend` (estimated USD so far) in DeepSeek chats and `allowAll: true` while a worker runs without asking. `tasks[]`: the subagents and background commands Claude started, `{ id, kind: agent|command, description, status: running|completed|stopped|failed, activity, tokens, tools, ms, startedAt, endedAt, summary, agentType, toolUseId, taskType }` (Claude Code's own housekeeping tasks aren't listed). In `ev`, besides SDK messages: `pa_user` (a sent message), `pa_error`, and `pa_cost` `{ usd }` after each DeepSeek turn (what that turn cost, estimated).
+`info` (in `state` events, `hello.live` and `subscribe`) has `sessionId, cwd, state, seq, model, effort, permissionMode, title, pending[], activity, tasks[], engine, parent, account, profile`, plus `spend` (estimated USD so far) in DeepSeek chats and `allowAll: true` while a worker runs without asking. `tasks[]`: the subagents and background commands Claude started, `{ id, kind: agent|command, description, status: running|completed|stopped|failed, activity, tokens, tools, ms, startedAt, endedAt, summary, agentType, toolUseId, taskType }` (Claude Code's own housekeeping tasks aren't listed). In `ev`, besides SDK messages: `pa_user` (a sent message), `pa_error`, and `pa_cost` `{ usd }` after each DeepSeek turn (what that turn cost, estimated).
 
 ## DeepSeek
 
@@ -186,6 +186,20 @@ Everything else — settings and prefs, `accounts.*`, `deepseek.*`, `devices.*`,
 Over HTTP, a device may fetch `/export/sessions.tgz` with `export.sessions` and `/bundle/info` / `/bundle.tgz` with `update.source`; every other token-protected route answers `403 { error: "forbidden" }`. An unknown token is `401 { error: "bad token" }`.
 
 **Events.** A device's socket gets only `ev`, `state`, `activity`, `permission.request`, `permission.resolved`, `tasks`, `sessions.changed` and `link` (`DEVICE_EVENTS` in `server/src/hub.js`): a chat's live state and the chat list. Every other event stays with the owner.
+## Profiles
+
+A profile says whose work a chat is (`server/src/profiles.js`): its folders (workspaces), the Claude account its chats use, environment variables, and a secrets folder of its own. A chat's profile comes from its folder: the longest workspace that contains it, else the default profile. With no saved profiles there's one **Personal** profile, and nothing is written until a profile is saved.
+
+| `t` | Args | Reply |
+|---|---|---|
+| `profiles.list` | | `profiles[{ id, name, color, workspaces[], accounts{ local }, env{} }]`, `defaultProfile` (an id) |
+| `profiles.save` | `profile` | `profile` (the saved one). A new profile without an `id` gets one from its name (`work`); an existing one is updated by `id` |
+| `profiles.remove` | `profile` | `{ ok: true, keptSecrets }`: the profile is gone, its secrets folder is kept (at `keptSecrets`). The last profile can't be removed |
+| `profiles.setDefault` | `profile` | `profiles`, `defaultProfile` |
+
+The param is `profile`, because over the WebSocket `id` is the request id. `color` is one of `teal, blue, violet, rose, amber, green, slate` (anything else is `teal`). A workspace is an existing folder, and a folder belongs to one profile only. `accounts.local` is a Claude account id from `accounts.list` (or `default`): chats in its folders run on it unless the chat chose another account. `env` holds at most 30 variables (names like `A-Z_…`; never `HOME`, `PATH` or `ANTHROPIC_`/`CLAUDE_`/`PA_` ones); `$SECRETS` in a value is the profile's own folder, `<data>/secrets/profiles/<id>` (0700). A chat in a profile gets its env and, with two or more profiles, a guard that refuses tool calls touching another profile's secrets folder.
+
+`hello` adds `profiles` and `defaultProfile`; `sessions.list` items carry `profile` (an id), and `info` carries the chat's `profile`. A `{ t: "profiles", profiles, defaultProfile }` event says the list changed (after save, remove or setDefault).
 
 ## SSE `/events?v=2&api=<n>&token=` (Android background service)
 

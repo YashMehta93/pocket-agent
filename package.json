@@ -19,6 +19,8 @@
     "test:accounts": "cd server && node test/accounts.test.mjs",
     "test:devices": "cd server && node test/devices.test.mjs",
     "test:environment": "cd server && node test/environment.test.mjs",
+    "test:profiles": "cd server && node test/profiles.test.mjs",
+    "test:profiles-ui": "node tests/ui/profiles.test.mjs",
     "test:upgrade": "bash server/test/upgrade.test.sh",
     "test:services": "node server/test/services.test.mjs",
     "test:deepseek": "cd server && node test/deepseek.test.mjs"

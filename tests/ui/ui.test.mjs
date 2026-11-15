@@ -374,6 +374,34 @@ ev("openSettings()"); ev(`const q = document.querySelector("#set-q"); q.value = 
 ok("Settings has a This device row, with its name and Rename",
   /This device/.test(tx("#set-results")) && !!$("#set-results .set-item:not([hidden]) #env-rename") && $("#set-results .set-item:not([hidden]) #env-name").textContent.length > 0);
 ev("page.close()");
+// Profiles (#68): the Settings row, the drawer's filter with two profiles, and the folder rule
+ev("page.close(); openSettings()");
+const profCat = $('[data-sec="profiles"]');
+ok(`Settings has Profiles: "${profCat?.querySelector("small")?.textContent}"`, !!profCat && profCat.textContent.includes("Personal"));
+ev(`window.__saveProfiles = { profiles: state.profiles, defaultProfile: state.defaultProfile };
+  applyProfiles({ profiles: [
+    { id: "personal", name: "Personal", color: "teal", workspaces: [], accounts: {}, env: {} },
+    { id: "work", name: "Work", color: "blue", workspaces: ["/tmp/pa-work"], accounts: {}, env: {} } ], defaultProfile: "personal" })`);
+const profChips = $$("#profile-filters button").map(b => b.textContent);
+ok(`two profiles: the drawer filter has three chips: ${profChips.join(" · ")}`, !$("#profile-filters").hidden && profChips.join(",") === "All,Personal,Work");
+const allRows = $$("#session-list .sess").length;
+$$("#profile-filters button").find(b => b.textContent === "Work").click();
+ok(`choosing Work hides the personal chats (${allRows} → ${$$("#session-list .sess").length})`, allRows > 0 && $$("#session-list .sess").length === 0 && ev(`state.sessions.every(s => s.profile === "personal")`));
+$$("#profile-filters button")[0].click();
+ok("back on All, each chat row shows its profile's dot", $$("#session-list .sess").length === allRows && $$("#session-list .sess .pdot").length === allRows && $$("#session-list .sess .pdot.pc-teal").length === allRows);
+ev(`applyProfiles({ profiles: window.__saveProfiles.profiles, defaultProfile: window.__saveProfiles.defaultProfile }); delete window.__saveProfiles; page.close()`);
+ok("one profile: no filter row, no dots", $("#profile-filters").hidden && $$("#session-list .sess .pdot").length === 0);
+ok("a folder takes its longest profile workspace", ev(`(() => {
+  const save = state.profiles, def = state.defaultProfile;
+  state.profiles = [
+    { id: "personal", name: "Personal", color: "teal", workspaces: ["/work"], accounts: {}, env: {} },
+    { id: "work", name: "Work", color: "blue", workspaces: ["/work/app"], accounts: {}, env: {} } ];
+  state.defaultProfile = "personal";
+  const r = profileOfCwd("/work/app/src").id === "work" && profileOfCwd("/work/app").id === "work"
+    && profileOfCwd("/work/other").id === "personal" && profileOfCwd("/work/apple").id === "personal" && profileOfCwd("/elsewhere").id === "personal";
+  state.profiles = save; state.defaultProfile = def;
+  return r; })()`));
+
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");
 ev(`state.models = [{ value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)" }, { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5" }]`);
