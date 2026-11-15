@@ -44,13 +44,14 @@ function serverEnv(home, extra = {}) {
   delete e.CLAUDE_CONFIG_DIR; delete e.PA_SUPERVISED; delete e.PA_MODE; delete e.PA_PORT; delete e.PA_HUB_BACKOFF_MS;
   return e;
 }
-const errors = new Map();
+const output = new Map();
 function startServer(port, env, token) {
-  const p = spawn("node", [path.join(REPO, "server/src/index.js"), "--port", String(port), "--token", token], { env, stdio: ["ignore", "ignore", "pipe"] });
-  let err = ""; p.stderr.on("data", d => { err += d; }); errors.set(p, err);
-  p.on("error", e => { err += String(e); });
+  const p = spawn("node", [path.join(REPO, "server/src/index.js"), "--port", String(port), "--token", token], { env, stdio: ["ignore", "pipe", "pipe"] });
+  let out = ""; const add = d => { out += d; }; p.stdout.on("data", add); p.stderr.on("data", add); output.set(p, () => out);
+  p.on("error", e => { out += String(e); });
   return p;
 }
+const serverOutput = p => (output.get(p)?.() || "").slice(-800);
 const health = async port => { try { return (await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) })).ok; } catch { return false; } };
 const waitHealth = (port, ms = 15000) => poll(() => health(port), ms, 200);
 const exited = p => new Promise(r => (p.exitCode !== null || p.signalCode !== null ? r() : p.once("exit", r)));
@@ -97,9 +98,11 @@ try {
 
   upstream = startServer(U_PORT, serverEnv(U_HOME), U_TOKEN);
   ok("the upstream server starts", await waitHealth(U_PORT));
+  if (!(await health(U_PORT))) console.log(serverOutput(upstream));
 
   hub = startServer(H_PORT, serverEnv(H_HOME, { PA_HUB_BACKOFF_MS: "200" }), H_TOKEN);
   ok("the hub server starts", await waitHealth(H_PORT));
+  if (!(await health(H_PORT))) console.log(serverOutput(hub));
 
   client = await connect(H_PORT, H_TOKEN);
   const list = async () => (await client.call("environments.list")).environments;
@@ -190,7 +193,7 @@ try {
   try { hub?.kill("SIGKILL"); } catch {}
   try { upstream?.kill("SIGKILL"); } catch {}
   await Promise.all([hub && exited(hub), upstream && exited(upstream)]);
-  for (const [p, err] of errors) if (p.exitCode && err) console.log(`(server exited ${p.exitCode})`, err.slice(-800));
+  if (fails) for (const p of [hub, upstream]) if (p) console.log(`(server ${p.pid} output)`, serverOutput(p));
   fs.rmSync(T, { recursive: true, force: true });
 }
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
