@@ -111,8 +111,9 @@ class ChatView {
   reset() {
     this.root.innerHTML = "";
     this.tools = new Map();      // tool_use_id -> card
-    this.ghosts = new Map();     // `${msgId}:${index}` -> {el, kind, text}
-    this.streamTools = new Map(); // `${msgId}:${index}` -> {id, json} for tool calls being streamed
+    this.ghosts = new Map();     // `${parent || ""}:${msgId}:${index}` -> {el, md?, kind, text}
+    this.streamTools = new Map(); // the same key -> {id, json} for tool calls being streamed
+    this.curMsgByParent = new Map(); // parent_tool_use_id || "" -> the message id streaming there now
     this.order = [];             // message uuids in order (for fork/edit)
     this.userTexts = new Map();  // uuid -> text
     this.rendered = new Set();   // uuids already rendered
@@ -178,22 +179,28 @@ class ChatView {
 
   stream(ev) {
     const e = ev.event; if (!e) return;
-    if (e.type === "message_start") { this.curMsg = e.message?.id; this.curParent = ev.parent_tool_use_id; return; }
-    const key = `${this.curMsg}:${e.index}`;
+    const parentId = ev.parent_tool_use_id || null;
+    const pkey = parentId || "";
+    if (e.type === "message_start") { this.curMsgByParent.set(pkey, e.message?.id); return; }
+    // Each parent (the main chat, each subagent) has its own message streaming. Subagents interleave with the
+    // main reply, so a single "current message" would key their blocks under whichever message started last.
+    const msgId = this.curMsgByParent.get(pkey);
+    if (msgId == null) return;   // a block whose message start we missed: its final message draws it
+    const key = `${pkey}:${msgId}:${e.index}`;
     if (e.type === "content_block_start") {
       const b = e.content_block;
       if (b.type === "text" || b.type === "thinking") {
         if (b.type === "text") {
           const el = h(`<div class="md ghost caret"></div>`);
-          this.container(this.curParent).append(el);
+          this.container(parentId).append(el);
           this.ghosts.set(key, { el, kind: "text", text: "" });
         } else {
-          const md = this.thoughtSlot(this.curParent, true);
+          const md = this.thoughtSlot(parentId, true);
           this.ghosts.set(key, { el: md.closest(".thinking"), md, kind: "thinking", text: "" });
         }
         this.scrollIfPinned();
       } else if (b.type === "tool_use") {
-        if (!this.tools.has(b.id)) this.toolCard(b.id, b.name, {}, this.curParent, true);
+        if (!this.tools.has(b.id)) this.toolCard(b.id, b.name, {}, parentId, true);
         (this.streamTools ||= new Map()).set(key, { id: b.id, json: "" });
       }
     } else if (e.type === "content_block_delta") {
@@ -220,12 +227,34 @@ class ChatView {
   scheduleGhost(g) { if (g.t) return; g.t = setTimeout(() => { g.t = null; this.paintGhost(g); this.scrollIfPinned(); }, 70); }
   paintGhost(g) {
     if (g.kind === "text") setMd(g.el, g.text);
-    else setMd(g.md, g.text || "…");
+    else { if (g.text.trim()) delete g.md.dataset.live; setMd(g.md, g.text || "…"); }
   }
-  finishGhosts() { for (const g of this.ghosts.values()) { clearTimeout(g.t); g.el.classList.remove("caret"); if (g.kind === "thinking") this.endThought(g.el); } this.ghosts.clear(); }
-  takeGhost(kind, parentId) {
-    for (const [k, g] of this.ghosts) if (g.kind === kind) { clearTimeout(g.t); this.ghosts.delete(k); return g; }
-    return null;
+  finishGhosts() {
+    const heads = new Set();
+    for (const g of this.ghosts.values()) {
+      clearTimeout(g.t);
+      g.el.classList.remove("caret");
+      if (g.kind !== "thinking") continue;
+      if (g.text.trim()) { delete g.md.dataset.live; if (g.md.isConnected) setMd(g.md, g.text); }
+      if (g.md.isConnected) heads.add(g.el);
+    }
+    this.ghosts.clear();
+    for (const head of heads) {
+      // a thought that never got a word is no entry (a withheld or redacted block with no summary)
+      head.querySelectorAll(".th-body > .md[data-live]").forEach(md => { if (!md.textContent.trim() || md.textContent.trim() === "…") md.remove(); });
+      if (!head.querySelector(".th-body > .md")) head.remove(); else this.endThought(head);
+    }
+  }
+  /** The live placeholder for exactly this block, or null: never another block's placeholder. */
+  takeGhost(kind, parentId, msgId, index) {
+    if (msgId == null) return null;
+    const exact = `${parentId || ""}:${msgId}:${index}`;
+    let key = this.ghosts.get(exact)?.kind === kind ? exact : null;
+    // the same block keyed under another parent (a reply replayed with a different parent) is still its own
+    if (!key) for (const [k, g] of this.ghosts) if (g.kind === kind && k.endsWith(`:${msgId}:${index}`)) { key = k; break; }
+    if (!key) return null;
+    const g = this.ghosts.get(key);
+    clearTimeout(g.t); this.ghosts.delete(key); return g;
   }
 
   // ───── assistant content ─────
@@ -239,18 +268,24 @@ class ChatView {
       this.fresh = true;
       if (b.type === "text") {
         if (!b.text?.trim()) return;
-        const g = !history && this.takeGhost("text");
+        const g = !history && this.takeGhost("text", parentId, msg.id, i);
         const el = g ? g.el : h(`<div class="md"></div>`);
         el.classList.remove("ghost", "caret");
         setMd(el, b.text);
         if (!g) parent.append(el);
         if (!parentId) this.lastText = b.text;
       } else if (b.type === "thinking" || b.type === "redacted_thinking") {
-        const g = !history && this.takeGhost("thinking");
         const text = b.thinking || "";
-        if (!text && !g) return;
+        const g = !history && this.takeGhost("thinking", parentId, msg.id, i);
+        if (!text) {
+          // Withheld (or redacted) thinking: no entry of its own. Its live slot, when there is one,
+          // stays empty for the summary that follows in this message.
+          if (g) g.el.classList.remove("caret");
+          return;
+        }
         const md = g ? g.md : this.thoughtSlot(parentId, false);
-        if (text) setMd(md, text);
+        delete md.dataset.live;
+        setMd(md, text);
         this.endThought(md.closest(".thinking"));
       } else if (b.type === "tool_use" || b.type === "server_tool_use") {
         const card = this.tools.get(b.id);
@@ -405,9 +440,15 @@ class ChatView {
       head.querySelector("summary").addEventListener("click", () => delete head.dataset.auto);   // the person's choice sticks
       parent.append(head);
     }
-    const md = document.createElement("div"); md.className = "md";
-    head.querySelector(".th-body").append(md);
+    // Withheld thinking streams as an empty block and then a block with its summary. The summary fills the
+    // empty slot instead of adding a second entry to the same thought.
+    let md = head.querySelector(".th-body > .md:last-child");
+    if (!md?.dataset.live) {
+      md = document.createElement("div"); md.className = "md";
+      head.querySelector(".th-body").append(md);
+    }
     if (live) {
+      md.dataset.live = "1";
       head.classList.add("ghost");
       head.querySelector("summary span").textContent = "Thinking…";
       if (settings.showThinking && !head.open) { head.open = true; head.dataset.auto = "1"; }
@@ -418,7 +459,7 @@ class ChatView {
     if (!head) return;
     head.classList.remove("ghost");
     if (head.dataset.auto) { head.open = false; delete head.dataset.auto; }
-    const n = head.querySelectorAll(".th-body > .md").length;
+    const n = [...head.querySelectorAll(".th-body > .md")].filter(md => !md.dataset.live && md.textContent.trim()).length;
     head.querySelector("summary span").textContent = n > 1 ? `Thought · ${n} times` : "Thought";
   }
 
