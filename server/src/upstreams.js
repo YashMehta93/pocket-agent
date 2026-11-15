@@ -536,11 +536,12 @@ export class EnvironmentConnection {
 
   /** The first local subscriber asks the environment; the others share that reply and the events since. */
   async localSubscribe(ws, sid, after, full) {
+    const already = ws.subs.has(full);   // a second subscribe from the same socket counts once
     ws.subs.add(full);
     watchRemoteSub(ws, full, this.id, sid);
     let sub = this.subs.get(sid);
     if (!sub) {
-      sub = { count: 0, after, lastSeq: 0, info: null, reply: null, events: [] };
+      sub = { count: 1, after, lastSeq: 0, info: null, reply: null, events: [] };
       this.subs.set(sid, sub);
       sub.ready = (async () => {
         const raw = await this.call("subscribe", { sessionId: sid, after }, 30000);
@@ -550,8 +551,7 @@ export class EnvironmentConnection {
         sub.lastSeq = sub.events.reduce((n, e) => Math.max(n, e.seq || 0), 0);
       })();
       sub.ready.catch(() => { if (this.subs.get(sid) === sub) this.subs.delete(sid); });
-    }
-    sub.count++;
+    } else if (!already) sub.count++;
     try { await sub.ready; }
     catch (e) { ws.subs.delete(full); unwatchRemoteSub(ws, full); sub.count--; throw e; }
     const reply = sub.reply || {};
