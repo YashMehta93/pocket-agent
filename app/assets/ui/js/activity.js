@@ -68,7 +68,7 @@ function renderActivityLog() {
     <div class="sub">${esc(a.detail || "")}</div>
     <div class="act-stats"><span>${icon("bolt")}${esc(elapsed(a) || "–")}</span><span>${icon("brain")}${fmtTok(a.tokens?.thinking || 0)} thinking</span><span>${icon("pencil")}${fmtTok(a.tokens?.output || 0)} written</span><span>${icon("list")}${a.steps.length} steps</span></div>
     <div class="act-steps">${a.steps.length ? a.steps.map(s => `
-      <div class="act-step ${s.status} ${s.parent ? "nested" : ""}">
+      <div class="act-step ${esc(s.status)} ${s.parent ? "nested" : ""}">
         <span class="as-k">${kindIcon(s)}</span>
         <div class="as-m"><div class="as-t">${esc(s.title)}</div>${s.detail ? `<div class="as-d">${esc(s.detail)}</div>` : ""}</div>
         <span class="as-time">${rel(s.at)}${s.end ? ` · ${fmtDur(s.end - s.at)}` : ""}</span>

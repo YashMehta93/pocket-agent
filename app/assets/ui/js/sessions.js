@@ -68,7 +68,7 @@ function sessRow(s, nested, prof) {
   const env = typeof sessionEnvironment === "function" ? sessionEnvironment(s.sessionId) : null;
   const offline = env ? env.offline : !!s.offline;
   const row = h(`<button class="sess ${state.current?.sessionId === s.sessionId ? "on" : ""}${nested ? " kid" : ""}${offline ? " offline" : ""}">
-    ${st || nested ? `<span class="dot ${st || ""}"></span>` : ""}${prof && typeof pdot === "function" ? pdot(prof) : ""}
+    ${st || nested ? `<span class="dot ${esc(st || "")}"></span>` : ""}${prof && typeof pdot === "function" ? pdot(prof) : ""}
     <div class="t"><div></div><div class="meta"></div></div>
     ${state.pinned.includes(s.sessionId) ? `<span class="pin">${icon("pin")}</span>` : ""}</button>`);
   row.querySelector(".t div").textContent = s.title || s.firstPrompt || "Untitled";

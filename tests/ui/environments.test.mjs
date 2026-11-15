@@ -174,8 +174,9 @@ ok("Test answers inline, an error in red", $("#env-test-res").classList.contains
 ev(`const u = document.querySelector("#env-url"); u.value = "100.101.102.103:8765"; document.querySelector("#env-test").click()`);
 await until(() => /OK · 84 ms/.test(text("#env-test-res")), 5000, "test ok");
 ok("…and a good address answers OK with its version", text("#env-test-res") === "OK · 84 ms · v1.3.0");
-ev(`state.profiles = ["personal", "work"]; sheet.close(true); addEnvironmentSheet()`);
-ok("two profiles add a Profile select", $$("#env-profile option").length === 2 && $("#env-profile").value === "personal");
+ev(`window.__profSave = { profiles: state.profiles, defaultProfile: state.defaultProfile };
+  state.profiles = ["personal", "work"]; state.defaultProfile = "work"; sheet.close(true); addEnvironmentSheet()`);
+ok("two profiles add a Profile select, defaulting to the default profile", $$("#env-profile option").length === 2 && $("#env-profile").value === "work");
 ev(`document.querySelector("#env-profile").value = "work";
   const u = document.querySelector("#env-url"); u.value = "100.64.0.9:8765";
   const c = document.querySelector("#env-code"); c.value = "WRONG"; c.dispatchEvent(new window.Event("input"));
@@ -192,7 +193,7 @@ fire([envA, { ...envA, id: "env-new", name: "Laptop", url: "http://100.64.0.9:87
 ok("when it connects the dot turns green", !!$$("#page-body .env-row").some(r => /Laptop/.test(r.textContent) && r.querySelector(".dot.online")));
 
 // 5. The drawer: a device's chats dimmed with its chip, and the All / Phone / device filter
-ev(`state.profiles = []`);
+ev(`state.profiles = []; if (window.__profSave) { state.defaultProfile = window.__profSave.defaultProfile; delete window.__profSave; }`);
 const envC = { id: "env-c", name: "A very long machine name", url: "http://100.64.0.3:8765", profile: "personal", state: "offline", version: null, protocol: null, error: "Can't reach 100.64.0.3:8765", lastOnlineAt: null };
 fire([envA, envB, envC]);
 const local = { sessionId: "cccccccc-0000-4000-8000-0000000000b1", title: "Local chat", cwd: "/home/me/app", lastModified: Date.now() };

@@ -391,6 +391,45 @@ $$("#profile-filters button")[0].click();
 ok("back on All, each chat row shows its profile's dot", $$("#session-list .sess").length === allRows && $$("#session-list .sess .pdot").length === allRows && $$("#session-list .sess .pdot.pc-teal").length === allRows);
 ev(`applyProfiles({ profiles: window.__saveProfiles.profiles, defaultProfile: window.__saveProfiles.defaultProfile }); delete window.__saveProfiles; page.close()`);
 ok("one profile: no filter row, no dots", $("#profile-filters").hidden && $$("#session-list .sess .pdot").length === 0);
+// Profiles and environments share ONE compact filter row (#69): chips, a thin divider, both choices apply
+ev(`window.__saveRow69 = { profiles: state.profiles, defaultProfile: state.defaultProfile, envs: state.environments, sessions: state.sessions };
+  applyProfiles({ profiles: [
+    { id: "personal", name: "Personal", color: "teal", workspaces: [], accounts: {}, env: {} },
+    { id: "work", name: "Work", color: "blue", workspaces: ["/tmp/pa-work"], accounts: {}, env: {} } ], defaultProfile: "personal" });
+  environmentsChanged([{ id: "env-row", name: "Laptop", url: "http://127.0.0.1:9", profile: "personal", state: "online", version: "1.2.0", protocol: 1, error: null, lastOnlineAt: Date.now() }]);
+  const now = Date.now();
+  state.sessions = [
+    { sessionId: "aaaaaaaa-0000-4000-8000-000000000011", title: "Local personal", cwd: "/tmp/pa-personal", lastModified: now, profile: "personal" },
+    { sessionId: "bbbbbbbb-0000-4000-8000-000000000012", title: "Local work", cwd: "/tmp/pa-work", lastModified: now - 1, profile: "work" },
+    { sessionId: "env-row:cccccccc-0000-4000-8000-000000000013", title: "Laptop work", cwd: "/home/work", lastModified: now - 2, remote: true, environment: "env-row", environmentName: "Laptop", offline: false, profile: "work" },
+    { sessionId: "env-row:dddddddd-0000-4000-8000-000000000014", title: "Laptop personal", cwd: "/home/personal", lastModified: now - 3, remote: true, environment: "env-row", environmentName: "Laptop", offline: false, profile: "personal" } ];
+  renderProfileFilter(); renderEnvFilters(); renderSessions()`);
+const rowIds = [...$("#chat-filters").children].map(el => el.id);
+ok(`one compact filter row: ${rowIds.join(" · ")}`, $("#chat-filters").parentElement === $("#drawer")
+  && rowIds.join(",") === "profile-filters,filter-sep,env-filters" && !$("#chat-filters").hidden
+  && !$("#profile-filters").hidden && !$("#env-filters").hidden && !$("#filter-sep").hidden
+  && $$("#profile-filters button").map(b => b.textContent).join(",") === "All,Personal,Work"
+  && $$("#env-filters button").map(b => b.textContent).join(",") === "All,Phone,Laptop");
+ok("the profile chips come first, then the thin divider, then the environments",
+  $("#chat-filters").firstElementChild.id === "profile-filters" && $("#filter-sep").nextElementSibling.id === "env-filters");
+$$("#profile-filters button").find(b => b.textContent === "Work").click();
+$$("#env-filters button").find(b => b.textContent === "Laptop").click();
+ok("both choices apply together", ev("state.profileFilter") === "work" && ev("state.envFilter") === "env-row"
+  && $$("#session-list .sess").length === 1 && /Laptop work/.test($("#session-list").textContent));
+ev(`if (window.__saveRow69) { applyProfiles({ profiles: window.__saveRow69.profiles, defaultProfile: window.__saveRow69.defaultProfile });
+    state.sessions = window.__saveRow69.sessions; environmentsChanged(window.__saveRow69.envs); delete window.__saveRow69; }
+  setProfileFilter(""); renderSessions()`);
+ok("with neither part showing, the filter row is hidden", $("#chat-filters").hidden && $("#profile-filters").hidden && $("#env-filters").hidden);
+// Remote text is untrusted (#69, R3): a chat title that looks like HTML stays text
+ev(`window.__saveXss69 = state.sessions;
+  state.sessions = [{ sessionId: "env-xss:eeeeeeee-0000-4000-8000-000000000015", title: "<img src=x onerror=alert(1)>",
+    cwd: "/tmp/<b>cwd", lastModified: Date.now(), remote: true, environment: "env-xss", environmentName: "<img src=x onerror=alert(1)>", offline: false, profile: "personal" }];
+  renderSessions()`);
+const xssRow = $$("#session-list .sess").find(b => (b.querySelector(".t div")?.textContent || "").includes("<img"));
+ok("a remote chat title renders as text, with no img element",
+  !!xssRow && xssRow.querySelector(".t div").textContent === "<img src=x onerror=alert(1)>"
+  && !$("#session-list img") && (xssRow.querySelector(".meta").textContent || "").includes("<b>cwd"));
+ev(`state.sessions = window.__saveXss69; delete window.__saveXss69; renderSessions()`);
 ok("a folder takes its longest profile workspace", ev(`(() => {
   const save = state.profiles, def = state.defaultProfile;
   state.profiles = [

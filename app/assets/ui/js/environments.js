@@ -242,7 +242,7 @@ function addEnvironmentSheet() {
     <p class="env-test" id="env-test-res" role="status" hidden></p>
     <input class="field" id="env-code" placeholder="ABCD-EFGH" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Pair code">
     <div class="set-foot">Get a code on the other computer: <code>node server/src/pair-cli.js</code></div>
-    ${profiles.length >= 2 ? `<div class="set-row"><div class="l">Profile</div></div><select class="field" id="env-profile" aria-label="Profile">${profiles.map(p => `<option value="${esc(p.id)}"${p.id === "personal" ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select>` : ""}
+    ${profiles.length >= 2 ? `<div class="set-row"><div class="l">Profile</div></div><select class="field" id="env-profile" aria-label="Profile">${profiles.map(p => `<option value="${esc(p.id)}"${p.id === (state.defaultProfile || profiles[0].id) ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select>` : ""}
     <div class="btns row2"><button class="btn ghost" data-a="cancel">Cancel</button><button class="btn primary" id="env-add-btn">Add</button></div>`,
   { key: "env-add" });
   const url = b.querySelector("#env-url"), code = b.querySelector("#env-code"), err = b.querySelector("#env-err"),
