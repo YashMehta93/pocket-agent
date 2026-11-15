@@ -101,6 +101,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applySet
 // ───────────── app state ─────────────
 const state = {
   home: "", hostName: "", sessions: [], pinned: [], commands: [], models: [], account: null, usage: null, defaults: {},
+  environment: null,   // this server's self-description: { id, name, os, … } (hello.environment, "environment")
   liveInfo: {},     // sessionId -> info from server (state, model, mode, pending…)
   pending: [],      // permission requests (all sessions)
   current: null,    // { sessionId, cwd, title, isNew, lastSeq, … }

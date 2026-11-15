@@ -369,6 +369,11 @@ const r53 = ev(`(() => {
 ok(`(#53) an empty thought block adds no entry: "${r53.label}" · ${r53.mds.length} entr${r53.mds.length === 1 ? "y" : "ies"}`,
   r53.label === "Thought" && r53.mds.length === 1 && r53.mds[0] === "The thought, summarised.");
 
+// this device (server/src/environment.js): Settings shows its name, with a way to rename it
+ev("openSettings()"); ev(`const q = document.querySelector("#set-q"); q.value = "this device"; q.dispatchEvent(new window.Event("input"))`);
+ok("Settings has a This device row, with its name and Rename",
+  /This device/.test(tx("#set-results")) && !!$("#set-results .set-item:not([hidden]) #env-rename") && $("#set-results .set-item:not([hidden]) #env-name").textContent.length > 0);
+ev("page.close()");
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");
 ev(`state.models = [{ value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)" }, { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5" }]`);

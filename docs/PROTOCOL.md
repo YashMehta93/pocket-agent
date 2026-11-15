@@ -12,7 +12,9 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 
 | `t` | Args | Reply |
 |---|---|---|
-| `hello` | `tzOffset?` (minutes, from `new Date().getTimezoneOffset()`; DeepSeek spend is counted per local day) | `version, uiVersion, home, host, platform, defaults, pinned, commands, models, account, live[], engines[], deepseek` (see DeepSeek below) |
+| `hello` | `tzOffset?` (minutes, from `new Date().getTimezoneOffset()`; DeepSeek spend is counted per local day) | `version, uiVersion, home, host, platform, protocol, environment, defaults, pinned, commands, models, account, live[], engines[], deepseek` (see DeepSeek and Environment below) |
+| `environment.get` | | `environment`: this server's self-description (see Environment below) |
+| `environment.set` | `name?, reaches?`: what to change; anything left out stays | `environment`: the saved self-description. A bad name or reach fails and changes nothing |
 | `sessions.list` | `limit?, dir?` | `sessions[]: { sessionId, title, firstPrompt, cwd, lastModified, pinned, live, elsewhere, engine?, parent?, worker?, spend? }`: `engine` is `"deepseek"` for DeepSeek chats (absent = Claude), `parent` the calling chat of a worker, `worker` its latest run (`at, toolUseId, runAt, result: done\|stopped\|failed\|null, steps, ms, usd, endedAt`; `result` null and no `endedAt` while it runs), `spend` a DeepSeek chat's estimated USD |
 | `session.history` | `sessionId` | `messages[]` (SDK `SessionMessage`), `info` |
 | `session.open` | `sessionId?, cwd?, model?, effort?, permissionMode?, engine?` | `sessionId, info`. `engine: "claude" \| "deepseek"` picks a new chat's engine (default: `defaults.engine`, else Claude); a chat keeps its engine for life, so asking an existing chat for the other one fails with `ENGINE_FIXED`. DeepSeek also fails with `NO_DEEPSEEK_KEY` or `FOLDER_BLOCKED` |
@@ -51,7 +53,7 @@ Handlers live in `server/src/handlers.js`. To add one: add a function there, doc
 | `migrate.status` | | `job` |
 | `native.call` | `method, params, timeoutMs?` | `result` from the phone (server → phone RPC, see below) |
 
-Token-protected HTTP routes another server pulls from (see `server/src/transfer.js`): `GET /bundle/info`, `GET /bundle.tgz` (server + UI code), `GET /export/sessions.tgz` (chats), `GET /export/migration.tgz` (the whole home, for Move from Termux), `GET /apk/info`, `GET /apk/download`.
+Token-protected HTTP routes another server pulls from (see `server/src/transfer.js`): `GET /bundle/info`, `GET /bundle.tgz` (server + UI code), `GET /export/sessions.tgz` (chats), `GET /export/migration.tgz` (the whole home, for Move from Termux), `GET /apk/info`, `GET /apk/download`. Pairing has its own routes (see Devices below): `POST /devices/redeem` (no token), `POST /devices/pair?token=` (owner).
 
 ## Events
 
@@ -66,6 +68,7 @@ Token-protected HTTP routes another server pulls from (see `server/src/transfer.
 | `sessions.changed` | | refresh the chat list |
 | `deepseek` | `deepseek`: the whole object, or part of it (`spend` and `price` after metered requests, at most every 2 s) | DeepSeek key, balance, spend or settings changed |
 | `link` | `parent, child, engine, title, toolUseId`, and when the run ends `result, steps, ms, usd, endedAt` | a worker chat started (or got a follow-up) for `parent` (then `sessions.changed`); sent again with how the run went |
+| `environment` | `environment`: the whole self-description | this server's name or reaches changed (`environment.set`) |
 
 `info` (in `state` events, `hello.live` and `subscribe`) has `sessionId, cwd, state, seq, model, effort, permissionMode, title, pending[], activity, tasks[], engine, parent`, plus `spend` (estimated USD so far) in DeepSeek chats and `allowAll: true` while a worker runs without asking. `tasks[]`: the subagents and background commands Claude started, `{ id, kind: agent|command, description, status: running|completed|stopped|failed, activity, tokens, tools, ms, startedAt, endedAt, summary, agentType, toolUseId, taskType }` (Claude Code's own housekeeping tasks aren't listed). In `ev`, besides SDK messages: `pa_user` (a sent message), `pa_error`, and `pa_cost` `{ usd }` after each DeepSeek turn (what that turn cost, estimated).
 
@@ -122,6 +125,67 @@ Several Claude logins in one app: each chat runs on one account, and they share 
 The account id goes in `account`, because over the WebSocket `id` is the request id (the handlers also accept `id` as an alias when called directly, e.g. from tests).
 
 `hello` adds `accounts`, `defaultAccount` and `usageByAccount` (and keeps `usage`: the default account's). A `{ t: "usage", usage, account }` event says which account's numbers changed. `{ t: "accounts", accounts, defaultAccount }` says the list changed (after add, sign-in, rename, setDefault or remove). `{ t: "account.limit", sessionId, account, limit: five_hour|seven_day|null, resetsAt }` (`resetsAt` in ms) means the account hit a limit, so the app can offer continuing the chat on another one. `info` and the `subscribe` reply include the chat's `account`.
+
+## Environment
+
+Every server says what machine it is, so a hub (another Pocket Agent server that connects to it) can show it, route to it and check versions. The stable part lives in `prefs.environment` (`server/src/environment.js`); `hello`, `environment.get` and the `environment` event carry the whole self-description:
+
+```js
+{ id: "env-1a2b3c4d5e6f",   // "env-" and 12 hex characters; never a hostname; made once
+  name: "Phone",            // "Phone" on Android/Termux, "Windows PC", "Mac" or "Linux computer" at first; 1–40 characters
+  os: "android-linux",      // android-linux | windows | macos | linux
+  shell: "bash",            // file name of $SHELL (or %ComSpec%)
+  engines: ["claude"],      // the ready engines: claude, deepseek
+  accounts: ["default"],    // Claude account ids
+  reaches: [],              // up to 8 short names of what this server reaches
+  limits: { symlinks: true },
+  protocol: 1, version: "1.2.0", caps: ["sessions", "files", "workers", "accounts", "environment"] }
+```
+
+`protocol` rises whenever the WebSocket protocol changes in a way older apps can't handle. `caps` lists what this server can do.
+
+`environment.set` checks `name` (trimmed, 1–40 characters) and `reaches` (up to 8 names, each trimmed, 1–24 characters of letters, digits, `_`, spaces, `.` or `-`). A bad value fails with a plain sentence and changes nothing; a good one is saved, then every client gets `{ t: "environment", environment }`.
+
+`GET /health` needs no token and returns `ok, version, live, protocol, env`; `env` is the environment id only, so the name stays private.
+
+## Devices
+
+A device (another phone, a hub, a computer) can use this server with its own token instead of the owner's. Tokens are revocable and carry scopes. The server keeps only a SHA-256 hash of each token in `devices.json` in the data directory (0600), so the file holds no usable token. Every device is `{ id: "dev-…", name, scopes, createdAt, lastSeenAt }` and its token starts `pad_`.
+
+Scopes: `chat`, `files.read`, `files.write`, `workers`, `export.sessions`, `update.source`, `sync.pair`. A new device gets `chat, files.read, files.write, workers` unless the pair code says otherwise.
+
+| `t` | Args | Reply |
+|---|---|---|
+| `devices.list` | | `devices[{ id, name, scopes, createdAt, lastSeenAt }]` (no hash) |
+| `devices.pair` | `name?, scopes?` (an array from the list above) | `code` ("XXXX-XXXX", one use), `expiresAt` (ms), `environment` (this server's id, or null) |
+| `devices.rename` | `device, name` (trimmed, 1–40 characters) | `device` |
+| `devices.revoke` | `device` | `ok: true`; its open WebSockets close with code 4001 |
+
+These are the owner's: a device may not call them. The device's id goes in `device`; over the WebSocket `id` is the request id.
+
+`POST /devices/redeem` needs no token: body `{ code, name? }` → `{ token, device }`, `403 { error }` for a wrong or expired code, `429 { error }` while redeeming is locked. Codes are single use and last 10 minutes. Five wrong tries while a code is active drop every active code; more than 20 wrong tries in 10 minutes lock redeeming for 10 minutes. The error text never repeats the code.
+
+`POST /devices/pair?token=…` is the owner's: body `{ name?, scopes? }` → what `devices.pair` returns. `server/src/pair-cli.js` uses it and prints the code (for a computer without the app's screen):
+
+```
+node server/src/pair-cli.js [--port N] [--name "Phone hub"] [--scopes chat,files.read]
+```
+
+**What a device may do.** Every message type has a scope in `server/src/devices.js` (`SCOPE_OF`): `null` means any signed-in caller, a scope means a device must hold it, and a type not listed is the owner's only.
+
+| Scope | Messages |
+|---|---|
+| any signed-in caller | `hello` |
+| `chat` | `sessions.list`, `session.history`, `session.open`, `session.context`, `subscribe`, `unsubscribe`, `send`, `interrupt`, `permission.reply`, `session.rename`, `session.pin`, `session.fork`, `session.close` |
+| `files.read` | `fs.list`, `fs.search`, `fs.read` |
+| `files.write` | `fs.mkdir`, `upload` |
+| `workers` | worker messages (none yet) |
+
+Everything else — settings and prefs, `accounts.*`, `deepseek.*`, `devices.*`, `environment.set`, updates and channels, backups, `termux.*`, `services.*`, `native.call`, `session.delete` — is the owner's. A message a device may not send gets `{ error: "This device isn't allowed to do that", code: "forbidden" }`. `hello` leaves out what a device has no business seeing: `githubToken`, `updateChannel`, `updateKind`, `updateTrack`, `devRepo`, `usage`, `usageByAccount`, `account`, `accounts`, `defaultAccount`, `deepseek` and `home` (`home` stays if the device has `files.read`).
+
+Over HTTP, a device may fetch `/export/sessions.tgz` with `export.sessions` and `/bundle/info` / `/bundle.tgz` with `update.source`; every other token-protected route answers `403 { error: "forbidden" }`. An unknown token is `401 { error: "bad token" }`.
+
+**Events.** A device's socket gets only `ev`, `state`, `activity`, `permission.request`, `permission.resolved`, `tasks`, `sessions.changed` and `link` (`DEVICE_EVENTS` in `server/src/hub.js`): a chat's live state and the chat list. Every other event stays with the owner.
 
 ## SSE `/events?v=2&api=<n>&token=` (Android background service)
 

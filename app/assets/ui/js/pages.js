@@ -139,7 +139,8 @@ function settingsSections() {
         + item(`<div class="set-row"><div class="l">Permission mode</div></div><div class="seg" id="d-mode">${MODES.slice(0, 4).map(m => `<button data-v="${m.id}" class="${(d.permissionMode || "default") === m.id ? "on" : ""}">${m.short}</button>`).join("")}</div>`, "ask auto bypass plan approvals default") },
     { id: "claude", title: "Claude and connection", icon: "globe",
       summary: `${settings.server ? settings.server.replace(/^https?:\/\//, "") : native ? "Runs on this phone" : location.host}${state.account?.email ? " · " + state.account.email : ""}`,
-      html: () => item(`<div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server || (native ? "This phone (built-in)" : location.host))}</small></div><button class="chip" id="s-server">Change</button></div>`, "server termux computer pc remote connection")
+      html: () => item(`<div class="set-row"><div class="l">This device<small id="env-name">${esc(state.environment?.name || "…")}</small></div><button class="chip" id="env-rename">Rename</button></div>`, "device name rename this phone computer")
+        + item(`<div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server || (native ? "This phone (built-in)" : location.host))}</small></div><button class="chip" id="s-server">Change</button></div>`, "server termux computer pc remote connection")
         + (standalone ? item(`<div class="set-row"><div class="l">Claude sign-in<small id="s-auth">Checking…</small></div><button class="chip" id="s-login">Sign in again</button></div>`, "login account logout") : "")
         + item(`<div class="set-row"><div class="l">${esc(state.account?.email || state.account?.organization || "Claude account")}<small>${esc(state.account?.subscriptionType || state.account?.apiKeySource || "Signed in through Claude Code")}</small></div></div>`, "account plan subscription")
         + item(`<div class="set-row"><div class="l">Usage limits<small>${esc(usageSummary())}</small></div><button class="chip" id="s-usage">Show</button></div>`, "usage limits quota 5-hour weekly plan")
@@ -147,6 +148,7 @@ function settingsSections() {
         + (standalone ? item(`<div class="set-row"><div class="l">Server log<small>For troubleshooting</small></div><button class="chip" id="s-log">View</button></div>`, "debug errors logs") : "") },
     typeof accountsSettingsSection === "function" && accountsSettingsSection(),   // accounts.js: several Claude logins
     typeof dsSettingsSection === "function" && dsSettingsSection(),   // deepseek.js; none on a server without DeepSeek
+    typeof devicesSettingsSection === "function" && devicesSettingsSection(),     // devices.js: other devices with their own token
     { id: "updates", title: "Updates", icon: "retry",
       summary: state.updateChannel ? `${state.updateChannel}${state.updateKind === "github" ? " · " + (state.updateTrack?.track === "pin" ? "pinned to " + state.updateTrack.tag : state.updateTrack?.track === "beta" ? "Beta" : "Stable") : ""}` : "Not set",
       html: () => item(`<div class="set-row"><div class="l">Get updates from<small id="u-src">${esc(state.updateChannel ? state.updateChannel + (state.updateKind === "github" && !state.githubToken ? " (no token)" : "") : "Not set: updates come with new app versions")}</small></div><button class="chip" id="u-set">${state.updateChannel ? "Change" : "Set"}</button></div>`, "source github folder")
@@ -227,6 +229,12 @@ function wireSettings(root) {
       b.querySelector("#dm").append(o);
     }
   });
+  on("#env-rename", async () => {
+    const name = await promptSheet({ title: "Name this device", value: state.environment?.name || "" });
+    if (!name) return;
+    try { state.environment = (await conn.call("environment.set", { name })).environment; toast("Renamed"); openSettingsRefresh(); }
+    catch (e) { toast(e.message, 4000); }
+  });
   on("#s-server", () => chooseServer());
   on("#u-set", () => chooseUpdateSource());
   on("#d-open", () => openDevSetup());
@@ -258,7 +266,10 @@ function wireSettings(root) {
   if (native && root.querySelector("#termux-box")) renderTermux(root.querySelector("#termux-box"));
   if (typeof wireAccountsSettings === "function") wireAccountsSettings(root);
   if (typeof wireDsSettings === "function") wireDsSettings(root);
+  if (typeof wireDevicesSettings === "function") wireDevicesSettings(root);
 }
+// Another client renamed this device (or a hub changed its reaches): keep the row current.
+conn.on("environment", m => { if (!m.environment) return; state.environment = m.environment; if (page.isOpen) openSettingsRefresh(); });
 /** Re-renders the settings page on screen (home or a category) so it shows changed values. */
 function openSettingsRefresh() {
   const top = page.stack[page.stack.length - 1];
