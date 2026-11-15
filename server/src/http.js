@@ -44,7 +44,13 @@ export function createServer() {
       if (url.pathname === "/termux/bundle.tgz") { res.writeHead(200, { "content-type": "application/gzip" }); return bundleStream().pipe(res); }
     }
     if (!safeEq(url.searchParams.get("token") || req.headers["x-token"], TOKEN)) return json(res, 401, { error: "bad token" });
-    if (url.pathname === "/events") return sse(req, res, +(url.searchParams.get("v") || 1), +(url.searchParams.get("api") || 0));
+    if (url.pathname === "/events") {
+      // `since` is the phone's time of the last event it handled: a done newer than it is replayed once (#62f).
+      // Older apps send no since at all, and get no replay.
+      const raw = url.searchParams.get("since");
+      const since = raw == null ? null : Number(raw);
+      return sse(req, res, +(url.searchParams.get("v") || 1), +(url.searchParams.get("api") || 0), Number.isFinite(since) ? since : null);
+    }
     if (url.pathname === "/native/result" && req.method === "POST") {
       let body = ""; for await (const c of req) body += c;
       try { return json(res, 200, { ok: nativeResult(JSON.parse(body || "{}")) }); } catch (e) { return json(res, 400, { error: String(e.message) }); }
@@ -117,16 +123,29 @@ function onSocket(ws) {
   });
 }
 
-/** SSE for the app's background service. v=1: legacy app (raw events); v=2: generic shell (notification specs + rpc). */
-function sse(req, res, v, api) {
+/**
+ * SSE for the app's background service. v=1: legacy app (raw events); v=2: generic shell (notification specs + rpc).
+ * `since` (v=2 only, optional): the phone's time of the last event it handled. Each idle chat's last done that is
+ * newer than it is replayed once, so a turn that ended during the gap still notifies. null = no replay.
+ */
+function sse(req, res, v, api, since) {
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-  const pending = [...live.values()].flatMap(s => s.info().pending);
-  const running = [...live.values()].filter(s => s.state === "running" || s.state === "waiting");
+  const all = [...live.values()];
+  const pending = all.flatMap(s => s.info().pending);
+  const busy = s => s.state === "running" || s.state === "waiting";
+  const running = all.filter(busy);
   if (v >= 2) {
     // Catch the phone up: open approvals and current progress, as ready-to-show notifications.
+    // Idle chats go first, so a busy one's status is the one left showing in the phone's single status notification.
+    const ordered = all.slice().sort((a, b) => (Number(busy(a)) - Number(busy(b))) || ((a.lastActive || 0) - (b.lastActive || 0)));
     const events = [
       ...pending.flatMap(p => toNative({ type: "permission.request", ...p, input: toolDetail(p.toolName, p.input) })),
-      ...running.flatMap(s => { const a = s.activity.snapshot(); return toNative({ type: "activity", sessionId: s.sessionId, title: s.title, phase: a.phase, label: a.label, detail: a.detail, turnStart: a.turnStart, engine: s.engine }); }),
+      // Every known live chat, idle ones as idle, so a status notification left over from before the gap clears (#62f).
+      ...ordered.flatMap(s => { const a = s.activity.snapshot(); return toNative({ type: "activity", sessionId: s.sessionId, title: s.title, phase: a.phase, label: a.label, detail: a.detail, turnStart: a.turnStart, engine: s.engine }); }),
+      // A turn that ended while the phone was away notifies once; lastDone is the most recent done per chat (#62f).
+      ...(since == null ? [] : all.filter(s => s.state === "idle" && s.lastDone && s.lastDone.at > since)
+        .sort((a, b) => a.lastDone.at - b.lastDone.at)
+        .flatMap(s => toNative({ type: "done", sessionId: s.sessionId, title: s.title || "Session", text: s.lastDone.text, engine: s.engine }))),
     ];
     res.write(`data: ${JSON.stringify({ type: "batch", events })}\n\n`);
   } else {

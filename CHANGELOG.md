@@ -12,6 +12,7 @@ Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 - Fixed: tapping Send no longer drops the keyboard; long-pressing a chat opens its menu without also opening the chat (or closing the menu); the chat keeps following new output without the person scrolling (#57, #58, #56).
 - **Sturdier connection** (#62): a dropped connection no longer loses a message being sent (the text stays in the box, and a resend can't duplicate it); the app reconnects as soon as it's back on screen or online; a silently dead server connection is noticed within a minute.
 - **Sturdier connection** (#62): reconnecting to the chat you're reading keeps it in place and catches up from where it stopped, so a reply that was mid-stream carries on instead of the chat being rebuilt; if the server can no longer catch up, it reloads as before.
+- **Sturdier connection** (#62): a reply that finishes while the phone is away still gives its "done" notification once on reconnect, and a stale "working" status clears instead of staying stuck.
 
 ## 1.2.0
 

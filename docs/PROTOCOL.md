@@ -123,7 +123,7 @@ The account id goes in `account`, because over the WebSocket `id` is the request
 
 `hello` adds `accounts`, `defaultAccount` and `usageByAccount` (and keeps `usage`: the default account's). A `{ t: "usage", usage, account }` event says which account's numbers changed. `{ t: "accounts", accounts, defaultAccount }` says the list changed (after add, sign-in, rename, setDefault or remove). `{ t: "account.limit", sessionId, account, limit: five_hour|seven_day|null, resetsAt }` (`resetsAt` in ms) means the account hit a limit, so the app can offer continuing the chat on another one. `info` and the `subscribe` reply include the chat's `account`.
 
-## SSE `/events?v=2&api=<n>&token=` (Android background service)
+## SSE `/events?v=2&api=<n>&since=<ms>&token=` (Android background service)
 
 The app is a generic shell: the server decides what to show and do.
 
@@ -132,7 +132,9 @@ The app is a generic shell: the server decides what to show and do.
 | `notify` | `spec` (fields documented at the top of `Notifier.java`) | shows/updates a notification |
 | `cancel` | `id` | removes it |
 | `rpc` | `id, method, params` | runs a native capability, POSTs `{ id, result \| error }` to `/native/result` |
-| `batch` | `events[]` | all of the above, sent on connect to catch up |
+| `batch` | `events[]` | all of the above, sent on connect to catch up: open approvals, an activity for every live chat (idle ones as idle), and each idle chat's last done if newer than `since` |
+
+`since` is the phone's clock time of the last event it handled (`0` when it has none). A `done` newer than it is replayed once in the connect batch, so a turn that ended while the app was away still notifies, and a reconnect after handling it replays nothing. Apps that send no `since` (older ones) get no replay.
 
 Notification content is built in `server/src/notify.js`. Buttons POST their `body` to the `path` they name (e.g. `/permission`).
 Apps older than v0.1.6 connect with `v=1` and get raw events (`hello`, `permission.request`, `permission.resolved`, `done`, `activity`).

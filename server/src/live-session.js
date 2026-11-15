@@ -49,7 +49,7 @@ const ALWAYS_ASKS = new Set(["AskUserQuestion", "ExitPlanMode"]);
 export class LiveSession {
   constructor({ sessionId, cwd, resume, model, effort, permissionMode, title, engine = "claude", link = null }) {
     Object.assign(this, { sessionId, cwd, title: title || null, model: model || null, effort: effort || null,
-      permissionMode: permissionMode || "default", state: "starting", seq: 0, buffer: [], lastText: "", lastActive: Date.now(),
+      permissionMode: permissionMode || "default", state: "starting", seq: 0, buffer: [], lastText: "", lastDone: null, lastActive: Date.now(),
       engine: engine === "deepseek" ? "deepseek" : "claude", link: link || null });   // link: set in worker chats (engines.js)
     this.pending = new Map();   // requestId -> { resolve, info }
     this.turnWaiters = [];      // waitTurn() callers, resolved with the turn's result
@@ -112,8 +112,11 @@ export class LiveSession {
     saveWorking();
     // A worker's caller reads its report and carries on, so while the caller works, only the caller says when it's done.
     const caller = this.link && live.get(this.link.parent);
-    if (prev === "running" && state === "idle" && !(caller && isBusy(caller)))
+    if (prev === "running" && state === "idle" && !(caller && isBusy(caller))) {
+      // Keep the last reply, so a phone that was away when the turn ended still gets its "done" once on reconnect (#62f).
+      this.lastDone = { at: Date.now(), text: this.lastText.slice(0, 200) };
       notifyNative({ type: "done", sessionId: this.sessionId, title: this.title || "Session", text: this.lastText.slice(0, 300), engine: this.engine });
+    }
   }
   info() {
     return { sessionId: this.sessionId, cwd: this.cwd, state: this.state, seq: this.seq, model: this.model, effort: this.effort,

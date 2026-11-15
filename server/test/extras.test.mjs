@@ -286,6 +286,47 @@ try {
     let refused = false; try { taskTranscript("../x", "a1"); } catch { refused = true; }
     ok("ids with path characters are refused", refused);
   } finally { server.kill(); }
+
+  // ───── SSE catch-up: every live chat's status, and a missed "done" replayed once (#62f) ─────
+  {
+    const { live } = await import("../src/live-session.js");
+    const { createServer } = await import("../src/http.js");
+    const { TOKEN } = await import("../src/config.js");
+    const snap = (phase, label) => ({ phase, label, detail: "", turnStart: null, tokens: { thinking: 0, output: 0 }, steps: [] });
+    const fake = (sessionId, state, phase, lastDone = null) => ({ sessionId, title: sessionId, state, engine: "claude",
+      lastActive: Date.now(), lastDone, activity: { snapshot: () => snap(phase, phase) }, info: () => ({ pending: [] }) });
+    live.clear();   // the session opened above is closed; this test brings its own
+    const idle = fake("sse-idle", "idle", "idle", { at: Date.now() - 60_000, text: "Finished while away" });
+    const busy = fake("sse-busy", "running", "writing");
+    live.set(idle.sessionId, idle); live.set(busy.sessionId, busy);
+    const srv = createServer();
+    await new Promise(r => srv.listen(0, "127.0.0.1", r));
+    const port = srv.address().port;
+    const connect = async since => {
+      const q = new URLSearchParams({ v: "2", api: "0", token: TOKEN });
+      if (since !== null) q.set("since", String(since));
+      const ctl = new AbortController();
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/events?${q}`, { signal: ctl.signal });
+        const reader = res.body.getReader(); let text = "";
+        while (!text.includes("\n\n")) { const { value, done } = await reader.read(); if (done) break; text += Buffer.from(value).toString("utf8"); }
+        return JSON.parse(text.split("\n\n")[0].replace(/^data: /, ""));
+      } finally { ctl.abort(); }
+    };
+    try {
+      const first = await connect(0);
+      const evs = first.events || [];
+      const statuses = evs.filter(e => e.type === "notify" && e.spec?.id === "status");
+      ok("a connect with since=0 replays the done missed while away",
+        evs.find(e => e.type === "notify" && e.spec?.id === "done:sse-idle")?.spec?.text === "Finished while away");
+      ok("the batch has an activity for every live chat, idle ones as idle, busy last",
+        statuses.length === 2 && statuses[0].spec.text === "Listening for Claude" && statuses[1].spec.title === "writing");
+      const later = await connect(Date.now());
+      ok("a connect with since=now doesn't replay it", !(later.events || []).some(e => e.spec?.id === "done:sse-idle"));
+      const old = await connect(null);
+      ok("an old app without since gets no replay", !(old.events || []).some(e => e.spec?.id === "done:sse-idle"));
+    } finally { srv.close(); live.delete(idle.sessionId); live.delete(busy.sessionId); }
+  }
 } catch (e) { console.log("FAIL", e.stack); fails++; }
 finally { fs.rmSync(T, { recursive: true, force: true }); }
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");
