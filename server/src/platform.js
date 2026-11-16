@@ -131,3 +131,38 @@ export function requestRestart() {
   if (!IS_WIN) { process.kill(process.pid, "SIGUSR2"); return; }
   if (onRestart) setImmediate(onRestart);
 }
+
+// ───── is a path inside a root? (device scopes limited to folders) ─────
+const RESERVED = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i;   // Windows device names, valid in any folder
+const stripLong = p => p.replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "");
+/** The comparable form of a path: absolute and normalized, with links, junctions and (Windows) 8.3 short names
+ *  resolved by realpath. A path that doesn't exist yet resolves through its nearest existing parent, so a file
+ *  about to be made is judged by where it would land. Windows: no \\?\ prefix, lower case (NTFS ignores case).
+ *  null when it can't be judged safely: a NUL byte, a Windows device name, or something that exists but won't
+ *  resolve (a link pointing nowhere, a folder this user can't read). */
+export function canonicalPath(p) {
+  if (typeof p !== "string" || !p || p.includes("\0")) return null;
+  let cur = path.resolve(IS_WIN ? stripLong(p) : p);
+  if (IS_WIN && cur.split(/[\\/]/).some(s => RESERVED.test(s.replace(/[ .]+$/, "")))) return null;
+  const rest = [];
+  for (;;) {
+    try { cur = fs.realpathSync.native(cur); break; }
+    catch {
+      try { fs.lstatSync(cur); return null; } catch {}   // it's there, but won't resolve
+      const parent = path.dirname(cur);
+      if (parent === cur) break;
+      rest.unshift(path.basename(cur));
+      cur = parent;
+    }
+  }
+  const out = rest.length ? path.join(cur, ...rest) : cur;
+  return IS_WIN ? stripLong(out).toLowerCase() : out;
+}
+/** True when `p` is `root` or inside it, compared as canonicalPath()s: "C:\work-other" isn't inside "C:\work",
+ *  ".." can't climb out, and a link inside the root that points elsewhere counts as elsewhere. A guard for what
+ *  a device may ask for; a chat inside the root can still reach anything its user can. */
+export function withinRoot(p, root) {
+  const a = canonicalPath(p), r = canonicalPath(root);
+  if (!a || !r) return false;
+  return a === r || a.startsWith(r.endsWith(path.sep) ? r : r + path.sep);
+}

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { IS_WIN, moduleDir, pathDirs, firstRunnable, ideClaudes, shellSpawn, commandFor, killTree, pidAlive, linkShared } from "../src/platform.js";
+import { IS_WIN, moduleDir, pathDirs, firstRunnable, ideClaudes, shellSpawn, commandFor, killTree, pidAlive, linkShared, canonicalPath, withinRoot } from "../src/platform.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "../..");
@@ -73,6 +73,36 @@ try {
   }
   fs.rmSync(acct, { recursive: true, force: true });   // what removeAccount does
   ok("removing an account folder leaves what it shared alone", !fs.existsSync(acct) && fs.readFileSync(path.join(claude, "projects", "chat.jsonl"), "utf8") === "keep me");
+
+  // ───── roots: what a device limited to some folders may reach ─────
+  const R = path.join(T, "roots"), work = path.join(R, "work"), outside = path.join(R, "outside");
+  fs.mkdirSync(path.join(work, "a"), { recursive: true }); fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(work, "a", "b.txt"), "in"); fs.writeFileSync(path.join(outside, "secret.txt"), "out");
+  const inside = (p, root = work) => withinRoot(p, root);
+  ok("roots: a file inside", inside(path.join(work, "a", "b.txt")));
+  ok("roots: the root itself", inside(work));
+  ok("roots: a file not made yet, inside", inside(path.join(work, "new", "file.txt")));
+  ok("roots: a sibling with the same start is outside", !inside(path.join(R, "work-other", "x")));
+  ok("roots: '..' can't climb out", !inside(path.join(work, "..", "outside", "secret.txt")));
+  ok("roots: a path elsewhere is outside", !inside(path.join(outside, "secret.txt")));
+  const linkDir = (target, at) => fs.symlinkSync(target, at, IS_WIN ? "junction" : "dir");
+  linkDir(outside, path.join(work, "door"));
+  ok("roots: a link inside that points outside is outside", !inside(path.join(work, "door", "secret.txt")));
+  linkDir(path.join(R, "missing"), path.join(work, "dangling"));
+  ok("roots: a link that points nowhere is refused", !inside(path.join(work, "dangling", "x.txt")) && canonicalPath(path.join(work, "dangling")) === null);
+  ok("roots: a NUL byte is refused", !inside(path.join(work, "a\0b")));
+  if (IS_WIN) {
+    ok("roots: case and slashes don't matter", inside(work.toUpperCase().replace(/\\/g, "/") + "/A/B.TXT"));
+    ok("roots: a \\\\?\\ prefix doesn't matter", inside("\\\\?\\" + path.join(work, "a", "b.txt")));
+    // os.tmpdir() is usually an 8.3 short path on Windows (C:\Users\RUNNER~1\…): compare it with its long form
+    const long = fs.realpathSync.native(work);
+    ok("roots: an 8.3 short name and the long name are the same place", inside(path.join(long, "a", "b.txt")) && withinRoot(path.join(work, "a"), long),
+      long.toLowerCase() === work.toLowerCase() ? "(no short name in this path)" : "");
+    ok("roots: Windows device names are refused", !inside(path.join(work, "CON")) && !inside(path.join(work, "a", "nul.txt")));
+    ok("roots: a drive root holds its drive", withinRoot(path.join(work, "a"), path.parse(work).root));
+  } else {
+    ok("roots: / holds everything", withinRoot(path.join(work, "a"), "/"));
+  }
 
   // ───── the server under pocket-agent.mjs ─────
   const home = path.join(T, "home"), data = path.join(home, ".pocket-agent"), PORT = 8775;
