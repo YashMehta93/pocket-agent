@@ -195,11 +195,14 @@ These are the owner's: a device may not call them. The device's id goes in `devi
 
 `POST /devices/redeem` needs no token: body `{ code, name? }` → `{ token, device }`, `403 { error }` for a wrong or expired code, `429 { error }` while redeeming is locked. Codes are single use and last 10 minutes. Five wrong tries while a code is active drop every active code; more than 20 wrong tries in 10 minutes lock redeeming for 10 minutes. The error text never repeats the code.
 
-`POST /devices/pair?token=…` is the owner's: body `{ name?, scopes? }` → what `devices.pair` returns. `server/src/pair-cli.js` uses it and prints the code (for a computer without the app's screen):
+`POST /devices/pair?token=…` is the owner's: body `{ name?, scopes?, roots? }` → what `devices.pair` returns. `server/src/pair-cli.js` uses it and prints the code (for a computer without the app's screen); on a computer that uses the launcher, `pocket-agent.mjs pair` does the same and finds the running server and its token itself:
 
 ```
 node server/src/pair-cli.js [--port N] [--name "Phone hub"] [--scopes chat,files.read]
+node server/bin/pocket-agent.mjs pair [--name "Phone"] [--scopes chat,files.read] [--roots "<folder1>;<folder2>"]
 ```
+
+`roots` asks for the folders the device may reach (split on `;`). The launcher prints the server's reply `roots` when it sends one, else the flag marked "(not enforced by this server yet)"; a server that doesn't know roots ignores it.
 
 **What a device may do.** Every message type has a scope in `server/src/devices.js` (`SCOPE_OF`): `null` means any signed-in caller, a scope means a device must hold it, and a type not listed is the owner's only.
 
