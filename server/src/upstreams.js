@@ -128,6 +128,8 @@ const announce = () => broadcastAll({ t: "environments", environments: listEnvir
 function publicRecord(rec) {
   const c = connections.get(rec.id);
   return { id: rec.id, name: rec.name, url: rec.url, profile: rec.profile,
+    // The folders it limits this device to (#72), from its hello; null = no limit.
+    roots: Array.isArray(rec.roots) && rec.roots.length ? [...rec.roots] : null,
     state: c?.state || "offline", version: c?.version ?? null, protocol: c?.protocol ?? null,
     error: c?.error ?? null, lastOnlineAt: c?.lastOnlineAt ?? null };
 }
@@ -496,6 +498,13 @@ export class EnvironmentConnection {
     if (!this.protocol || this.protocol < MIN_PROTOCOL) return this.outdated();
     this.helloEnv = m.environment || null;
     this.caps = m.caps || null;
+    // The upstream may limit this device to folders (#72): keep them on the record, for the new-chat picker.
+    const roots = Array.isArray(m.roots) ? m.roots.filter(r => typeof r === "string" && r).slice(0, 16) : [];
+    const rec = find(this.id);
+    if (rec) {
+      const next = roots.length ? roots : null;
+      if (JSON.stringify(rec.roots || null) !== JSON.stringify(next)) { rec.roots = next; savePrefs(); }
+    }
     this.attempt = 0;
     this.lastOnlineAt = Date.now();
     this.prevStates.clear();

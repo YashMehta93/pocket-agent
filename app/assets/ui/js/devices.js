@@ -1,9 +1,10 @@
 // devices.js — Settings → Devices: other devices that may use this server with their own token and scopes,
-// each renameable and revocable, plus a one-use pair code with a countdown. The server owns tokens and
-// codes (server/src/devices.js); this file only shows them and asks for new ones.
+// each renameable and revocable, plus a one-use pair code with a countdown. A device can also be limited to
+// folders ("roots", #72): it then sees and reaches nothing outside them. The server owns tokens, codes, roots
+// and the checks (server/src/devices.js, server/src/roots.js); this file only shows them and asks.
 "use strict";
 
-state.devices = [];   // [{ id, name, scopes, createdAt, lastSeenAt }] from devices.list
+state.devices = [];   // [{ id, name, scopes, roots, createdAt, lastSeenAt }] from devices.list
 let pairTimer = null; // the countdown under an open pair code
 
 /** Settings → Devices: a row on the Settings home, opening a short page of its own (like the other categories). */
@@ -14,7 +15,7 @@ function devicesSettingsSection() {
     summary: n ? `${n} paired · pair another` : "Pair another device with a code",
     html: () => item(`<div id="dev-list"><p class="note">Loading…</p></div>
       <div id="dev-pair"></div>
-      <div id="dev-pair-btn-box" style="margin-top:14px"></div>`, "devices paired pair another phone hub computer token"),
+      <div id="dev-pair-btn-box" style="margin-top:14px"></div>`, "devices paired pair another phone hub computer token folders"),
   };
 }
 /** Hooks up the section above (wireSettings calls this for the page and for search results). */
@@ -32,12 +33,19 @@ async function renderDevices(root) {
   state.devices = r.devices || [];
   if (!state.devices.length) { box.innerHTML = `<p class="note">No devices paired yet.</p>`; return; }
   box.innerHTML = state.devices.map(deviceRow).join("");
+  box.querySelectorAll("[data-dev-open]").forEach(el => el.onclick = () => openDeviceSheet(root, el.dataset.devOpen));
   box.querySelectorAll("[data-dev]").forEach(b => b.onclick = () => deviceAction(root, b.dataset.dev, b.dataset.act));
+}
+
+/** " · limited to 2 folders", or nothing when it has no limit. */
+function deviceRootsNote(d) {
+  const n = (d.roots || []).length;
+  return n ? ` · limited to ${n} folder${n === 1 ? "" : "s"}` : "";
 }
 
 function deviceRow(d) {
   const used = d.lastSeenAt ? "last used " + deviceAgo(d.lastSeenAt) : "never used";
-  return `<div class="set-row"><div class="l">${esc(d.name)}<small>${esc((d.scopes || []).join(", "))} · ${esc(used)}</small></div>
+  return `<div class="set-row"><div class="l" data-dev-open="${esc(d.id)}" style="cursor:pointer">${esc(d.name)}<small>${esc((d.scopes || []).join(", "))} · ${esc(used)}${esc(deviceRootsNote(d))}</small></div>
     <div class="acc-chips"><button class="chip" data-dev="${esc(d.id)}" data-act="rename">Rename</button><button class="chip danger" data-dev="${esc(d.id)}" data-act="revoke">Revoke</button></div></div>`;
 }
 
@@ -50,42 +58,104 @@ function deviceAgo(ms) {
   return Math.floor(s / 86400) + "d ago";
 }
 
+/** One device's sheet: rename it, change the folders it may reach, or revoke it (#72). */
+function openDeviceSheet(root, id) {
+  const d = state.devices.find(x => x.id === id);
+  if (!d) return;
+  const used = d.lastSeenAt ? "last used " + deviceAgo(d.lastSeenAt) : "never used";
+  const b = sheet.open(`<h2>${esc(d.name)}</h2><div class="sub">${esc((d.scopes || []).join(", "))} · ${esc(used)}${esc(deviceRootsNote(d))}</div>
+    <div>
+      <button class="menu-item" data-a="rename">${icon("edit")}<span>Rename</span></button>
+      <button class="menu-item" data-a="folders">${icon("folder")}<span>Change folders</span></button>
+      <button class="menu-item danger" data-a="revoke">${icon("trash")}<span>Revoke</span></button>
+    </div>`);
+  b.querySelector('[data-a="rename"]').onclick = () => { sheet.close(true); renameDeviceFromUi(root, d); };
+  b.querySelector('[data-a="folders"]').onclick = () => { sheet.close(true); openDeviceFolders(root, d); };
+  b.querySelector('[data-a="revoke"]').onclick = () => { sheet.close(true); revokeDeviceFromUi(root, d); };
+}
+
 async function deviceAction(root, id, act) {
   const d = state.devices.find(x => x.id === id);
   if (!d) return;
-  if (act === "rename") {
-    const name = await promptSheet({ title: "Rename device", value: d.name });
-    if (name === null) return;
-    try { await conn.call("devices.rename", { device: id, name }); }
-    catch (e) { return toast(e.message, 4000); }
-    toast("Renamed");
-    return renderDevices(root);
-  }
-  if (act === "revoke") {
-    if (!await confirmSheet({ title: "Revoke " + d.name + "?", text: "Its token stops working right away and any open connection closes. Pair it again with a new code to allow it.", ok: "Revoke", danger: true })) return;
-    try { await conn.call("devices.revoke", { device: id }); }
-    catch (e) { return toast(e.message, 4000); }
-    toast("Revoked");
-    return renderDevices(root);
-  }
+  if (act === "rename") return renameDeviceFromUi(root, d);
+  if (act === "revoke") return revokeDeviceFromUi(root, d);
 }
 
+async function renameDeviceFromUi(root, d) {
+  const name = await promptSheet({ title: "Rename device", value: d.name });
+  if (name === null) return;
+  try { await conn.call("devices.rename", { device: d.id, name }); }
+  catch (e) { return toast(e.message, 4000); }
+  toast("Renamed");
+  return renderDevices(root);
+}
+
+async function revokeDeviceFromUi(root, d) {
+  if (!await confirmSheet({ title: "Revoke " + d.name + "?", text: "Its token stops working right away and any open connection closes. Pair it again with a new code to allow it.", ok: "Revoke", danger: true })) return;
+  try { await conn.call("devices.revoke", { device: d.id }); }
+  catch (e) { return toast(e.message, 4000); }
+  toast("Revoked");
+  return renderDevices(root);
+}
+
+// ───────────── the folders a device is limited to (#72) ─────────────
+/** A small editable list with a × per folder, as in the profiles editor; an empty list means no limit. */
+function renderDeviceRoots(box, draft, rerender) {
+  box.innerHTML = "";
+  if (!draft.length) { box.innerHTML = `<div class="pf-none">No folder limit.</div>`; return; }
+  for (const w of draft) {
+    const row = h(`<div class="set-row pf-folder"><div class="l"></div><button type="button" class="pf-x" aria-label="Remove folder" data-icon="x"></button></div>`);
+    row.querySelector(".l").textContent = shortPath(w);
+    row.querySelector(".pf-x").onclick = () => { draft.splice(draft.indexOf(w), 1); rerender(); };
+    box.append(row);
+  }
+}
+/** The "Add folder" button: the app's folder picker on this server, without anything already chosen. */
+async function addRootFromPicker(draft, rerender) {
+  const p = await pickFolder(draft[0] || state.current?.cwd);
+  if (!p || draft.includes(p)) return;
+  draft.push(p);
+  rerender();
+}
+
+// ───────────── pairing ─────────────
 function renderPairButton(root) {
   const box = root.querySelector("#dev-pair-btn-box");
   if (!box) return;
   box.innerHTML = `<button class="btn primary" id="dev-pair-btn" style="width:100%">Pair a device</button>`;
-  box.querySelector("#dev-pair-btn").onclick = () => startPairingFromUi(root);
+  box.querySelector("#dev-pair-btn").onclick = () => openPairSheet(root);
 }
 
-async function startPairingFromUi(root) {
-  const box = root.querySelector("#dev-pair");
-  const btn = root.querySelector("#dev-pair-btn");
-  if (btn) { btn.disabled = true; btn.textContent = "Making a code…"; }
-  let r;
-  try { r = await conn.call("devices.pair"); }
-  catch (e) { if (btn) { btn.disabled = false; btn.textContent = "Pair a device"; } return toast(e.message, 4000); }
+/** Pair a device: optionally limit it to folders first, then make a one-use code. */
+function openPairSheet(root, initialRoots = []) {
   clearPairTimer();
-  box.innerHTML = `<div class="pair-code" id="pair-code"></div>
+  const draft = [...initialRoots];
+  const b = sheet.open(`<h2>Pair a device</h2><div class="sub">It gets its own token. You can limit it to folders.</div>
+    <h3>Limit to folders</h3>
+    <div id="dev-folders"></div>
+    <button type="button" class="prof-new" id="dev-add-folder">Add folder</button>
+    <p class="pf-err" id="dev-pair-err" role="alert" hidden></p>
+    <div class="btns"><button class="btn primary" id="dev-pair-go">Make a code</button></div>`);
+  const list = b.querySelector("#dev-folders");
+  const rerender = () => renderDeviceRoots(list, draft, rerender);
+  rerender();
+  b.querySelector("#dev-add-folder").onclick = () => addRootFromPicker(draft, rerender);
+  const err = b.querySelector("#dev-pair-err"), go = b.querySelector("#dev-pair-go");
+  go.onclick = async () => {
+    err.hidden = true;
+    go.disabled = true; go.textContent = "Making a code…";
+    let r;
+    try { r = await conn.call("devices.pair", { roots: draft }); }
+    catch (e) { go.disabled = false; go.textContent = "Make a code"; err.textContent = e.message; err.hidden = false; return; }
+    showPairCode(root, r);
+  };
+}
+
+/** The code and its countdown (it replaces the pairing sheet's contents). */
+function showPairCode(root, r) {
+  clearPairTimer();
+  const box = $("#sheet-body");
+  box.innerHTML = `<h2>Pair a device</h2><div class="pair-code" id="pair-code"></div>
     <div class="pair-exp" id="pair-exp"></div>
     <p class="note" style="text-align:center">Enter this code on the other device. It works once.</p>
     <button class="btn ghost" id="dev-pair-new" style="width:100%;margin-top:4px">Make a new code</button>`;
@@ -99,6 +169,32 @@ async function startPairingFromUi(root) {
   };
   tick();
   pairTimer = setInterval(tick, 1000);
-  box.querySelector("#dev-pair-new").onclick = () => { clearPairTimer(); startPairingFromUi(root); };
+  box.querySelector("#dev-pair-new").onclick = () => openPairSheet(root, Array.isArray(r.roots) ? r.roots : []);
 }
 function clearPairTimer() { if (pairTimer) { clearInterval(pairTimer); pairTimer = null; } }
+
+// ───────────── changing a paired device's folders ─────────────
+function openDeviceFolders(root, d) {
+  const draft = [...(d.roots || [])];
+  const b = sheet.open(`<h2>Folders for ${esc(d.name)}</h2><div class="sub">It sees only chats and files in these folders. No folders means no limit.</div>
+    <div id="df-list"></div>
+    <button type="button" class="prof-new" id="df-add">Add folder</button>
+    <p class="pf-err" id="df-err" role="alert" hidden></p>
+    <div class="btns"><button class="btn primary" id="df-save">Save</button></div>`);
+  const list = b.querySelector("#df-list");
+  const rerender = () => renderDeviceRoots(list, draft, rerender);
+  rerender();
+  b.querySelector("#df-add").onclick = () => addRootFromPicker(draft, rerender);
+  const err = b.querySelector("#df-err"), save = b.querySelector("#df-save");
+  save.onclick = async () => {
+    err.hidden = true;
+    save.disabled = true; save.textContent = "Saving…";
+    let r;
+    try { r = await conn.call("devices.setRoots", { device: d.id, roots: draft }); }
+    catch (e) { save.disabled = false; save.textContent = "Save"; err.textContent = e.message; err.hidden = false; return; }
+    state.devices = state.devices.map(x => x.id === d.id ? r.device : x);
+    sheet.close(true);
+    toast("Saved");
+    renderDevices(root);
+  };
+}

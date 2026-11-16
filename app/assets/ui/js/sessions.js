@@ -265,7 +265,10 @@ async function openSession(sessionId, { keepScroll, keepChat } = {}) {
 function newChat(cwd, engine, envId) {
   if (state.current && !state.current.isNew) conn.call("unsubscribe", { sessionId: state.current.sessionId }).catch(() => {});
   const env = envId && typeof envById === "function" ? envById(envId) : null;
-  state.current = { sessionId: (envId ? envId + ":" : "") + uuid(), cwd: cwd || (env ? env.home || "" : state.defaults.cwd || state.home), title: "New chat", isNew: true, lastSeq: 0,
+  // On a device limited to folders, start in its first root: nothing else exists there (#72).
+  const roots = env && Array.isArray(env.roots) && env.roots.length ? env.roots : null;
+  const start = env ? ((roots && roots[0]) || env.home || "") : (state.defaults.cwd || state.home);
+  state.current = { sessionId: (envId ? envId + ":" : "") + uuid(), cwd: cwd || start, title: "New chat", isNew: true, lastSeq: 0,
     model: state.defaults.model || null, effort: state.defaults.effort || null, permissionMode: state.defaults.permissionMode || "default" };
   if (typeof applyEngine === "function") { applyEngine(state.current, engine || defaultEngine()); state.current.engineChosen = !!engine; }
   if (typeof accountsNewChat === "function") accountsNewChat();   // a new chat starts on the default account

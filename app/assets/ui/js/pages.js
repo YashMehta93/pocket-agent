@@ -74,14 +74,29 @@ function viewFile(p, env) {
   const pb = $("#page-body"); const restore = () => { pb.className = ""; };
   $("#page-back").addEventListener("click", restore, { once: true });
 }
-// env: choose a folder on another Pocket Agent server (a new chat that runs there).
+/** The folders another server limits this device to (#72), or null. Only they exist for it over there. */
+function envRootsOf(envId) {
+  const env = envId && typeof envById === "function" ? envById(envId) : null;
+  return env && Array.isArray(env.roots) && env.roots.length ? env.roots : null;
+}
+/** Pickers compare folder names textually (the server enforces the real rule): a path with no trailing slash. */
+const uiPath = p => String(p || "").replace(/[\\/]+$/, "");
+function uiInside(roots, p) {
+  const a = uiPath(p);
+  if (!a) return false;
+  return roots.some(r => { const b = uiPath(r); if (a === b) return true; const sep = b.includes("\\") && !b.includes("/") ? "\\" : "/"; return a.startsWith(b + sep); });
+}
+// env: choose a folder on another Pocket Agent server (a new chat that runs there). One limited to folders (#72)
+// starts at its first root, offers the roots as its top level, and never shows a folder outside them.
 function pickFolder(start, envId) {
   return new Promise(resolve => {
     const env = envId && typeof envById === "function" ? envById(envId) : null;
-    const recent = [...new Set(state.sessions.filter(s => (envId ? envIdOf(s.sessionId) === envId : !envIdOf(s.sessionId))).map(s => s.cwd).filter(Boolean))].slice(0, 8);
+    const roots = envRootsOf(envId);
+    const recent = [...new Set(state.sessions.filter(s => (envId ? envIdOf(s.sessionId) === envId : !envIdOf(s.sessionId))).map(s => s.cwd).filter(d => d && (!roots || uiInside(roots, d))))].slice(0, 8);
+    const quick = roots ? [...new Set([...roots, ...recent])] : recent;
     const b = sheet.open(`<h2>Choose a folder</h2><div class="sub">${env ? esc(env.name) + " works inside this folder." : "Claude works inside this folder."}</div><div id="pf"></div>
       <div class="btns"><button class="btn" data-a="browse">Browse…</button>${env ? "" : '<button class="btn ghost" data-a="new">New project folder…</button>'}</div>`, { onClose: () => resolve(null) });
-    for (const d of recent) { const o = h(`<button class="opt">${icon("folder")}<div class="ot"><div></div><div class="od"></div></div></button>`); o.querySelector(".ot div").textContent = baseName(d); o.querySelector(".od").textContent = shortPath(d); o.onclick = () => { sheet.close(true); resolve(d); }; b.querySelector("#pf").append(o); }
+    for (const d of quick) { const o = h(`<button class="opt">${icon("folder")}<div class="ot"><div></div><div class="od"></div></div></button>`); o.querySelector(".ot div").textContent = baseName(d); o.querySelector(".od").textContent = shortPath(d); o.onclick = () => { sheet.close(true); resolve(d); }; b.querySelector("#pf").append(o); }
     b.querySelector('[data-a="new"]')?.addEventListener("click", async () => {
       sheet.close(true);
       const name = await promptSheet({ title: "New project folder", placeholder: "my-app", ok: "Create" });
@@ -89,17 +104,32 @@ function pickFolder(start, envId) {
       const p = (name.startsWith("/") ? name : state.home + "/projects/" + name.replace(/[^\w.\- ]/g, "-"));
       try { await conn.call("fs.mkdir", { path: p }); resolve(p); } catch (e) { toast(e.message); resolve(null); }
     });
-    b.querySelector('[data-a="browse"]').onclick = () => { sheet.close(true); browseFolder(start || (env ? env.home : state.home), resolve, envId); };
+    b.querySelector('[data-a="browse"]').onclick = () => { sheet.close(true); browseFolder(roots ? roots[0] : (start || (env ? env.home : state.home)), resolve, envId); };
   });
 }
 function browseFolder(dir, resolve, envId) {
-  page.open(dir ? shortPath(dir) : "Choose a folder", async body => {
+  const roots = envRootsOf(envId);
+  const rootList = !dir && roots;   // the roots themselves: this environment's top level
+  page.open(rootList || !dir ? "Choose a folder" : shortPath(dir), async body => {
+    if (rootList) {
+      for (const r of roots) {
+        const row = h(`<button class="list-row">${icon("folder")}<div class="t"></div></button>`); row.querySelector(".t").textContent = shortPath(r);
+        row.onclick = () => { page.stack.pop(); browseFolder(r, resolve, envId); };
+        body.append(row);
+      }
+      return;
+    }
     const r = await conn.call("fs.list", envId ? (dir ? { path: dir, env: envId } : { env: envId }) : { path: dir }).catch(e => ({ error: e.message }));
     if (r.error) { body.innerHTML = `<p class="note err">${esc(r.error)}</p>`; return; }
     const use = h(`<div class="settings"><button class="btn primary" style="width:100%">Use this folder</button></div>`);
     use.querySelector("button").onclick = () => { page.close(); resolve(r.path); };
     body.append(use);
-    if (r.path !== "/") { const up = h(`<button class="list-row">${icon("back")}<div class="t">..</div></button>`); up.onclick = () => { page.stack.pop(); browseFolder(r.parent, resolve, envId); }; body.append(up); }
+    if (r.path !== "/") {
+      const atRoot = roots && roots.some(x => uiPath(x) === uiPath(r.path));
+      const up = h(`<button class="list-row">${icon("back")}<div class="t">..</div></button>`);
+      up.onclick = () => { page.stack.pop(); browseFolder(atRoot ? null : r.parent, resolve, envId); };
+      body.append(up);
+    }
     for (const e of r.entries.filter(e => e.dir)) {
       const row = h(`<button class="list-row">${icon("folder")}<div class="t"></div></button>`); row.querySelector(".t").textContent = e.name;
       row.onclick = () => { page.stack.pop(); browseFolder(r.path.replace(/\/$/, "") + "/" + e.name, resolve, envId); };

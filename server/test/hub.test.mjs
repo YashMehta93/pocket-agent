@@ -279,6 +279,14 @@ try {
   ok("removing deletes the token file", tokenFiles().length === 0);
   ok("its chats leave sessions.list", !(await client.call("sessions.list", { limit: 400 })).sessions.some(s => s.sessionId === remoteId));
 
+  // 12b. when the upstream limits this device to folders, its hello.roots stays on the environment record (#72)
+  const rootedCode = await (await fetch(`http://127.0.0.1:${U_PORT}/devices/pair?token=${encodeURIComponent(U_TOKEN)}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ roots: [U_HOME] }) })).json();
+  await client.call("environments.add", { url: `127.0.0.1:${U_PORT}`, code: rootedCode.code });
+  const limited = await poll(async () => (await list()).find(e => e.id === envId && Array.isArray(e.roots) && e.roots.length), 5000);
+  ok("the hub keeps the upstream's hello.roots on the environment", limited?.roots?.[0] === U_HOME, JSON.stringify(limited?.roots));
+  await client.call("environments.remove", { environment: envId });
+
   // address handling (no token anywhere here)
   const t = await client.call("environments.test", { url: `127.0.0.1:${U_PORT}` });
   ok("environments.test sees the upstream", t.ok === true && !!t.version && t.protocol >= 1 && typeof t.ms === "number");

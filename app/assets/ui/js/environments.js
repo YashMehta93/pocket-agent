@@ -126,17 +126,19 @@ function renderNewChatWhere() {
   chip("", "Phone", true);
   for (const e of envs) chip(e.id, e.name, e.state === "online");
 }
-/** A new chat on a device: its id is "<envId>:<uuid>", and it starts in that machine's home. */
+/** A new chat on a device: its id is "<envId>:<uuid>", and it starts in that machine's home — or at the first
+ *  of the folders it is limited to (#72), since nothing outside them exists for it there. */
 async function chooseNewChatEnv(id) {
   const cur = state.current;
   if (!cur?.isNew) return;
   const env = id ? envById(id) : null;
   if (id && (!env || env.state !== "online")) return;
+  const roots = env && Array.isArray(env.roots) && env.roots.length ? env.roots : null;
   cur.sessionId = (id ? id + ":" : "") + uuid();
-  cur.cwd = env ? (env.home || "") : (state.defaults.cwd || state.home);
+  cur.cwd = env ? ((roots && roots[0]) || env.home || "") : (state.defaults.cwd || state.home);
   showEmpty(); updateHeader(); updateComposer();
   // The remote hello's home isn't always sent: asking for its home folder tells us where it starts.
-  if (env && !env.home) {
+  if (env && !roots && !env.home) {
     try {
       const r = await conn.call("fs.list", { env: id });
       if (state.current === cur && currentEnvId() === id && r?.path) { cur.cwd = r.path; showEmpty(); updateHeader(); }
