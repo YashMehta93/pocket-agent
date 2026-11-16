@@ -5,6 +5,8 @@
 // restored backup exits with 75) or crashes, and gives up after repeated crashes instead of retrying forever.
 //   node pocket-agent.mjs start [--port N] [--host H] [--claude PATH]   start in the background (no-op if running)
 //   node pocket-agent.mjs stop | restart [--when-idle] | status | logs [lines] | token
+//   node pocket-agent.mjs pair [--name "Phone"] [--scopes chat,files.read] [--roots "<folder1>;<folder2>"]
+//   (prints a one-use pairing code for a phone: Settings → Environments → Add)
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -116,11 +118,38 @@ async function stop() {
   return alive(cur.pid) ? 1 : 0;
 }
 
+/** Prints a one-use pairing code for another device (a phone, a hub): what pair-cli.js does, from the launcher. */
+async function pair() {
+  const cur = running();
+  if (!cur) { console.log("The server isn't running. Start it first: node server/bin/pocket-agent.mjs start"); return 1; }
+  const body = {};
+  const name = flag("name"); if (name) body.name = name;
+  const scopes = flag("scopes"); if (scopes) body.scopes = scopes.split(",").map(s => s.trim()).filter(Boolean);
+  const roots = flag("roots") ? flag("roots").split(";").map(s => s.trim()).filter(Boolean) : null;
+  if (roots) body.roots = roots;
+  let res, out;
+  try {
+    const token = fs.readFileSync(path.join(DATA, "token"), "utf8").trim();
+    res = await fetch(`http://${local(cur)}:${cur.port}/devices/pair?token=${encodeURIComponent(token)}`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    out = await res.json().catch(() => ({}));
+  } catch (e) { console.log(`Couldn't reach the server on port ${cur.port}: ${e.message}`); return 1; }
+  if (!res.ok || !out.code) { console.log(out.error || `The server said no (${res.status}).`); return 1; }
+  const limited = Array.isArray(out.roots) ? (out.roots.length ? out.roots.join("; ") : "no folder limit")
+    : roots ? `${roots.join("; ")} (not enforced by this server yet)` : "no folder limit";
+  console.log(`Pair code: ${out.code}  (one use, valid for 10 minutes)`);
+  console.log(`This server: environment ${out.environment || "?"}, port ${cur.port}`);
+  console.log(`Limited to: ${limited}`);
+  console.log("In Pocket Agent on your phone: Settings → Environments → Add, then enter this computer's address and the code.");
+  return 0;
+}
+
 async function main() {
   switch (cmd) {
     case "start": return start();
     case "supervise": return supervise();
     case "stop": return stop();
+    case "pair": return pair();
     case "restart": {
       const cur = running();
       if (rest.includes("--when-idle") && cur) { await call(cur, "server.restartWhenIdle"); console.log("will restart when idle"); return 0; }
@@ -135,7 +164,7 @@ async function main() {
     }
     case "logs": { try { console.log(fs.readFileSync(LOG, "utf8").trimEnd().split("\n").slice(-(+rest[0] || 50)).join("\n")); } catch { console.log("no log yet"); } return 0; }
     case "token": { try { console.log(fs.readFileSync(path.join(DATA, "token"), "utf8").trim()); return 0; } catch { console.log("no token yet: start the server once"); return 1; } }
-    default: console.log(fs.readFileSync(SELF, "utf8").split("\n").slice(5, 7).map(l => l.replace(/^\/\/ ?/, "")).join("\n")); return cmd === "help" ? 0 : 2;
+    default: console.log(fs.readFileSync(SELF, "utf8").split("\n").slice(5, 8).map(l => l.replace(/^\/\/ ?/, "")).join("\n")); return cmd === "help" ? 0 : 2;
   }
 }
 process.exitCode = await main();

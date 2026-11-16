@@ -108,6 +108,7 @@ try {
   const home = path.join(T, "home"), data = path.join(home, ".pocket-agent"), PORT = 8775;
   const env = { ...process.env, HOME: home, USERPROFILE: home, PA_DATA: data };
   delete env.PA_SUPERVISED; delete env.PA_MODE; delete env.PA_SUPERVISOR; delete env.PA_PORT; delete env.PA_HOST;
+  delete env.CLAUDE_CONFIG_DIR;   // a DeepSeek chat sets it: the throwaway HOME must win, never the person's own Claude data
   const cli = (...args) => { try { return execFileSync(process.execPath, [path.join(REPO, "server/bin/pocket-agent.mjs"), ...args], { env, encoding: "utf8", windowsHide: true, timeout: 60_000 }); } catch (e) { return "ERROR " + (e.stdout || "") + (e.stderr || e.message); } };
   const health = async () => { try { return (await fetch(`http://127.0.0.1:${PORT}/health`)).ok; } catch { return false; } };
   const starts = () => { try { return fs.readFileSync(path.join(data, "server-events.log"), "utf8").split("\n").filter(l => / start /.test(l)).length; } catch { return 0; } };
@@ -130,6 +131,11 @@ try {
   const asked = cli("restart", "--when-idle");
   ok("restart --when-idle: the server restarts itself", /will restart/.test(asked) && await until(async () => starts() > before && await health(), 20000), asked.trim());
   ok("status", /running/.test(cli("status")));
+  const paired = cli("pair", "--name", "Phone");
+  ok("pair prints a one-use code", /^Pair code: [A-Z2-9]{4}-[A-Z2-9]{4}/m.test(paired), paired.trim().split("\n")[0]);
+  const rooted = cli("pair", "--roots", path.join(T, "roots"));
+  ok("pair says what the device is limited to", /^Limited to: .*\(not enforced by this server yet\)$/m.test(rooted),
+    rooted.split("\n").find(l => l.startsWith("Limited to:")) || rooted.trim());
   const stopped = cli("stop");
   ok("stop", /stopped/.test(stopped) && !(await health()), stopped.trim());
 } catch (e) {
