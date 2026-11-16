@@ -134,7 +134,7 @@ try {
   const paired = cli("pair", "--name", "Phone");
   ok("pair prints a one-use code", /^Pair code: [A-Z2-9]{4}-[A-Z2-9]{4}/m.test(paired), paired.trim().split("\n")[0]);
   const rooted = cli("pair", "--roots", path.join(T, "roots"));
-  ok("pair says what the device is limited to", /^Limited to: .*\(not enforced by this server yet\)$/m.test(rooted),
+  ok("pair says what the device is limited to", rooted.includes(`Limited to: ${path.join(T, "roots")}`),
     rooted.split("\n").find(l => l.startsWith("Limited to:")) || rooted.trim());
   const stopped = cli("stop");
   ok("stop", /stopped/.test(stopped) && !(await health()), stopped.trim());

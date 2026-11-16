@@ -6,6 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { DATA, TOKEN, safeEq } from "./config.js";
 import { clients } from "./hub.js";
+import { canonicalPath } from "./platform.js";
 
 export const SCOPES = ["chat", "files.read", "files.write", "workers", "export.sessions", "update.source", "sync.pair"];
 export const DEFAULT_SCOPES = ["chat", "files.read", "files.write", "workers"];
@@ -42,6 +43,7 @@ const LOCK_WINDOW_MS = 10 * 60 * 1000;
 const LOCK_MS = 10 * 60 * 1000;
 const LOCK_AFTER = 20;   // more failed redeems than this within the window locks redeeming
 const MAX_TRIES = 5;     // failed redeems while any code is active invalidate every active code
+const MAX_ROOTS = 16;    // folders a device may be limited to
 
 let devices = load();
 let lastSeenSave = 0;                   // lastSeenAt is written at most once a minute
@@ -61,7 +63,23 @@ function save() {
   fs.writeFileSync(FILE, JSON.stringify({ devices }, null, 2), { mode: 0o600 });
 }
 const hashToken = token => crypto.createHash("sha256").update(token).digest("hex");
-const publicDevice = d => ({ id: d.id, name: d.name, scopes: [...d.scopes], createdAt: d.createdAt, lastSeenAt: d.lastSeenAt });
+const publicDevice = d => ({ id: d.id, name: d.name, scopes: [...d.scopes], roots: [...(d.roots || [])], createdAt: d.createdAt, lastSeenAt: d.lastSeenAt });
+
+/** The folder roots of a request: each an existing folder, stored as given (never canonicalized: a link's target
+ *  can change). [] (or nothing) means no limit. at most 16. Same check for pairing and for changing them later. */
+export function checkRoots(roots) {
+  if (roots == null) return [];
+  if (!Array.isArray(roots)) throw new Error("Folders must be a list");
+  if (roots.length > MAX_ROOTS) throw new Error(`At most ${MAX_ROOTS} folders`);
+  return roots.map(r => {
+    const given = typeof r === "string" ? r : "";
+    const canonical = given.trim() ? canonicalPath(given) : null;
+    let folder = false;
+    if (canonical) { try { folder = fs.statSync(canonical).isDirectory(); } catch {} }
+    if (!folder) throw new Error(`That folder doesn't exist: ${typeof r === "string" ? r : String(r)}`);
+    return given;
+  });
+}
 
 /** The owner, a paired device, or nobody. Also records when a device was last seen (saved at most once a minute). */
 export function authenticate(token) {
@@ -73,7 +91,7 @@ export function authenticate(token) {
     const now = Date.now();
     d.lastSeenAt = now;
     if (now - lastSeenSave >= 60_000) { lastSeenSave = now; save(); }
-    return { kind: "device", id: d.id, name: d.name, scopes: [...d.scopes] };
+    return { kind: "device", id: d.id, name: d.name, scopes: [...d.scopes], roots: [...(d.roots || [])] };
   }
   return null;
 }
@@ -102,21 +120,33 @@ export function renameDevice(id, name) {
   return publicDevice(d);
 }
 
-/** A one-use code for a new device: { code: "XXXX-XXXX", expiresAt, environment: this server's id or null }. */
-export async function startPairing({ name, scopes = DEFAULT_SCOPES, ttlMs = PAIR_TTL_MS } = {}) {
+/** Limits a device to folders from now on ([] removes the limit). Only the owner may call this (handlers.js). */
+export function setDeviceRoots(id, roots) {
+  const d = devices.find(x => x.id === id);
+  if (!d) throw new Error("No such device");
+  d.roots = checkRoots(roots);
+  save();
+  // Its open sockets take the new limit at once: the principal holds the roots the gate and the event filter read.
+  for (const ws of clients) if (ws.principal?.kind === "device" && ws.principal.id === d.id) ws.principal.roots = [...d.roots];
+  return publicDevice(d);
+}
+
+/** A one-use code for a new device: { code: "XXXX-XXXX", expiresAt, environment: this server's id or null, roots }. */
+export async function startPairing({ name, scopes = DEFAULT_SCOPES, roots, ttlMs = PAIR_TTL_MS } = {}) {
   const list = Array.isArray(scopes) ? [...new Set(scopes.map(s => String(s).trim()))] : null;
   if (!list || !list.length || list.some(s => !SCOPES.includes(s))) throw new Error(`Scopes must be one or more of: ${SCOPES.join(", ")}`);
+  const rootList = checkRoots(roots);
   const clean = typeof name === "string" && name.trim() ? name.trim().slice(0, 40) : null;
   const now = Date.now();
   let code;
   do { code = pairCode(); } while (pairings.has(code));
   const expiresAt = now + Math.max(1, Number(ttlMs) || PAIR_TTL_MS);
-  pairings.set(code, { scopes: list, name: clean, expiresAt, tries: 0 });
+  pairings.set(code, { scopes: list, name: clean, roots: rootList, expiresAt, tries: 0 });
   failedWhileActive = 0;
   let environmentId = null;
   // environment.js may not exist (an older install): the code still works, without the server's id.
   try { const env = await import("./environment.js"); environmentId = env.environment().id; } catch {}
-  return { code: code.slice(0, 4) + "-" + code.slice(4), expiresAt, environment: environmentId };
+  return { code: code.slice(0, 4) + "-" + code.slice(4), expiresAt, environment: environmentId, roots: [...rootList] };
 }
 
 /** Exchanges a code for a new device token. Codes are one use; wrong and expired codes count against the lock. */
@@ -131,7 +161,7 @@ export function redeem(code, name) {
   if (p && p.expiresAt > now) {
     pairings.delete(key);   // single use
     const clean = typeof name === "string" && name.trim() ? name.trim().slice(0, 40) : (p.name || "Device");
-    return createDevice(clean, p.scopes);
+    return createDevice(clean, p.scopes, p.roots);
   }
   if (p) pairings.delete(key);   // an expired code is no better than an unknown one
   fail();
@@ -166,10 +196,10 @@ function fail() {
   if (pairings.size && failedWhileActive >= MAX_TRIES) pairings.clear();
 }
 
-function createDevice(name, scopes) {
+function createDevice(name, scopes, roots) {
   const token = "pad_" + crypto.randomBytes(32).toString("base64url");
   const now = Date.now();
-  const d = { id: "dev-" + crypto.randomBytes(4).toString("hex"), name: name || "Device", scopes: [...scopes], hash: hashToken(token), createdAt: now, lastSeenAt: now };
+  const d = { id: "dev-" + crypto.randomBytes(4).toString("hex"), name: name || "Device", scopes: [...scopes], roots: [...(roots || [])], hash: hashToken(token), createdAt: now, lastSeenAt: now };
   devices.push(d);
   save();
   return { token, device: publicDevice(d) };

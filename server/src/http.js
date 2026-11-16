@@ -31,6 +31,7 @@ import { proxy as dsProxy } from "./deepseek.js";
 import { PROTOCOL, environment } from "./environment.js";
 import { authenticate, allowed, startPairing, redeem } from "./devices.js";
 import { forwardIfRemote, splitRemoteSession } from "./upstreams.js";
+import { rootsGate } from "./roots.js";
 
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".woff2": "font/woff2" };
@@ -68,13 +69,14 @@ export function createServer() {
       let body = {};
       if (req.method === "POST") {
         try { body = JSON.parse((await readBody(req, 4096)) || "{}"); }
-        catch (e) { return json(res, e.code === "too_large" ? 413 : 400, { error: e.code === "too_large" ? "Body too large" : "Send JSON: { name, scopes }" }); }
+        catch (e) { return json(res, e.code === "too_large" ? 413 : 400, { error: e.code === "too_large" ? "Body too large" : "Send JSON: { name, scopes, roots }" }); }
       }
       const qscopes = url.searchParams.get("scopes");
       try {
         return json(res, 200, await startPairing({
           name: body.name ?? url.searchParams.get("name") ?? undefined,
           scopes: body.scopes ?? (qscopes ? qscopes.split(",") : undefined),
+          roots: body.roots,
         }));
       } catch (e) { return json(res, 400, { error: String(e.message) }); }
     }
@@ -163,6 +165,9 @@ function onSocket(ws, principal) {
     const reply = r => ws.readyState === 1 && ws.send(JSON.stringify({ ...r, t: "reply", id: m.id }));
     if (!allowed(ws.principal, m.t)) return reply({ error: "This device isn't allowed to do that", code: "forbidden" });
     try {
+      // A device limited to folders sees no chat or file outside them: the one gate for every message (#72).
+      const gated = await rootsGate(ws.principal, m);
+      if (gated) return reply(gated);
       const f = await forwardIfRemote(m, ws);   // a chat on another environment, from upstreams.js
       if (f !== undefined) return reply(f);
       // A namespaced id that no environment took must never reach a local handler: subscribing would

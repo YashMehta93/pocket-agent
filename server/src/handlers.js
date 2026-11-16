@@ -19,7 +19,8 @@ import { listAccounts, addAccount, renameAccount, removeAccount, setDefaultAccou
 import { listProfiles, defaultProfileId, profileOf, saveProfile, removeProfile, setDefaultProfile } from "./profiles.js";
 import { engineOf, copyEngine, forget, linkOf, engineList } from "./engines.js";
 import { PROTOCOL, environment, setEnvironment } from "./environment.js";
-import { listDevices, startPairing, revokeDevice, renameDevice } from "./devices.js";
+import { listDevices, startPairing, revokeDevice, renameDevice, setDeviceRoots } from "./devices.js";
+import { rootsOf, withinAnyRoot } from "./roots.js";
 import { listEnvironments, addEnvironment, removeEnvironment, renameEnvironment, testUrl, reconnectEnvironment, remoteSessions } from "./upstreams.js";
 import { status as dsStatus, balance as dsBalance, setKey as dsSetKey, removeKey as dsRemoveKey, setDsSettings, chatSpend, isDeepseekModel, dsModel } from "./deepseek.js";
 import { IS_WIN, requestRestart } from "./platform.js";
@@ -58,7 +59,12 @@ export const handlers = {
     // A paired device has its own scopes: no account, usage, update or home details, unless it may read files.
     if (ws?.principal?.kind === "device") {
       for (const k of ["githubToken", "updateChannel", "updateKind", "updateTrack", "devRepo", "usage", "usageByAccount", "account", "accounts", "defaultAccount", "deepseek", "home", "environments", "profiles", "defaultProfile"]) delete r[k];
-      if (ws.principal.scopes.includes("files.read")) r.home = HOME;
+      const roots = rootsOf(ws.principal);
+      // A device limited to folders starts its folder picker at a root, never at this server's home (#72).
+      if (roots) {
+        r.roots = [...roots];
+        r.live = r.live.filter(s => withinAnyRoot(roots, s.cwd));
+      } else if (ws.principal.scopes.includes("files.read")) r.home = HOME;
     }
     return r;
   },
@@ -69,12 +75,13 @@ export const handlers = {
 
   // ───── paired devices (devices.js): each has its own revocable token and scopes ─────
   async "devices.list"() { return { devices: listDevices() }; },
-  async "devices.pair"({ name, scopes } = {}) { return await startPairing({ name, scopes }); },
+  async "devices.pair"({ name, scopes, roots } = {}) { return await startPairing({ name, scopes, roots }); },
   async "devices.revoke"({ device } = {}) { revokeDevice(device); return { ok: true }; },   // `device`, never `id`: id is the request id
   async "devices.rename"({ device, name } = {}) { return { device: renameDevice(device, name) }; },
+  async "devices.setRoots"({ device, roots } = {}) { return { device: setDeviceRoots(device, roots) }; },   // folders it may reach (#72)
 
   // ───── session list & history ─────
-  async "sessions.list"({ limit = 300, dir } = {}) {
+  async "sessions.list"({ limit = 300, dir } = {}, ws) {
     const list = await listSessions({ limit, ...(dir ? { dir } : {}) });
     const busy = busyElsewhere();
     const sessions = list.map(s => {
@@ -91,7 +98,9 @@ export const handlers = {
     sessions.push(...await remoteSessions());
     sessions.sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0) ||
       (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0));
-    return { sessions };
+    // A device limited to folders sees only the chats inside them, as if the others didn't exist (#72).
+    const roots = rootsOf(ws?.principal);
+    return { sessions: roots ? sessions.filter(s => withinAnyRoot(roots, s.cwd)) : sessions };
   },
   async "session.history"({ sessionId }) {
     // The live seq as the transcript is read: the app subscribes after it and replays what the transcript
