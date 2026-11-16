@@ -79,7 +79,7 @@ A server can connect to other Pocket Agent servers ("environments", e.g. a lapto
 
 | `t` | Args | Reply |
 |---|---|---|
-| `environments.list` | | `environments[]: { id, name, url, profile, state, version, protocol, error, lastOnlineAt }`; `state`: `connecting \| online \| offline \| unauthorized \| outdated` |
+| `environments.list` | | `environments[]: { id, name, url, profile, roots, state, version, protocol, error, lastOnlineAt }`; `roots` is the folders the other server limits this device to (from its `hello`, null = no limit); `state`: `connecting \| online \| offline \| unauthorized \| outdated` |
 | `environments.add` | `url` (`host:port`, or with `http(s)://` / `ws(s)://`), `code` (a pairing code) or `token`, `profile?` (default: the default profile), `name?` | `environment` (the public record). With a code it is redeemed at `POST <url>/devices/redeem`, sending this server's `environment().name`; a wrong code is `That code is wrong or has expired`, a locked server `Too many tries…`, an old server `That server is too old to pair…`. An unknown profile is `No such profile`. A wrong token is saved as `unauthorized` (`Pair this device again`), so it can be paired again under the same id |
 | `environments.remove` | `environment` | `{ ok: true }`; stops the connection and deletes its token file |
 | `environments.rename` | `environment, name` (trimmed, 1–40) | `environment` |
@@ -100,7 +100,7 @@ A paired device never reaches another machine: such a request (a namespaced `ses
 
 **Live chats without a screen.** The hub subscribes upstream to every chat that is live on its environment — from the upstream's `hello.live` and its `state` events — not only the chats a screen has open, so approvals and Done notify while the app is closed. It remembers each subscription's last `seq` and re-subscribes with `after: lastSeq` when the connection returns; an approval still waiting comes back in the subscribe reply's `info.pending` and is notified once (request ids already notified are remembered). At most 50 remote chats are watched per environment.
 
-**hello views.** A device's `hello` leaves out `environments`, `profiles` and `defaultProfile` too (a device has no other machines, and the profile list is the owner's).
+**hello views.** A device's `hello` leaves out `environments`, `profiles` and `defaultProfile` too (a device has no other machines, and the profile list is the owner's). When the other server limits this device to folders, its `hello` carries `roots` (see Devices → Folder roots): the hub keeps them on the environment record (`environments.list`), and a new chat's `Where` flow starts the folder picker at `roots[0]` with the roots as its top level, instead of the remote home. That is for convenience only; the upstream enforces the limit.
 
 ## DeepSeek
 
@@ -180,15 +180,16 @@ Every server says what machine it is, so a hub (another Pocket Agent server that
 
 ## Devices
 
-A device (another phone, a hub, a computer) can use this server with its own token instead of the owner's. Tokens are revocable and carry scopes. The server keeps only a SHA-256 hash of each token in `devices.json` in the data directory (0600), so the file holds no usable token. Every device is `{ id: "dev-…", name, scopes, createdAt, lastSeenAt }` and its token starts `pad_`.
+A device (another phone, a hub, a computer) can use this server with its own token instead of the owner's. Tokens are revocable and carry scopes. The server keeps only a SHA-256 hash of each token in `devices.json` in the data directory (0600), so the file holds no usable token. Every device is `{ id: "dev-…", name, scopes, roots, createdAt, lastSeenAt }` and its token starts `pad_`. `roots` is the folders it is limited to (see Folder roots below); an empty list means no limit.
 
 Scopes: `chat`, `files.read`, `files.write`, `workers`, `export.sessions`, `update.source`, `sync.pair`. A new device gets `chat, files.read, files.write, workers` unless the pair code says otherwise.
 
 | `t` | Args | Reply |
 |---|---|---|
-| `devices.list` | | `devices[{ id, name, scopes, createdAt, lastSeenAt }]` (no hash) |
-| `devices.pair` | `name?, scopes?` (an array from the list above) | `code` ("XXXX-XXXX", one use), `expiresAt` (ms), `environment` (this server's id, or null) |
+| `devices.list` | | `devices[{ id, name, scopes, roots, createdAt, lastSeenAt }]` (no hash) |
+| `devices.pair` | `name?, scopes?` (an array from the list above), `roots?` (folders) | `code` ("XXXX-XXXX", one use), `expiresAt` (ms), `environment` (this server's id, or null), `roots` (the folders it will be limited to; `[]` = no limit) |
 | `devices.rename` | `device, name` (trimmed, 1–40 characters) | `device` |
+| `devices.setRoots` | `device, roots` (folders; `[]` removes the limit) | `device` |
 | `devices.revoke` | `device` | `ok: true`; its open WebSockets close with code 4001 |
 
 These are the owner's: a device may not call them. The device's id goes in `device`; over the WebSocket `id` is the request id.
@@ -198,11 +199,23 @@ These are the owner's: a device may not call them. The device's id goes in `devi
 `POST /devices/pair?token=…` is the owner's: body `{ name?, scopes?, roots? }` → what `devices.pair` returns. `server/src/pair-cli.js` uses it and prints the code (for a computer without the app's screen); on a computer that uses the launcher, `pocket-agent.mjs pair` does the same and finds the running server and its token itself:
 
 ```
-node server/src/pair-cli.js [--port N] [--name "Phone hub"] [--scopes chat,files.read]
+node server/src/pair-cli.js [--port N] [--name "Phone hub"] [--scopes chat,files.read] [--roots "<folder1>;<folder2>"]
 node server/bin/pocket-agent.mjs pair [--name "Phone"] [--scopes chat,files.read] [--roots "<folder1>;<folder2>"]
 ```
 
-`roots` asks for the folders the device may reach (split on `;`). The launcher prints the server's reply `roots` when it sends one, else the flag marked "(not enforced by this server yet)"; a server that doesn't know roots ignores it.
+`roots` asks for the folders the device may reach (split on `;`). Both print `Limited to: <folders>` or `Limited to: no folder limit` from the server's reply; the launcher falls back to the flag with "(not enforced by this server yet)" when an older server sends no `roots`.
+
+### Folder roots
+
+The machine that pairs a device may limit it to folders. Each root must be an existing folder (at most 16), stored as given — never canonicalized, because a link's target can change. The device then sees and reaches only chats whose folder is inside a root and only files inside a root; everything else looks as if it didn't exist. The owner and a device with no roots are not affected. This is the upstream's own rule: a hub can't widen it.
+
+One gate in `server/src/roots.js` runs for every WebSocket message from such a device, right after the scope check (`http.js`):
+
+- **Chats.** A message with a `sessionId` is judged by that chat's folder: the live session's cwd, else the transcript on disk. A chat outside the roots, or one that can't be judged, answers `{ error: "No such chat", code: "not_found" }` — the same answer as an unknown id. A chat that doesn't exist yet (a new chat in `send` / `session.open`) is judged by its `cwd`; no cwd, or one outside the roots, answers `{ error: "No such folder", code: "not_found" }`. This applies to every message type that carries a `sessionId`, with no list to keep.
+- **Paths.** When present, `path` (`fs.list`, `fs.read`, `fs.mkdir`), `cwd` (`fs.search`, `upload`, `send`, `session.open`) and `dir` (`sessions.list`) must be inside a root; otherwise `{ error: "No such folder", code: "not_found" }`. `fs.list` without a path and `fs.search` without a cwd (which would fall back to HOME) are refused the same way. Paths are compared with `canonicalPath()` / `withinRoot()` (`server/src/platform.js`), so `..` can't climb out and a link inside a root that points outside counts as outside.
+- The answer is always "not found", never "forbidden": a device must not learn which chats or folders exist outside its roots.
+
+**Lists, hello and events.** `sessions.list` keeps only chats whose cwd is inside a root. A device's `hello` filters `live` the same way, leaves out `home` even with `files.read`, and adds `roots` (its own roots, as given) so a hub can start its folder picker there; the owner's `hello` has no `roots`. Events (`hub.js`) reach such a device only when they carry a `sessionId` whose chat folder (live, else remembered from the gate) is inside a root; a message with no `sessionId` is dropped if it carries chat details (a title, folder, parent or chat list) and sent when it doesn't (for example `sessions.changed`).
 
 **What a device may do.** Every message type has a scope in `server/src/devices.js` (`SCOPE_OF`): `null` means any signed-in caller, a scope means a device must hold it, and a type not listed is the owner's only.
 
@@ -214,13 +227,13 @@ node server/bin/pocket-agent.mjs pair [--name "Phone"] [--scopes chat,files.read
 | `files.write` | `fs.mkdir`, `upload` |
 | `workers` | worker messages (none yet) |
 
-Everything else — settings and prefs, `accounts.*`, `deepseek.*`, `devices.*`, `environment.set`, updates and channels, backups, `termux.*`, `services.*`, `native.call`, `session.delete` — is the owner's. A message a device may not send gets `{ error: "This device isn't allowed to do that", code: "forbidden" }`. `hello` leaves out what a device has no business seeing: `githubToken`, `updateChannel`, `updateKind`, `updateTrack`, `devRepo`, `usage`, `usageByAccount`, `account`, `accounts`, `defaultAccount`, `deepseek`, `environments`, `profiles`, `defaultProfile` and `home` (`home` stays if the device has `files.read`).
+Everything else — settings and prefs, `accounts.*`, `deepseek.*`, `devices.*` (including `devices.setRoots`), `environment.set`, updates and channels, backups, `termux.*`, `services.*`, `native.call`, `session.delete` — is the owner's. A message a device may not send gets `{ error: "This device isn't allowed to do that", code: "forbidden" }`. `hello` leaves out what a device has no business seeing: `githubToken`, `updateChannel`, `updateKind`, `updateTrack`, `devRepo`, `usage`, `usageByAccount`, `account`, `accounts`, `defaultAccount`, `deepseek`, `environments`, `profiles`, `defaultProfile` and `home` (`home` stays only if the device has `files.read` and no roots; a device with roots gets `roots` instead).
 
 A device also never reaches chats on other machines, even with `chat` (see Environments): the reply is `code: "forbidden"`.
 
 Over HTTP, a device may fetch `/export/sessions.tgz` with `export.sessions` and `/bundle/info` / `/bundle.tgz` with `update.source`; every other token-protected route answers `403 { error: "forbidden" }`. An unknown token is `401 { error: "bad token" }`.
 
-**Events.** A device's socket gets only `ev`, `state`, `activity`, `permission.request`, `permission.resolved`, `tasks`, `sessions.changed` and `link` (`DEVICE_EVENTS` in `server/src/hub.js`): a chat's live state and the chat list. Every other event stays with the owner.
+**Events.** A device's socket gets only `ev`, `state`, `activity`, `permission.request`, `permission.resolved`, `tasks`, `sessions.changed` and `link` (`DEVICE_EVENTS` in `server/src/hub.js`): a chat's live state and the chat list. Every other event stays with the owner. A device limited to folders gets only events for chats inside them; an event with no `sessionId` that carries chat details (such as `link`, with a title) is not sent to it.
 ## Profiles
 
 A profile says whose work a chat is (`server/src/profiles.js`): its folders (workspaces), the Claude account its chats use, environment variables, and a secrets folder of its own. A chat's profile comes from its folder: the longest workspace that contains it, else the default profile. With no saved profiles there's one **Personal** profile, and nothing is written until a profile is saved.
