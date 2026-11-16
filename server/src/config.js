@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { IS_WIN, moduleDir, firstRunnable, windowsClaudeCandidates } from "./platform.js";
 
 /** App version, from ./VERSION (repo or install root), or the copy bundled inside the app. */
 export const VERSION = (() => {
@@ -24,14 +25,15 @@ export const CLAUDE = args.claude || process.env.PA_CLAUDE || findClaude();
 function findClaude() {
   // The app passes --claude; otherwise look where Claude Code usually lives (app Linux, Termux, PATH).
   // In Termux, its launcher (scripts/termux-install.sh) first: a ~/.local/bin/claude there is the glibc
-  // binary, which can't start in Termux on its own.
+  // binary, which can't start in Termux on its own. On Windows: claude.exe from its installer, PATH or the IDE.
+  if (IS_WIN) return firstRunnable(windowsClaudeCandidates()) || "claude";
   const termux = "/data/data/com.termux/files/usr/bin/claude", local = path.join(os.homedir(), ".local/bin/claude");
   const candidates = (process.env.PREFIX || "").includes("com.termux") ? [termux, local] : [local, termux];
   for (const dir of (process.env.PATH || "").split(":")) if (dir) candidates.push(path.join(dir, "claude"));
   return candidates.find(p => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; } }) || "claude";
 }
 /** Directory with the chat UI; served at /ui/ so UI changes reach the app without a reinstall. */
-export const UI_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../app/assets/ui");
+export const UI_DIR = path.resolve(moduleDir(import.meta.url), "../../app/assets/ui");
 /** Latest APK and its version info (written by build.sh), offered to the app as an in-app update. */
 export const APK_PATH = process.env.PA_APK || path.resolve(UI_DIR, "../../../build/pocket-agent.apk");
 export const APK_INFO = APK_PATH.replace(/\.apk$/, ".json");

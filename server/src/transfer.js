@@ -10,15 +10,17 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { CLAUDE_DIR, UI_DIR, DATA, prefs, log } from "./config.js";
 import { SIG_NAME, trustedKeys, verifyBundle } from "./signing.js";
+import { moduleDir, commandFor } from "./platform.js";
 
 /** Repo / install root: ~/projects/pocket-agent in Termux, /opt/pocket-agent in the app. */
-export const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
+export const ROOT = path.resolve(moduleDir(import.meta.url), "../..");
 const BUNDLE_PATHS = ["VERSION", "server/src", "server/bin", "server/devtools", "server/package.json", "server/package-lock.json", "server/trusted-keys.json", "app/assets/ui"];
 
 // ───── helpers ─────
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], ...opts });
+    const [file, pre] = commandFor(cmd);   // Windows: tar.exe, node npm-cli.js (platform.js)
+    const p = spawn(file, [...pre, ...args], { stdio: ["ignore", "pipe", "pipe"], ...opts });
     let out = "";
     p.stdout.on("data", d => out += d); p.stderr.on("data", d => out += d);
     p.on("error", reject);
@@ -28,7 +30,8 @@ function run(cmd, args, opts = {}) {
 /** gzip'd tar of paths (relative to cwd) as a stream; missing paths are skipped. */
 export function tarStream(cwd, paths) {
   const existing = paths.filter(p => fs.existsSync(path.join(cwd, p)));
-  return spawn("tar", ["czf", "-", "-C", cwd, ...existing], { stdio: ["ignore", "pipe", "ignore"] }).stdout;
+  const [tar, pre] = commandFor("tar");
+  return spawn(tar, [...pre, "czf", "-", "-C", cwd, ...existing], { stdio: ["ignore", "pipe", "ignore"] }).stdout;
 }
 async function download(url, file) {
   const r = await fetch(url);

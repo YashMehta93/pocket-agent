@@ -25,6 +25,7 @@
     "test:upgrade": "bash server/test/upgrade.test.sh",
     "test:services": "node server/test/services.test.mjs",
     "test:hub": "cd server && node test/hub.test.mjs",
+    "test:platform": "node server/test/platform.test.mjs",
     "test:deepseek": "cd server && node test/deepseek.test.mjs"
   },
   "devDependencies": {
