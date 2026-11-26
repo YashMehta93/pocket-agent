@@ -41,6 +41,7 @@ export function createServer() {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://x");
     if (url.pathname === "/health") { res.setHeader("access-control-allow-origin", "*"); return json(res, 200, { ok: true, version: VERSION, live: live.size, protocol: PROTOCOL, env: environment().id }); }
+    if (url.pathname === "/favicon.ico") { res.writeHead(204); return res.end(); }   // browsers ask without a token
     if (url.pathname === "/" || url.pathname.startsWith("/ui/")) return serveUi(url.pathname, res);
     if (url.pathname.startsWith("/deepseek/")) return dsProxy(req, res, url);   // checks its own per-chat tokens
     if (url.pathname.startsWith("/termux/")) {

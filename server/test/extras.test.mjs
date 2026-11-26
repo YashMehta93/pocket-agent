@@ -159,6 +159,8 @@ try {
     for (let i = 0; i < 40; i++) { try { if ((await fetch("http://127.0.0.1:8769/health")).ok) break; } catch {} await new Promise(r => setTimeout(r, 250)); }
     const bad = await fetch("http://127.0.0.1:8769/termux/install.sh?code=nope");
     ok("an unknown code is refused", bad.status === 403);
+    const fav = await fetch("http://127.0.0.1:8769/favicon.ico");
+    ok("the favicon asks for no token and answers 204", fav.status === 204 && (await fav.text()) === "");
     const { default: WebSocket } = await import(path.join(REPO, "server/node_modules/ws/index.js"));
     const token = fs.readFileSync(path.join(process.env.PA_DATA, "token"), "utf8").trim();
     const migration = await fetch(`http://127.0.0.1:8769/export/migration.tgz?token=${token}`);

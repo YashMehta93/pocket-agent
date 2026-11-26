@@ -4,6 +4,7 @@ Versions follow `MAJOR.MINOR.PATCH` (see docs/RELEASES.md).
 
 ## Unreleased
 
+- Fixed the settings screens (#75): the active filter chip is readable in both themes and the filter row scrolls inside the drawer with names cut at 12 characters, Settings shows the real paired-device count, a pair code no longer leaves a stuck button, device rows and the chat header keep their lines tidy, and a code block keeps its first line and stays plain text unless its fence names a language.
 - **Devices** (#67): Settings → Devices pairs another device with a one-time code; each paired device gets its own token and scopes, can be renamed, and revoking it cuts it off at once. On a computer, `node server/src/pair-cli.js` prints a code for the phone.
 - **This device** (#67): Settings → Claude and connection shows this server's name (for example "Phone") and lets you rename it. Every server now also says its protocol and what it can do, so another Pocket Agent server can show and check it.
 - **Profiles** (#68): a profile groups folders with their own Claude account, environment variables and secrets folder, and a chat takes the profile of its folder. With one profile nothing changes.

@@ -201,7 +201,7 @@ const remoteA = { sessionId: "env-a:aaaaaaaa-0000-4000-8000-0000000000b2", title
 const remoteB = { sessionId: "env-b:bbbbbbbb-0000-4000-8000-0000000000b3", title: "On the PC", cwd: "/home/work", lastModified: Date.now() - 2000, remote: true, environment: "env-b", environmentName: "Work PC", offline: true };
 const remoteC = { sessionId: "env-c:dddddddd-0000-4000-8000-0000000000b4", title: "On the long one", cwd: "/home/long", lastModified: Date.now() - 3000, remote: true, environment: "env-c", environmentName: "A very long machine name", offline: true };
 ev(`state.sessions = ${JSON.stringify([local, remoteA, remoteB, remoteC])}; state.envFilter = ""; renderEnvFilters(); renderSessions()`);
-ok("the drawer gets All · Phone · each device", !$("#env-filters").hidden && $$("#env-filters button").map(b => b.textContent).join(" | ") === "All | Phone | MacBook Pro | Work PC | A very long machine name");
+ok("the drawer gets All · Phone · each device, a long name ending in an ellipsis at 12 characters", !$("#env-filters").hidden && $$("#env-filters button").map(b => b.textContent).join(" | ") === "All | Phone | MacBook Pro | Work PC | A very long…");
 const offRow = $$("#session-list .sess").find(b => /On the long one/.test(b.textContent));
 ok("an offline device's chat is dimmed, says offline and shows its chip",
   offRow.classList.contains("offline") && /offline/.test(offRow.querySelector(".meta").textContent)

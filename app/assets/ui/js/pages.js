@@ -236,6 +236,7 @@ function openSettings(sectionId) {
       }
       if (![...res.querySelectorAll("section")].some(x => !x.hidden)) res.innerHTML = `<p class="set-none">No setting matches "${esc(q.value.trim())}".</p>`;
     };
+    if (typeof loadDeviceCount === "function") loadDeviceCount();   // the Devices row's count, fresh each time
   });
   if (sectionId) openSettingsSection(sectionId);
 }

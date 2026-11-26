@@ -11,11 +11,10 @@ function enhanceMd(el) {
     const pre = code.parentElement;
     if (pre.querySelector(".code-head")) return;
     const lang = (code.className.match(/language-([\w+#-]+)/) || [])[1] || "";
-    try {
-      if (lang && hljs.getLanguage(lang)) code.innerHTML = hljs.highlight(code.textContent, { language: lang, ignoreIllegals: true }).value;
-      else if (code.textContent.length < 20000) hljs.highlightElement(code);
-    } catch {}
-    const head = h(`<div class="code-head"><span>${esc(lang || "text")}</span><button>Copy</button></div>`);
+    const known = lang && hljs.getLanguage(lang);
+    // only a fence that names a language hljs knows is highlighted; anything else stays plain text
+    try { if (known) code.innerHTML = hljs.highlight(code.textContent, { language: lang, ignoreIllegals: true }).value; } catch {}
+    const head = h(`<div class="code-head"><span>${esc(known ? lang : "TEXT")}</span><button>Copy</button></div>`);
     head.querySelector("button").onclick = () => copyText(code.textContent);
     pre.prepend(head);
   });

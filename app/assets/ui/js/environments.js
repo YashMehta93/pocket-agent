@@ -84,12 +84,13 @@ function renderEnvFilters() {
   box.hidden = !envs.length;
   if (typeof syncChatFilterRow === "function") syncChatFilterRow();
   if (!envs.length) { box.innerHTML = ""; return; }
-  const opts = [["", "All"], ["phone", "Phone"], ...envs.map(e => [e.id, e.name])];
+  const opts = [["", "All", "All"], ["phone", "Phone", "Phone"], ...envs.map(e => [e.id, filterLabel(e.name), e.name])];
   if (!opts.some(([v]) => v === state.envFilter)) state.envFilter = "";
   box.innerHTML = "";
-  for (const [v, label] of opts) {
+  for (const [v, label, full] of opts) {
     const b = h(`<button class="${state.envFilter === v ? "on" : ""}"></button>`);
     b.textContent = label;
+    b.title = full;
     b.onclick = () => setEnvFilter(v);
     box.append(b);
   }

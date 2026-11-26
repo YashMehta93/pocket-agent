@@ -147,7 +147,13 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 #topbar.scrolled { border-bottom-color: var(--line); }
 .title-wrap { flex: 1; min-width: 0; padding: 0 6px; }
 #chat-title { font: 500 17px/1.25 var(--serif); letter-spacing: -0.015em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#chat-sub { font: 11.5px/1.4 var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+/* the chat's subtitle: the device and profile stay whole (up to 14 characters), the folder gives way,
+   its ellipsis at the start so the end of the path — the part that says where you are — stays readable */
+#chat-sub { display: flex; align-items: baseline; min-width: 0; font: 11.5px/1.4 var(--mono); color: var(--faint); white-space: nowrap; margin-top: 1px; }
+#chat-sub > span { flex: none; }
+#chat-sub .cs-env, #chat-sub .cs-prof { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
+#chat-sub .cs-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+#chat-sub .cs-path > span { direction: ltr; unicode-bidi: embed; }
 #banner { margin: 2px 14px 8px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: 13.5px; display: flex; gap: 12px; align-items: center; color: var(--text2); }
 #banner button { margin-left: auto; padding: 5px 12px; border-radius: 6px; background: var(--primary); color: var(--primary-ink); font-weight: 500; font-size: 13px; flex: none; }
 #todo-bar { margin: 0 14px 8px; border: 1px solid var(--line); border-radius: 8px; font-size: 13.5px; background: var(--surface); }
@@ -185,7 +191,8 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 .md h1 { font-size: 1.45em; } .md h2 { font-size: 1.28em; } .md h3 { font-size: 1.12em; }
 .md code { font-family: var(--mono); font-size: .85em; background: var(--bg3); padding: .12em .38em; border-radius: 4px; color: var(--text); }
 .md pre { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: .8em 0; }
-.md pre code { display: block; padding: 36px 14px 14px; overflow-x: auto; background: none; font-size: 12.5px; line-height: 1.6; white-space: pre; }
+/* the top padding clears the absolute TEXT/Copy header; also match the highlighting theme's `pre code.hljs` */
+.md pre code, .md pre code.hljs { display: block; padding: 36px 14px 14px; overflow-x: auto; background: none; font-size: 12.5px; line-height: 1.6; white-space: pre; }
 .md pre .code-head { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 6px 6px 6px 14px; font: 600 10.5px/1 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); border-bottom: 1px solid var(--line); background: var(--bg2); }
 .md pre .code-head button { padding: 3px 9px; border-radius: 4px; color: var(--muted); font: 500 11.5px/1 var(--sans); letter-spacing: 0; text-transform: none; }
 .md table { border-collapse: collapse; display: block; overflow-x: auto; font-size: 14px; margin: .8em 0; }
@@ -574,12 +581,17 @@ body.tab-agents #chat, body.tab-agents #composer, body.tab-agents #todo-bar, bod
 .pdot.pc-slate, .pf-sw.pc-slate { background: var(--pf-slate); }
 /* one compact filter row: profile chips first, a thin divider, then environment chips; each part
    shows only when it has choices, and the row hides when neither does */
-.chat-filters { align-items: center; padding: 2px 14px 0; gap: 2px; }
+.chat-filters { align-items: center; padding: 2px 14px 0; gap: 2px; width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; }
 .chat-filters .filter-part:not([hidden]) { display: contents; }
 .chat-filters .filter-sep { flex: none; width: 1px; height: 16px; margin: 0 5px; background: var(--line); }
-/* the profile chips: text chips, 28 px, the active one in the accent colour */
-#profile-filters button { flex: none; height: 28px; padding: 0 9px; border: 0; border-radius: 6px; color: var(--muted); font-size: 12.5px; }
-#profile-filters button.on { color: var(--accent); font-weight: 500; }
+/* a soft fade at the edge the row is cut at, only while it can scroll that way */
+#chat-filters.fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 18px); mask-image: linear-gradient(to right, transparent, #000 18px); }
+#chat-filters.fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
+#chat-filters.fade-l.fade-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 22px), transparent); }
+/* profile chips and environment chips look the same: 28 px pills, readable when on (ink on the
+   primary colour, which inverts with the theme) */
+#chat-filters button { flex: none; height: 28px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 9999px; border: 1px solid var(--line); color: var(--muted); font-size: 12.5px; white-space: nowrap; transition: background .15s, color .15s, border-color .15s; }
+#chat-filters button.on { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); font-weight: 500; }
 /* a new chat's folder, with the profile it falls in */
 .pchip { display: inline-flex; align-items: center; gap: 5px; vertical-align: 1px; padding: 1px 7px 1px 6px; border: 1px solid var(--line); border-radius: 9999px; color: var(--muted); font-size: 11.5px; line-height: 1.35; }
 .pchip .pdot { width: 5px; height: 5px; }
@@ -621,7 +633,9 @@ body.tab-agents #chat, body.tab-agents #composer, body.tab-agents #todo-bar, bod
 .env-err { color: var(--red); font-size: 13.5px; line-height: 1.45; margin: 0 0 8px; }
 .env-test { color: var(--muted); font: 12.5px/1.5 var(--mono); margin: 4px 0 8px; overflow-wrap: anywhere; }
 .env-test.err { color: var(--red); }
-#env-filters button { height: 28px; display: inline-flex; align-items: center; max-width: 132px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* device rows: scopes (with a folder-limit note) one clipped line, then "last used …" on its own line;
+   no separator is ever left dangling, at any text size */
+.dev-scopes, .dev-used { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* a device's chat: dimmed, with its name in the meta line (at most 12 characters) */
 .sess.offline { opacity: .55; }
 .meta-env { display: inline-block; max-width: 12ch; padding: 0 5px; margin-right: 5px; border-radius: 4px; background: var(--bg3); color: var(--muted); font: 500 10.5px/1.5 var(--sans); vertical-align: 1px; }

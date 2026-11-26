@@ -46,6 +46,8 @@ function relTime(ms) {
 function fmtDur(ms) { if (ms < 1000) return ms + "ms"; const s = ms / 1000; if (s < 60) return s.toFixed(1) + "s"; return Math.floor(s / 60) + "m " + Math.round(s % 60) + "s"; }
 function fmtTok(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); }
 function shortPath(p) { const home = state.home; return p && home && p.startsWith(home) ? "~" + p.slice(home.length) : (p || ""); }
+/** A drawer filter chip's name: at most 12 characters, the last of them an ellipsis. */
+const filterLabel = (name, max = 12) => { const s = String(name || ""); return s.length > max ? s.slice(0, max - 1) + "…" : s; };
 function baseName(p) { return (p || "").replace(/\/+$/, "").split("/").pop() || "/"; }
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 

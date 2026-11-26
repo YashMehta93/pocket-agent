@@ -297,9 +297,26 @@ function updateHeader() {
   // a worker says so (the drawer has it under the chat that started it; Android back returns there)
   const worker = !cur.isNew && typeof workerParentOf === "function" && workerParentOf(cur.sessionId) ? (ds ? " worker" : " · Claude worker") : "";
   const prof = typeof profileMany === "function" && profileMany() ? profileOfCwd(cur.cwd) : null;
-  // a chat on another device names it first (environments.js)
+  // a chat on another device names it first (environments.js); the device and profile keep their width
+  // (up to 14 characters each), while the folder shrinks with an ellipsis at its start
   const env = typeof sessionEnvironment === "function" ? sessionEnvironment(cur.sessionId) : null;
-  $("#chat-sub").textContent = `${env ? env.name + " · " : ""}${shortPath(cur.cwd)}${prof ? " · " + prof.name : ""}${ds}${worker}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
+  const sub = $("#chat-sub");
+  sub.innerHTML = "";
+  const part = (text, cls) => {
+    const s = document.createElement("span"), str = String(text ?? "");
+    if (cls) s.className = cls;
+    if (cls === "cs-path") { const inner = document.createElement("span"); inner.dir = "ltr"; inner.textContent = str; s.append(inner); }
+    else s.textContent = str.replace(/^ /, "\u00a0");   // a flex item trims its own edge spaces
+    sub.append(s);
+  };
+  const sep = () => { const s = document.createElement("span"); s.className = "cs-sep"; s.textContent = "\u00a0·\u00a0"; sub.append(s); };
+  const bits = [];
+  if (env?.name) bits.push([env.name, "cs-env"]);
+  if (env?.name || shortPath(cur.cwd)) bits.push([shortPath(cur.cwd), "cs-path"]);
+  if (prof?.name) bits.push([prof.name, "cs-prof"]);
+  bits.forEach(([text, cls], i) => { if (i) sep(); part(text, cls); });
+  const tail = `${ds}${worker}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
+  if (tail) part(tail, "cs-tail");
   if (typeof renderEnvNotice === "function") renderEnvNotice();
   if (typeof renderTabs === "function") renderTabs();
 }

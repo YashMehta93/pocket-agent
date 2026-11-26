@@ -529,6 +529,45 @@ const whereBtns = $$("#new-where button");
 ok("an online device adds the Where row: Phone and each device, offline disabled", !$("#new-where").hidden && whereBtns.map(b => b.textContent).join(" | ") === "Phone | Laptop | Studio PC" && whereBtns.filter(b => b.disabled).length === 1);
 ev(`state.current = ${savedCurrent}; conn.fire("environments", { environments: [] }); state.envFilter = ""; renderEnvFilters(); renderSessions(); updateHeader(); updateComposer()`);
 
+// #75 Settings loads the paired-device count when it opens, so the Devices row is never stale
+ev(`window.__origCallD = conn.call; window.__devCalls = 0; conn.call = (t, m) => {
+  if (t === "devices.list") { window.__devCalls++; return Promise.resolve({ devices: [{ id: "dev-75", name: "Tablet", scopes: ["chat"], roots: [], createdAt: Date.now(), lastSeenAt: Date.now() }] }); }
+  return window.__origCallD(t, m); }`);
+ev("openSettings()");
+await until(() => tx('[data-sec="devices"] small') === "1 device", 3000, "device count");
+ok("Settings asks for the devices and its Devices row says how many are paired", ev("__devCalls") === 1 && tx('[data-sec="devices"] small') === "1 device");
+ev(`conn.call = window.__origCallD; delete window.__origCallD; delete window.__devCalls; page.close()`);
+
+// #75 with a pair code showing, nothing is left saying "Making a code…"; New code appears once it expires
+ev(`window.__origCallP = conn.call;
+  conn.call = (t, m) => t === "devices.pair" ? Promise.resolve({ code: "ABCD-EF12", expiresAt: Date.now() + 60000, roots: [] }) : window.__origCallP(t, m);
+  openPairSheet(document.body)`);
+$("#dev-pair-go").click();
+await until(() => $("#sheet #pair-code")?.textContent === "ABCD-EF12", 3000, "pair code");
+ok("a shown code leaves no 'Making a code…' button, and New code stays hidden while it is good",
+  !/Making a code/.test(tx("#sheet")) && $("#sheet #dev-pair-new").hidden && !$("#sheet .btn.primary:not([hidden])"));
+ev(`showPairCode(document.body, { code: "ZZZZ-ZZZZ", expiresAt: Date.now() - 1000, roots: [] })`);
+await sleep(50);
+ok("an expired code offers New code", !$("#sheet #dev-pair-new").hidden && tx("#sheet #dev-pair-new") === "New code" && /expired/.test(tx("#sheet")));
+ev(`sheet.close(true); clearPairTimer(); conn.call = window.__origCallP; delete window.__origCallP; page.close()`);
+
+// #75 a fence with no known language stays plain text, labelled TEXT; a fence that names one is highlighted
+const r75 = ev(`(() => {
+  const d = document.createElement("div"); document.body.append(d);
+  const f = String.fromCharCode(96, 96, 96);
+  setMd(d, f + "\\nquiet leaves unfold in heat\\n" + f + "\\n\\n" + f + "js\\nlet tea = 1;\\n" + f);
+  const pre = [...d.querySelectorAll("pre")];
+  const r = { plainLabel: pre[0]?.querySelector(".code-head span")?.textContent,
+    plainHl: !!pre[0]?.querySelector(".hljs, [class^=hljs-]"),
+    plainText: pre[0]?.querySelector("code")?.textContent,
+    jsLabel: pre[1]?.querySelector(".code-head span")?.textContent,
+    jsHl: !!pre[1]?.querySelector("[class^=hljs-]") };
+  d.remove();
+  return r;
+})()`);
+ok(`(#75) a fence without a language stays plain and is labelled TEXT: "${r75.plainLabel}"`, r75.plainLabel === "TEXT" && !r75.plainHl && /quiet leaves unfold in heat/.test(r75.plainText || ""));
+ok(`(#75) a fence that names a language is highlighted: "${r75.jsLabel}"`, r75.jsLabel === "js" && r75.jsHl);
+
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");
 ev(`state.models = [{ value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)" }, { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5" }]`);

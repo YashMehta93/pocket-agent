@@ -74,16 +74,17 @@ function renderProfileFilter() {
   box.innerHTML = "";
   syncChatFilterRow();
   if (!many) return;
-  const chip = (id, label) => {
+  const chip = (id, label, full = label) => {
     const on = (state.profileFilter || "") === id;
     const b = h(`<button type="button" class="${on ? "on" : ""}"></button>`);
     b.textContent = label;
+    b.title = full;
     b.setAttribute("aria-pressed", on);
     b.onclick = () => setProfileFilter(id);
     return b;
   };
   box.append(chip("", "All"));
-  for (const p of state.profiles) box.append(chip(p.id, p.name));
+  for (const p of state.profiles) box.append(chip(p.id, filterLabel(p.name), p.name));
 }
 /** The drawer's one filter row: profiles first, a thin divider, then environments; hidden when neither shows. */
 function syncChatFilterRow() {
@@ -93,7 +94,18 @@ function syncChatFilterRow() {
   const p = !!prof && !prof.hidden, e = !!env && !env.hidden;
   row.hidden = !p && !e;
   if (sep) sep.hidden = !(p && e);
+  requestAnimationFrame(updateFilterFade);
 }
+/** The row fades at an edge only while there is more to scroll that way (it never widens the drawer). */
+function updateFilterFade() {
+  const row = $("#chat-filters");
+  if (!row) return;
+  const max = row.scrollWidth - row.clientWidth;
+  row.classList.toggle("fade-l", max > 0 && row.scrollLeft > 2);
+  row.classList.toggle("fade-r", max > 2 && row.scrollLeft < max - 2);
+}
+$("#chat-filters")?.addEventListener("scroll", updateFilterFade, { passive: true });
+window.addEventListener("resize", updateFilterFade);
 function setProfileFilter(id, rerender = true) {
   state.profileFilter = id || "";
   try { if (state.profileFilter) localStorage.setItem(PROFILE_FILTER_KEY, state.profileFilter); else localStorage.removeItem(PROFILE_FILTER_KEY); } catch {}

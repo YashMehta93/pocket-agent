@@ -7,16 +7,32 @@
 state.devices = [];   // [{ id, name, scopes, roots, createdAt, lastSeenAt }] from devices.list
 let pairTimer = null; // the countdown under an open pair code
 
+/** The Settings row's summary: how many devices are paired, or the pairing hint when there are none. */
+function devicesSummary() {
+  const n = (state.devices || []).length;
+  return n === 1 ? "1 device" : n ? `${n} devices` : "Pair another device with a code";
+}
 /** Settings → Devices: a row on the Settings home, opening a short page of its own (like the other categories). */
 function devicesSettingsSection() {
-  const n = (state.devices || []).length;
   return {
     id: "devices", title: "Devices", icon: "wifi",
-    summary: n ? `${n} paired · pair another` : "Pair another device with a code",
+    summary: devicesSummary(),
     html: () => item(`<div id="dev-list"><p class="note">Loading…</p></div>
       <div id="dev-pair"></div>
       <div id="dev-pair-btn-box" style="margin-top:14px"></div>`, "devices paired pair another phone hub computer token folders"),
   };
+}
+/** Loads the count when Settings opens: another device can have paired since this app last looked. */
+let deviceCountAsk = 0;
+async function loadDeviceCount() {
+  const ask = ++deviceCountAsk;
+  let r;
+  try { r = await conn.call("devices.list"); }
+  catch { return; }
+  if (ask !== deviceCountAsk) return;   // a newer look already answered: its count is the current one
+  state.devices = r.devices || [];
+  const el = document.querySelector('[data-sec="devices"] .t small');
+  if (el) el.textContent = devicesSummary();
 }
 /** Hooks up the section above (wireSettings calls this for the page and for search results). */
 function wireDevicesSettings(root) {
@@ -45,7 +61,7 @@ function deviceRootsNote(d) {
 
 function deviceRow(d) {
   const used = d.lastSeenAt ? "last used " + deviceAgo(d.lastSeenAt) : "never used";
-  return `<div class="set-row"><div class="l" data-dev-open="${esc(d.id)}" style="cursor:pointer">${esc(d.name)}<small>${esc((d.scopes || []).join(", "))} · ${esc(used)}${esc(deviceRootsNote(d))}</small></div>
+  return `<div class="set-row"><div class="l" data-dev-open="${esc(d.id)}" style="cursor:pointer">${esc(d.name)}<small class="dev-scopes">${esc((d.scopes || []).join(", "))}${esc(deviceRootsNote(d))}</small><small class="dev-used">${esc(used)}</small></div>
     <div class="acc-chips"><button class="chip" data-dev="${esc(d.id)}" data-act="rename">Rename</button><button class="chip danger" data-dev="${esc(d.id)}" data-act="revoke">Revoke</button></div></div>`;
 }
 
@@ -63,7 +79,7 @@ function openDeviceSheet(root, id) {
   const d = state.devices.find(x => x.id === id);
   if (!d) return;
   const used = d.lastSeenAt ? "last used " + deviceAgo(d.lastSeenAt) : "never used";
-  const b = sheet.open(`<h2>${esc(d.name)}</h2><div class="sub">${esc((d.scopes || []).join(", "))} · ${esc(used)}${esc(deviceRootsNote(d))}</div>
+  const b = sheet.open(`<h2>${esc(d.name)}</h2><div class="sub">${esc((d.scopes || []).join(", "))}${esc(deviceRootsNote(d))}<br>${esc(used)}</div>
     <div>
       <button class="menu-item" data-a="rename">${icon("edit")}<span>Rename</span></button>
       <button class="menu-item" data-a="folders">${icon("folder")}<span>Change folders</span></button>
@@ -151,25 +167,27 @@ function openPairSheet(root, initialRoots = []) {
   };
 }
 
-/** The code and its countdown (it replaces the pairing sheet's contents). */
+/** The code and its countdown (it replaces the pairing sheet's contents). While the code is good it is the only
+ *  action; once it expires, a "New code" button appears. */
 function showPairCode(root, r) {
   clearPairTimer();
   const box = $("#sheet-body");
   box.innerHTML = `<h2>Pair a device</h2><div class="pair-code" id="pair-code"></div>
     <div class="pair-exp" id="pair-exp"></div>
     <p class="note" style="text-align:center">Enter this code on the other device. It works once.</p>
-    <button class="btn ghost" id="dev-pair-new" style="width:100%;margin-top:4px">Make a new code</button>`;
+    <div class="btns"><button class="btn primary" id="dev-pair-new" hidden>New code</button></div>`;
   box.querySelector("#pair-code").textContent = r.code;
-  const exp = box.querySelector("#pair-exp");
+  const exp = box.querySelector("#pair-exp"), again = box.querySelector("#dev-pair-new");
   const tick = () => {
     if (!document.contains(box)) return clearPairTimer();   // the page closed or re-rendered
     const left = Math.max(0, r.expiresAt - Date.now());
-    if (left <= 0) { exp.textContent = "This code has expired. Make a new one."; return clearPairTimer(); }
+    if (left <= 0) { exp.textContent = "This code has expired."; again.hidden = false; return clearPairTimer(); }
     exp.textContent = `Expires in ${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")}`;
+    again.hidden = true;
   };
   tick();
   pairTimer = setInterval(tick, 1000);
-  box.querySelector("#dev-pair-new").onclick = () => openPairSheet(root, Array.isArray(r.roots) ? r.roots : []);
+  again.onclick = () => openPairSheet(root, Array.isArray(r.roots) ? r.roots : []);
 }
 function clearPairTimer() { if (pairTimer) { clearInterval(pairTimer); pairTimer = null; } }
 
