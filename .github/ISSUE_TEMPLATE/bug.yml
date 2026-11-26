@@ -1,0 +1,17 @@
+name: Bug
+description: Something doesn't work as it should
+labels: ["type: bug", "status: needs-triage"]
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: "What you did, what you expected, what happened instead." }
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes: { label: Version, description: "Settings → About (e.g. 1.2.0-beta.1)" }
+  - type: input
+    id: phone
+    attributes: { label: Phone and Android version, placeholder: "OnePlus 13, Android 15" }
+  - type: textarea
+    id: logs
+    attributes: { label: Logs or screenshots, description: "Settings → Claude and connection → Server log helps. Remove anything private.", render: text }

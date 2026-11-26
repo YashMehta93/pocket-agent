@@ -1,0 +1,17 @@
+# Keeps GitHub's labels in step with .github/labels.json whenever that file changes on a release line.
+# (It never deletes labels; run `bash scripts/sync-labels.sh --prune` by hand for that.)
+name: Labels
+on:
+  push:
+    branches: [master, "v*.x"]
+    paths: [".github/labels.json"]
+  workflow_dispatch:
+permissions:
+  issues: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env: { GH_TOKEN: "${{ github.token }}" }
+        run: bash scripts/sync-labels.sh

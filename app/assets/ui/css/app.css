@@ -107,6 +107,39 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 @keyframes pulse { 50% { opacity: .3; } }
 .drawer-foot { padding: 10px 18px calc(12px + var(--safe-b)); font: 11.5px/1.4 var(--mono); color: var(--faint); border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
 .drawer-foot svg { width: 14px; height: 14px; }
+/* usage limits: drawer meter, the note above the message box, the details sheet */
+.usage-meter { display: block; margin: 0 14px; padding: 11px 4px 12px; border-top: 1px solid var(--line); text-align: left; }
+.usage-meter:not([hidden]) + .drawer-foot { border-top: 0; padding-top: 2px; }
+.u-row + .u-row { margin-top: 10px; }
+.u-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 10px; font-size: 12.5px; color: var(--text2); }
+.u-top small { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.u-bar { display: block; height: 4px; margin-top: 6px; border-radius: 2px; background: var(--bg3); overflow: hidden; }
+.u-bar i { display: block; height: 100%; border-radius: 2px; background: var(--text2); }
+.u-row.warn .u-bar i { background: var(--yellow); } .u-row.full .u-bar i { background: var(--red); }
+.u-row.warn .u-top small { color: var(--yellow); } .u-row.full .u-top small { color: var(--red); }
+.u-row.big + .u-row.big { margin-top: 18px; }
+.u-row.big .u-top { font-size: 15px; color: var(--text); } .u-row.big .u-top small { font-size: 13px; }
+.u-row.big .u-bar { height: 6px; border-radius: 3px; margin-top: 8px; }
+.u-foot { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 18px 0 4px; }
+#usage-note { max-width: 760px; width: 100%; margin: 0 auto 8px; padding: 0 4px; font: 12px/1.4 var(--mono); color: var(--text2); display: flex; gap: 8px; align-items: center; text-align: left; }
+#usage-note svg { width: 14px; height: 14px; flex: none; color: var(--yellow); }
+#usage-note.full svg { color: var(--red); }
+#account-limit { max-width: 760px; width: 100%; margin: 0 auto 8px; padding: 0 4px; font: 12px/1.4 var(--mono); color: var(--text2); display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; text-align: left; }
+#account-limit .al-line { display: flex; gap: 8px; align-items: center; }
+#account-limit .al-line svg { width: 14px; height: 14px; flex: none; color: var(--red); }
+#account-limit .al-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.u-head { display: flex; align-items: center; justify-content: space-between; } .u-head .icon-btn { margin-right: -10px; } .u-head .icon-btn svg { width: 19px; height: 19px; }
+.u-sec { font: 600 11px/1.4 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 22px 0 10px; }
+.u-ctx { display: block; width: 100%; text-align: left; } .u-ctx small svg { display: inline-block; width: 13px; height: 13px; vertical-align: -2px; transition: transform .15s; }
+.u-ctx.open small svg { transform: rotate(180deg); }
+.u-sub { display: block; margin-top: 6px; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.u-cats { margin-top: 8px; } .u-cats .chip { margin-top: 12px; }
+.u-pace { display: flex; gap: 10px; align-items: flex-start; margin: 18px 0 0; padding: 11px 13px; border-radius: 8px; background: var(--yellow-bg); color: var(--text2); font-size: 13.5px; line-height: 1.45; }
+.u-pace svg { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--yellow); }
+.u-list { margin: 0 0 6px; }
+.usage-ring svg { width: 22px; height: 22px; } .usage-ring circle { fill: none; stroke-width: 2.6; }
+.usage-ring .track { stroke: var(--line2); } .usage-ring .fill { stroke: var(--muted); stroke-linecap: round; }
+.usage-ring.warn .fill { stroke: var(--yellow); } .usage-ring.full .fill { stroke: var(--red); }
 
 /* ───── main ───── */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; padding-top: var(--safe-t); position: relative; }
@@ -114,7 +147,13 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 #topbar.scrolled { border-bottom-color: var(--line); }
 .title-wrap { flex: 1; min-width: 0; padding: 0 6px; }
 #chat-title { font: 500 17px/1.25 var(--serif); letter-spacing: -0.015em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#chat-sub { font: 11.5px/1.4 var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+/* the chat's subtitle: the device and profile stay whole (up to 14 characters), the folder gives way,
+   its ellipsis at the start so the end of the path — the part that says where you are — stays readable */
+#chat-sub { display: flex; align-items: baseline; min-width: 0; font: 11.5px/1.4 var(--mono); color: var(--faint); white-space: nowrap; margin-top: 1px; }
+#chat-sub > span { flex: none; }
+#chat-sub .cs-env, #chat-sub .cs-prof { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
+#chat-sub .cs-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+#chat-sub .cs-path > span { direction: ltr; unicode-bidi: embed; }
 #banner { margin: 2px 14px 8px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: 13.5px; display: flex; gap: 12px; align-items: center; color: var(--text2); }
 #banner button { margin-left: auto; padding: 5px 12px; border-radius: 6px; background: var(--primary); color: var(--primary-ink); font-weight: 500; font-size: 13px; flex: none; }
 #todo-bar { margin: 0 14px 8px; border: 1px solid var(--line); border-radius: 8px; font-size: 13.5px; background: var(--surface); }
@@ -152,7 +191,8 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 .md h1 { font-size: 1.45em; } .md h2 { font-size: 1.28em; } .md h3 { font-size: 1.12em; }
 .md code { font-family: var(--mono); font-size: .85em; background: var(--bg3); padding: .12em .38em; border-radius: 4px; color: var(--text); }
 .md pre { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: .8em 0; }
-.md pre code { display: block; padding: 36px 14px 14px; overflow-x: auto; background: none; font-size: 12.5px; line-height: 1.6; white-space: pre; }
+/* the top padding clears the absolute TEXT/Copy header; also match the highlighting theme's `pre code.hljs` */
+.md pre code, .md pre code.hljs { display: block; padding: 36px 14px 14px; overflow-x: auto; background: none; font-size: 12.5px; line-height: 1.6; white-space: pre; }
 .md pre .code-head { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 6px 6px 6px 14px; font: 600 10.5px/1 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); border-bottom: 1px solid var(--line); background: var(--bg2); }
 .md pre .code-head button { padding: 3px 9px; border-radius: 4px; color: var(--muted); font: 500 11.5px/1 var(--sans); letter-spacing: 0; text-transform: none; }
 .md table { border-collapse: collapse; display: block; overflow-x: auto; font-size: 14px; margin: .8em 0; }
@@ -329,6 +369,23 @@ textarea.field { min-height: 90px; resize: vertical; line-height: 1.5; }
 .settings h3 { font: 600 10.5px/1 var(--sans); color: var(--faint); text-transform: uppercase; letter-spacing: .08em; margin: 30px 0 4px; }
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--line); font-size: 14.5px; }
 .set-row .l { flex: 1; } .set-row .l small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; line-height: 1.45; }
+.acc-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 62%; }
+/* Devices: the one-use pair code, big and monospace, with its countdown */
+.pair-code { font: 600 32px/1.2 var(--mono); letter-spacing: .14em; text-align: center; padding: 18px 0 4px; user-select: all; }
+.pair-exp { text-align: center; color: var(--muted); font-size: 12.5px; }
+/* Settings home: search + categories, each opening its own short page */
+.set-search { width: 100%; min-height: 48px; margin: 12px 0 6px; padding: 0 14px; border: 1px solid var(--line2); border-radius: 10px; background: var(--surface); color: var(--text); font: 400 15px var(--sans); }
+.set-search:focus { outline: 2px solid var(--text); outline-offset: 1px; }
+.set-cats { display: flex; flex-direction: column; margin: 6px 0 24px; }
+.set-cat { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 60px; padding: 10px 2px; border-bottom: 1px solid var(--line); text-align: left; color: var(--text); background: none; }
+.set-cat:active { background: var(--bg2); }
+.set-cat .ic { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: var(--bg3); color: var(--text2); }
+.set-cat .ic svg { width: 18px; height: 18px; }
+.set-cat .t { flex: 1; min-width: 0; font-size: 15px; font-weight: 500; }
+.set-cat .t small { display: block; margin-top: 2px; color: var(--muted); font-size: 12.5px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.set-cat .go { flex: none; color: var(--muted); font-size: 22px; line-height: 1; }
+#set-results section[hidden], .set-item[hidden] { display: none; }
+.set-none { color: var(--muted); padding: 24px 0; }
 .switch { width: 40px; height: 24px; border-radius: 9999px; background: var(--line2); position: relative; flex: none; transition: background .2s; }
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); transition: transform .25s var(--ease); }
 .switch.on { background: var(--primary); } .switch.on::after { transform: translateX(16px); background: var(--primary-ink); }
@@ -364,3 +421,230 @@ textarea.field { min-height: 90px; resize: vertical; line-height: 1.5; }
   #drawer { position: relative; transform: none; }
   #scrim, #btn-menu { display: none; }
 }
+
+/* grouped steps (#37): one line per run of steps, a timeline sheet, a page per step */
+.steps-line { display: none; }
+body:not(.steps-cards) .steps.has-tools > .steps-line { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; margin: 4px 0; padding: 8px 0; min-height: 44px; font-size: 13.5px; color: var(--muted); }
+body:not(.steps-cards) .steps.has-tools > .steps-list { display: none; }
+.steps-line .spark { display: none; } .steps.running .steps-line .spark { display: inline-block; }
+.steps-line .sl-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.steps-line .sl-err { color: var(--red); white-space: nowrap; }
+.steps-line .chev { color: var(--faint); font-size: 16px; line-height: 1; }
+.step-tl { list-style: none; margin: 10px 0 4px; padding: 0; position: relative; }
+.step-tl::before { content: ""; position: absolute; left: 10px; top: 24px; bottom: 24px; width: 1px; background: var(--line2); }
+.step-row { display: flex; gap: 14px; align-items: center; width: 100%; text-align: left; padding: 10px 0; min-height: 48px; font-size: 14.5px; }
+.step-row > svg { width: 20px; height: 20px; padding: 2px 0; color: var(--muted); background: var(--bg); flex: none; position: relative; }
+.step-row .sr-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-row .sr-t b { font-weight: 500; color: var(--text); }
+.step-row .sr-t span { color: var(--muted); font-size: 13px; }
+.step-row .sr-st svg { width: 16px; height: 16px; color: var(--red); }
+.step-st { font-size: 13px; color: var(--muted); margin: 12px 18px 8px; } .step-st.err { color: var(--red); }
+.tool.in-page, .thinking.in-page { border: 0; background: none; margin: 0; }
+.tool.in-page > summary { pointer-events: none; padding: 0 0 10px; }
+.thinking.in-page > summary { pointer-events: none; }
+pre.has-btns { position: relative; padding-top: 34px; }
+.blk-btns { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; }
+.blk-btns .chip { font-size: 12px; padding: 3px 10px; }
+
+/* back and close within reach (#41): a close button on every sheet, a second back button at the bottom of pages */
+.sheet-x { position: absolute; top: 6px; right: 8px; z-index: 1; } .sheet-x svg { width: 18px; height: 18px; }
+#sheet-body > h2:first-child, #sheet-body > :first-child > h2:first-child { padding-right: 40px; }
+.u-head .icon-btn { margin-right: 34px; }
+.page-back2 { position: absolute; left: 14px; bottom: calc(16px + var(--safe-b)); width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface); border: 1px solid var(--line2); color: var(--text2); box-shadow: 0 2px 10px rgba(0,0,0,.12); z-index: 2; }
+.page-back2 svg { width: 20px; height: 20px; }
+#page-body { padding-bottom: calc(80px + var(--safe-b)); }
+.thinking .th-body > .md + .md { margin-top: 12px; }
+
+#page-body > .tool.in-page, #page-body > .thinking.in-page { margin: 0 14px; }
+
+/* DeepSeek (#44): engine chip, Settings, the approval sheet for a handoff, and the Usage section.
+   One quiet accent marks DeepSeek, an indigo kept apart from the blue of "reading" tags (≥ 6.6:1 on its tint, both themes). */
+:root { --ds: #4B44A8; --ds-bg: #ECEBFA; }
+:root[data-theme="dark"] { --ds: #B9B4F4; --ds-bg: #28263C; }
+.chip.engine-ds { color: var(--ds); background: var(--ds-bg); border-color: transparent; }
+/* the chips take the room between the clip and the mic; with large text they wrap inside their own group instead of being cut */
+#composer .chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+/* when the chips take a second line, the clip, mic and send stay on the first one, at the row's ends */
+#composer .row > #btn-attach, #composer .row > #btn-mic, #composer .row > #btn-send { align-self: flex-start; }
+.chip.danger { color: var(--red); background: var(--red-bg); border-color: transparent; }
+/* the approval sheet for a handoff */
+.dl-title { font-size: 15px; font-weight: 500; color: var(--text); margin: -6px 0 2px; overflow-wrap: anywhere; }
+.dl-task { max-height: 36vh; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); font-size: 14px; }
+.ds-err { color: var(--red); font-size: 13.5px; margin: 4px 0 0; }
+.acc-err { color: var(--red); font-size: 13.5px; margin: 4px 0 0; }
+.set-foot { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 16px 0 4px; }
+/* Usage sheet: DeepSeek's balance as a figure, then what we estimate was spent, then the price now */
+.ds-bal { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; margin: 0 0 8px; }
+.ds-fig { font-size: 15px; color: var(--muted); }
+.ds-fig b { font: 500 28px/1.15 var(--serif); letter-spacing: -0.02em; color: var(--text); font-variant-numeric: tabular-nums; margin-right: 3px; }
+.ds-bal small { font-size: 12.5px; color: var(--muted); }
+.ds-bal.stale .ds-fig b { color: var(--muted); }
+.ds-out { font: 500 17px/1.3 var(--sans); color: var(--red); }
+.ds-tap { min-height: 36px; font-size: 14px; color: var(--text2); text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px; text-align: left; }
+.ds-row { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 2px 12px; padding: 5px 0; font-size: 15px; color: var(--text); }
+.ds-row small { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ds-row.warn small { color: var(--yellow); } .ds-row.full small { color: var(--red); }
+.ds-bar { height: 6px; border-radius: 3px; margin: 2px 0 8px; }
+.ds-bar.warn i { background: var(--yellow); } .ds-bar.full i { background: var(--red); }
+.ds-price { display: flex; gap: 9px; align-items: flex-start; margin: 8px 0 0; font-size: 13.5px; color: var(--text2); }
+.ds-price i { width: 7px; height: 7px; border-radius: 50%; flex: none; margin-top: .55em; background: var(--green); } .ds-price.peak i { background: var(--yellow); }
+.result-line .cost { color: var(--muted); }
+
+/* ───── agents (#52): the Chat · Agents switch, the Agents tab, an agent's page, the handoff line, the drawer nest ───── */
+/* the switch: two quiet tabs under the header, a hairline below; the open one is ink with a short underline */
+#chat-tabs { display: flex; border-bottom: 1px solid var(--line); background: var(--bg); padding: 0 8px; }
+.tab { flex: 1; min-height: 42px; display: flex; justify-content: center; align-items: stretch; color: var(--muted); font: 500 13.5px/1.3 var(--sans); }
+.tab .tl { position: relative; display: flex; align-items: center; gap: 6px; padding: 0 6px; }
+.tab[aria-selected="true"] { color: var(--text); }
+.tab[aria-selected="true"] .tl::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; border-radius: 2px; background: var(--text); }
+.tab .ct { font: 500 12px/1 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.tab .ct:empty { display: none; }
+.tab .tdot { width: 7px; height: 7px; border-radius: 50%; background: var(--yellow); flex: none; }
+body.tab-agents #chat, body.tab-agents #composer, body.tab-agents #todo-bar, body.tab-agents #jump { display: none !important; }
+#agents-view { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 6px 0 32px; }
+#agents-view .ag-list { max-width: 760px; margin: 0 auto; padding: 0 18px; }
+#agents-view .ag-top { max-width: 760px; margin: 0 auto; padding: 8px 18px 0; display: flex; justify-content: flex-end; }
+.ag-none { color: var(--muted); font-size: 14px; padding: 18px 0; }
+/* a row: the tile (tinted by engine, showing the state), the title, the state with what it's doing, then the numbers */
+.ag-row { display: flex; gap: 14px; align-items: flex-start; width: 100%; text-align: left; padding: 14px 2px; border-bottom: 1px solid var(--line); min-height: 64px; transition: background .15s; }
+.ag-row:last-child { border-bottom: 0; }
+.ag-row:active { background: var(--bg2); }
+.ag-tile { width: 30px; height: 30px; border-radius: 8px; flex: none; display: grid; place-items: center; background: var(--bg3); color: var(--text2); margin-top: 1px; }
+.ag-tile.deepseek { background: var(--ds-bg); color: var(--ds); }
+.ag-tile svg { width: 15px; height: 15px; } .ag-tile .spark { width: 13px; height: 13px; border-color: currentColor; border-top-color: transparent; opacity: .9; }
+.ag-tile.failed svg, .ag-tile.stopped svg { color: var(--red); }
+.ag-dot { display: block; width: 9px; height: 9px; border-radius: 50%; background: var(--yellow); }
+.ag-t { flex: 1; min-width: 0; }
+.ag-ti { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-weight: 500; font-size: 14.5px; line-height: 1.4; color: var(--text); }
+.ag-now { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; margin-top: 2px; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.ag-st.needs { color: var(--yellow); font-weight: 500; } .ag-st.bad { color: var(--red); }
+.ag-meta { display: block; margin-top: 3px; font: 11.5px/1.5 var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
+.ag-meta span, .ag-hmeta span { white-space: nowrap; }
+/* a meta line breaks only between its parts, never inside one, and the " · " stays on the line before */
+.meta-part { white-space: nowrap; }
+/* an agent's page: what it's doing and its numbers stay on top, with Stop and Open as chat; then its conversation */
+#page-title.ltr { direction: ltr; }
+.ag-page .ag-head { position: sticky; top: 0; z-index: 1; padding: 10px 18px 10px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.ag-hst { font-size: 13.5px; color: var(--text2); line-height: 1.45; overflow-wrap: anywhere; }
+.ag-hrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 4px; }
+.ag-hmeta { flex: 1 1 auto; font: 11.5px/1.5 var(--mono); color: var(--faint); }
+.ag-btns { display: flex; gap: 6px; flex: none; margin-left: auto; }
+.ag-changed { padding: 8px 18px 0; font: 12px/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere; max-width: 760px; margin: 0 auto; }
+.ag-page .ag-chat { padding: 4px 18px 8px; max-width: 760px; margin: 0 auto; }
+.ag-cmd { margin: 14px 0 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: 12.5px/1.6 var(--mono); white-space: pre-wrap; word-break: break-word; }
+/* a worker's task, as it arrived from the calling chat: one quiet line, the whole task a tap away */
+.task-msg { margin: 18px 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.task-msg > summary { list-style: none; cursor: pointer; display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; }
+.task-msg > summary::-webkit-details-marker { display: none; }
+.task-msg .tm-h { font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+.task-msg .tm-first { font-size: 14px; color: var(--text2); overflow-wrap: anywhere; }
+.task-msg[open] .tm-first { display: none; }
+.task-msg > .md { padding: 0 14px 12px; font-size: 14px; }
+/* the handoff in the chat: like the steps line ("Sent to DeepSeek: Add README · done ›") */
+.handoff-line { display: flex; align-items: center; width: 100%; text-align: left; margin: 4px 0; padding: 8px 0; min-height: 44px; font-size: 13.5px; color: var(--muted); }
+.handoff-line .spark { display: none; margin-right: 8px; } .handoff.working .handoff-line .spark { display: inline-block; }
+/* the words wrap (large text keeps the worker's name); the state stays whole at the end */
+.handoff-line .hl-x { flex: 1; min-width: 0; line-height: 1.45; overflow-wrap: anywhere; }
+.handoff-line .hl-st { white-space: nowrap; } .hl-st.needs { color: var(--yellow); font-weight: 500; } .hl-st.bad { color: var(--red); }
+.handoff-line .chev { color: var(--faint); font-size: 16px; line-height: 1; flex: none; margin-left: 8px; }
+/* a worker's approval, in the chat that started it: "DeepSeek · Add README wants to run `npm test`" */
+#sheet h2.perm-h { font-size: 20px; line-height: 1.3; overflow-wrap: anywhere; }
+.perm-h .who { font-weight: 500; } .perm-h .eng-deepseek { color: var(--ds); }
+#sheet h2 code { font: 500 .78em/1.2 var(--mono); background: var(--bg3); color: var(--text); padding: .1em .35em; border-radius: 4px; letter-spacing: 0; }
+/* the drawer: workers folded under the chat that started them */
+.sess-kids { margin: -4px 0 4px; }
+.kids-toggle { display: flex; align-items: center; flex-wrap: wrap; gap: 0 6px; width: 100%; min-height: 34px; padding: 4px 10px 4px 27px; text-align: left; font: 12px/1.5 var(--mono); color: var(--muted); border-radius: 6px; }
+.kids-toggle:active { background: var(--bg2); }
+.kt-chev { display: inline-block; width: 10px; font: 15px/1 var(--sans); color: var(--faint); transition: transform .15s; }
+.sess-kids.open .kt-chev { transform: rotate(90deg); }
+.kt-st.needs { color: var(--yellow); }
+.kids-list { margin: 2px 0 6px 27px; padding-left: 6px; border-left: 1px solid var(--line2); }
+.sess.kid { padding-top: 7px; padding-bottom: 7px; }
+.sess.kid .dot:not(.running):not(.waiting):not(.idle) { visibility: hidden; }   /* a place for the dot, so titles line up */
+.sess.kid .t div:first-child { font-size: 14px; }
+@media (prefers-reduced-motion: no-preference) {
+  #agents-view:not([hidden]) .ag-list { animation: rise .45s var(--ease) both; }
+}
+
+/* Profiles (#68): a colour per profile, the drawer's filter row, profile dots, and Settings → Profiles.
+   The colours reuse the existing semantic hues where one matches (blue, green, amber, rose). */
+:root { --pf-teal: #2F6E66; --pf-blue: var(--blue); --pf-violet: #5C4B9E; --pf-rose: var(--red); --pf-amber: var(--yellow); --pf-green: var(--green); --pf-slate: #5C666B; }
+:root[data-theme="dark"] { --pf-teal: #86C9BF; --pf-violet: #BCAFEC; --pf-slate: #A8B1B5; }
+.pdot { width: 6px; height: 6px; border-radius: 50%; flex: none; display: inline-block; background: var(--pf-slate); }
+.pdot.pc-teal, .pf-sw.pc-teal { background: var(--pf-teal); }
+.pdot.pc-blue, .pf-sw.pc-blue { background: var(--pf-blue); }
+.pdot.pc-violet, .pf-sw.pc-violet { background: var(--pf-violet); }
+.pdot.pc-rose, .pf-sw.pc-rose { background: var(--pf-rose); }
+.pdot.pc-amber, .pf-sw.pc-amber { background: var(--pf-amber); }
+.pdot.pc-green, .pf-sw.pc-green { background: var(--pf-green); }
+.pdot.pc-slate, .pf-sw.pc-slate { background: var(--pf-slate); }
+/* one compact filter row: profile chips first, a thin divider, then environment chips; each part
+   shows only when it has choices, and the row hides when neither does */
+.chat-filters { align-items: center; padding: 2px 14px 0; gap: 2px; width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+.chat-filters .filter-part:not([hidden]) { display: contents; }
+.chat-filters .filter-sep { flex: none; width: 1px; height: 16px; margin: 0 5px; background: var(--line); }
+/* a soft fade at the edge the row is cut at, only while it can scroll that way */
+#chat-filters.fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 18px); mask-image: linear-gradient(to right, transparent, #000 18px); }
+#chat-filters.fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent); }
+#chat-filters.fade-l.fade-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 22px), transparent); }
+/* profile chips and environment chips look the same: 28 px pills, readable when on (ink on the
+   primary colour, which inverts with the theme) */
+#chat-filters button { flex: none; height: 28px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 9999px; border: 1px solid var(--line); color: var(--muted); font-size: 12.5px; white-space: nowrap; transition: background .15s, color .15s, border-color .15s; }
+#chat-filters button.on { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); font-weight: 500; }
+/* a new chat's folder, with the profile it falls in */
+.pchip { display: inline-flex; align-items: center; gap: 5px; vertical-align: 1px; padding: 1px 7px 1px 6px; border: 1px solid var(--line); border-radius: 9999px; color: var(--muted); font-size: 11.5px; line-height: 1.35; }
+.pchip .pdot { width: 5px; height: 5px; }
+/* Settings → Profiles: the list, then one profile's editor */
+.prof-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 13px 0; border-bottom: 1px solid var(--line); text-align: left; font-size: 14.5px; color: var(--text); }
+.prof-row:active { background: var(--bg2); }
+.prof-row .l { flex: 1; min-width: 0; }
+.prof-row .l small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; line-height: 1.45; }
+.prof-row .go { flex: none; color: var(--muted); font-size: 22px; line-height: 1; }
+.prof-row .pdot { width: 8px; height: 8px; }
+.prof-new { display: block; width: 100%; padding: 16px 0; text-align: left; color: var(--text2); font-size: 14.5px; text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px; }
+.pf-colours { display: flex; flex-wrap: wrap; gap: 11px; padding: 7px 0 9px; }
+.pf-sw { width: 22px; height: 22px; border-radius: 50%; flex: none; }
+.pf-sw.on { outline: 2px solid var(--text); outline-offset: 2px; }
+.pf-folder .l { font: 12.5px/1.5 var(--mono); overflow-wrap: anywhere; }
+.pf-x { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; color: var(--faint); flex: none; }
+.pf-x svg { width: 16px; height: 16px; }
+.pf-env { min-height: 130px; font: 12.5px/1.6 var(--mono); }
+.pf-hint { display: block; color: var(--muted); font-size: 12.5px; line-height: 1.45; margin: 2px 0 0; }
+.pf-err { color: var(--red); font-size: 12.5px; line-height: 1.45; margin: 6px 0 0; }
+.pf-muted { color: var(--muted); font-weight: 400; }
+.pf-none { color: var(--muted); font-size: 13px; padding: 4px 0 2px; }
+.pf-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+/* ───── environments (#69): other Pocket Agent servers, its Settings page, the drawer's filter and chips, the
+   offline notice, and a new chat's "Where" row ───── */
+.dot.online { background: var(--green); }
+.dot.connecting { background: var(--blue); animation: pulse 1.4s ease-in-out infinite; }
+.dot.offline { background: var(--faint); }
+.dot.outdated { background: var(--yellow); }
+.dot.unauthorized { background: var(--red); }
+.env-row { width: 100%; text-align: left; gap: 12px; }
+.env-row .dot { width: 8px; height: 8px; }
+.env-row .l small { overflow-wrap: anywhere; }
+.env-add { width: 100%; text-align: left; color: var(--text2); font-size: 14.5px; min-height: 44px; }
+.env-addr { display: flex; align-items: center; gap: 8px; }
+.env-addr .field { flex: 1; min-width: 0; margin: 0; }
+.env-addr .chip { flex: none; }
+.env-err { color: var(--red); font-size: 13.5px; line-height: 1.45; margin: 0 0 8px; }
+.env-test { color: var(--muted); font: 12.5px/1.5 var(--mono); margin: 4px 0 8px; overflow-wrap: anywhere; }
+.env-test.err { color: var(--red); }
+/* device rows: scopes (with a folder-limit note) one clipped line, then "last used …" on its own line;
+   no separator is ever left dangling, at any text size */
+.dev-scopes, .dev-used { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* a device's chat: dimmed, with its name in the meta line (at most 12 characters) */
+.sess.offline { opacity: .55; }
+.meta-env { display: inline-block; max-width: 12ch; padding: 0 5px; margin-right: 5px; border-radius: 4px; background: var(--bg3); color: var(--muted); font: 500 10.5px/1.5 var(--sans); vertical-align: 1px; }
+/* a chat on another device: "<name> is offline. The chat comes back when it's on." */
+#env-offline { max-width: 760px; width: 100%; margin: 0 auto 8px; padding: 8px 12px; display: flex; gap: 8px; align-items: center; border-radius: 8px; background: var(--bg2); color: var(--muted); font: 12px/1.4 var(--mono); }
+#env-offline svg { width: 14px; height: 14px; flex: none; color: var(--faint); }
+/* a new chat's Where row: Phone, then each device; only the online ones can be picked */
+#new-where { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin: -20px 0 26px; }
+#new-where .where-l { font: 600 10.5px/1 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin-right: 2px; }
+#new-where button { height: 28px; display: inline-flex; align-items: center; padding: 0 11px; border-radius: 9999px; border: 1px solid var(--line); color: var(--muted); font-size: 12.5px; max-width: 145px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#new-where button.on { background: var(--primary); color: var(--primary-ink); border-color: var(--primary); }
+#new-where button:disabled { opacity: .45; }

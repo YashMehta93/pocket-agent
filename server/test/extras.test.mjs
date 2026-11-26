@@ -11,6 +11,10 @@ const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../.
 const T = fs.mkdtempSync(path.join(os.tmpdir(), "pa-extras-"));
 const HOME = path.join(T, "home");
 Object.assign(process.env, { HOME, PA_DATA: path.join(HOME, ".pocket-agent"), PA_BACKUP_DIR: path.join(T, "sdcard/Pocket Agent"), PA_PORT: "8769" });
+// A stand-in for Claude Code, so nothing here can start the real one (config.js would find it on PATH).
+const FAKE_CLAUDE = path.join(T, "fake-claude");
+fs.writeFileSync(FAKE_CLAUDE, "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
+process.env.PA_CLAUDE = FAKE_CLAUDE;
 delete process.env.PA_MODE; delete process.env.PA_SUPERVISED;
 fs.mkdirSync(process.env.PA_DATA, { recursive: true });
 
@@ -39,7 +43,8 @@ try {
   const b = await createBackup();
   const names = sh(`tar tzf '${b.file}'`).split("\n");
   ok("backup written to phone storage", fs.existsSync(b.file) && b.bytes > 0, b.file.replace(T, ""));
-  ok("backup has chats, memory, projects, keystore, prefs", [".claude/projects/-root/chat1.jsonl", ".claude/projects/-root/memory/MEMORY.md", "projects/app/main.js", "projects/app/pocket-agent.keystore", ".pocket-agent/prefs.json"].every(n => names.includes(n)));
+  ok("backup has chats, memory, projects, prefs", [".claude/projects/-root/chat1.jsonl", ".claude/projects/-root/memory/MEMORY.md", "projects/app/main.js", ".pocket-agent/prefs.json"].every(n => names.includes(n)));
+  ok("backup has no signing keys at any depth (keystore, release key)", !names.some(n => /\.keystore$|release-key|\.pem$/.test(n)));
   ok("backup has no sign-in, tokens, release-signing key or node_modules", !names.some(n => /credentials|github-token|node_modules|release-key/.test(n)));
   ok("backup is listed", (await listBackups()).some(x => x.file === b.file));
   fs.rmSync(path.join(HOME, ".claude/projects"), { recursive: true });
@@ -91,6 +96,26 @@ try {
   const bare = path.join(T, "bare"); fs.mkdirSync(path.join(bare, "server"), { recursive: true });
   ok("without the file, the built-in keys are trusted", trustedKeys(bare).length === DEFAULT_TRUSTED_KEYS.keys.length && trustedKeys(bare).length > 0);
   ok("a missing keys file is restored byte for byte", ensureTrustedKeys(bare) === true && fs.readFileSync(path.join(bare, "server/trusted-keys.json"), "utf8") === keyFile && ensureTrustedKeys(bare) === false);
+  // VERSION after an APK install: copied up only when the APK was the last install
+  const { syncVersionFile } = await import("../src/transfer.js");
+  const inst = (top, apk, appliedAtMs, markerMs) => {
+    const d = fs.mkdtempSync(path.join(T, "inst-")); fs.mkdirSync(path.join(d, "server"));
+    if (top) fs.writeFileSync(path.join(d, "VERSION"), top);
+    if (apk) fs.writeFileSync(path.join(d, "server/VERSION"), apk);
+    if (markerMs) { fs.writeFileSync(path.join(d, "bundle.json"), "{}"); fs.utimesSync(path.join(d, "bundle.json"), markerMs / 1000, markerMs / 1000); }
+    if (appliedAtMs) fs.writeFileSync(path.join(d, "applied.json"), JSON.stringify({ at: new Date(appliedAtMs).toISOString() }));
+    return d;
+  };
+  const top = d => { try { return fs.readFileSync(path.join(d, "VERSION"), "utf8"); } catch { return null; } };
+  const now = Date.now();
+  let d = inst(null, "1.1.2\n", 0, now);
+  ok("fresh APK install: VERSION copied to the top", syncVersionFile(d) === true && top(d) === "1.1.2\n");
+  d = inst("1.1.0\n", "1.1.2\n", now - 3600e3, now);
+  ok("APK installed after a code update: the APK's VERSION wins", syncVersionFile(d) === true && top(d) === "1.1.2\n");
+  d = inst("1.2.0\n", "1.1.2\n", now, now - 3600e3);
+  ok("code update after the APK: its VERSION stays", syncVersionFile(d) === false && top(d) === "1.2.0\n");
+  d = inst("1.0.0\n", null, 0, 0);
+  ok("not installed from an APK (Termux, a computer): untouched", syncVersionFile(d) === false && top(d) === "1.0.0\n");
   const { githubRepo } = await import("../src/config.js");
   ok("any way of writing a GitHub repo becomes owner/repo", ["me/pa", "github.com/me/pa", "https://github.com/me/pa.git", "https://www.github.com/me/pa/", "git@github.com:me/pa.git", " me/pa.git "].every(x => githubRepo(x) === "me/pa"));
 
@@ -106,14 +131,47 @@ try {
   gh.close();
   ok("open-pr.sh opens a PR into the newest vN.x", got?.url === "/repos/me/pa/pulls" && got.body.base === "v10.x" && got.body.head === "feat/thing" && got.auth === "Bearer t0k" && /pull\/1/.test(out), out.trim().split("\n").pop());
 
+  // ───── opening a chat ─────
+  {
+    const { openSession, live } = await import("../src/live-session.js");
+    const id = "11111111-2222-4333-8444-555555555555";
+    const [a, b2] = await Promise.all([openSession({ sessionId: id, cwd: HOME }), openSession({ sessionId: id, cwd: HOME })]);
+    ok("two opens of one chat at once share one Claude process", a === b2 && live.get(id) === a);
+    ok("a later open returns the live one", await openSession({ sessionId: id }) === a);
+    // A send that fails after the server queued it is resent with the same uuid: it must queue once (#62e).
+    // (The SDK pulls items out of the inbox, so count pushes rather than what is left in it.)
+    let queued = 0; const push = a.inbox.push.bind(a.inbox); a.inbox.push = v => { queued++; return push(v); };
+    const msgId = "99999999-8888-4777-8666-555555555555";
+    const firstSend = a.send({ text: "once", uuid: msgId });
+    const resent = a.send({ text: "once", uuid: msgId });
+    ok("sending the same uuid twice queues one message", firstSend === msgId && resent === msgId && queued === 1,
+      `queued=${queued}`);
+    const otherId = "99999999-8888-4777-8666-555555555556";
+    ok("a new uuid still queues", a.send({ text: "twice", uuid: otherId }) === otherId && queued === 2, `queued=${queued}`);
+    ok("the accepted uuids are kept, bounded", a.seenUuids.has(msgId) && a.seenUuids.size <= 200);
+    a.close();
+  }
+
   // ───── Termux setup routes ─────
-  const server = spawn("node", [path.join(REPO, "server/src/index.js"), "--port", "8769"], { env: process.env, stdio: "ignore" });
+  // PREFIX without com.termux: these tests run on a computer / in the app's Linux, never as the Termux server.
+  const server = spawn("node", [path.join(REPO, "server/src/index.js"), "--port", "8769"], { env: { ...process.env, PREFIX: "/usr" }, stdio: "ignore" });
   try {
     for (let i = 0; i < 40; i++) { try { if ((await fetch("http://127.0.0.1:8769/health")).ok) break; } catch {} await new Promise(r => setTimeout(r, 250)); }
     const bad = await fetch("http://127.0.0.1:8769/termux/install.sh?code=nope");
     ok("an unknown code is refused", bad.status === 403);
+    const fav = await fetch("http://127.0.0.1:8769/favicon.ico");
+    ok("the favicon asks for no token and answers 204", fav.status === 204 && (await fav.text()) === "");
     const { default: WebSocket } = await import(path.join(REPO, "server/node_modules/ws/index.js"));
     const token = fs.readFileSync(path.join(process.env.PA_DATA, "token"), "utf8").trim();
+    const migration = await fetch(`http://127.0.0.1:8769/export/migration.tgz?token=${token}`);
+    ok("a server that isn't Termux doesn't export the whole home", migration.status === 403 && (await migration.text()) === "Only a Termux server exports its home.");
+    // A token of the right length in characters but not in bytes used to throw inside the comparison:
+    // a hung request over HTTP, and a dead server over the WebSocket upgrade.
+    const odd = encodeURIComponent("é".repeat(token.length));
+    ok("a non-ASCII token is refused over HTTP", (await fetch(`http://127.0.0.1:8769/bundle/info?token=${odd}`, { signal: AbortSignal.timeout(5000) }).catch(() => ({}))).status === 401);
+    await new Promise(res => { const w = new WebSocket(`ws://127.0.0.1:8769/ws?token=${odd}`); w.on("error", res); w.on("close", res); w.on("open", res); });
+    await new Promise(r => setTimeout(r, 300));
+    ok("a non-ASCII token over the WebSocket doesn't stop the server", await fetch("http://127.0.0.1:8769/health").then(r => r.ok, () => false));
     const ws = new WebSocket(`ws://127.0.0.1:8769/ws?token=${token}`); await new Promise(r => ws.on("open", r));
     const cmd = await new Promise(res => { ws.on("message", raw => { const m = JSON.parse(raw); if (m.t === "reply" && m.id === 1) res(m.command); }); ws.send(JSON.stringify({ t: "termux.installCommand", id: 1 })); });
     ws.close();
@@ -127,7 +185,150 @@ try {
     fs.writeFileSync(path.join(T, "b.tgz"), tgz);
     const list = sh(`tar tzf '${T}/b.tgz'`);
     ok("the code downloads the server bundle", list.includes("server/src/index.js") && list.includes("app/assets/ui/index.html"));
+
+    // a chat's own model and permission mode survive its process closing and the server restarting
+    const ws2 = new WebSocket(`ws://127.0.0.1:8769/ws?token=${token}`); await new Promise(r => ws2.on("open", r));
+    // args before the request id: an argument of its own called "id" (accounts.*) must not overwrite it
+    let n2 = 0; const call2 = (t, m = {}) => new Promise(res => { const id = ++n2; const h = raw => { const x = JSON.parse(raw); if (x.t === "reply" && x.id === id) { ws2.off("message", h); res(x); } }; ws2.on("message", h); ws2.send(JSON.stringify({ ...m, t, id })); });
+    await call2("set", { sessionId: "chat-closed-1", model: "claude-opus-5-5", permissionMode: "bypassPermissions" });
+    await call2("set", { sessionId: "chat-closed-1", effort: "high" });
+    const sub = await call2("subscribe", { sessionId: "chat-closed-1", after: 0 });
+    ok("a closed chat's model, effort and mode are remembered", sub.settings?.model === "claude-opus-5-5" && sub.settings.permissionMode === "bypassPermissions" && sub.settings.effort === "high");
+    const onDisk = JSON.parse(fs.readFileSync(path.join(process.env.PA_DATA, "prefs.json"), "utf8")).sessionSettings?.["chat-closed-1"];
+    ok("and saved to disk, so they survive a restart", onDisk?.permissionMode === "bypassPermissions");
+    const other = await call2("subscribe", { sessionId: "chat-never-set", after: 0 });
+    ok("a chat with nothing remembered gets no settings (the defaults apply)", other.settings === null);
+
+    // several Claude accounts: each chat runs on one, and its choice is saved
+    const acctList0 = await call2("accounts.list");
+    ok("accounts.list has only the default account", acctList0.accounts?.length === 1 && acctList0.accounts[0].id === "default" && acctList0.defaultAccount === "default");
+    const added = await call2("accounts.add", { name: "Work" });
+    const acct = added.account?.id;
+    ok("a new account gets a slugged id", typeof acct === "string" && acct.startsWith("work-"), acct || "");
+    const acctList1 = await call2("accounts.list");
+    ok("accounts.list now has two, with their usage", acctList1.accounts?.length === 2 && acctList1.accounts.some(a => a.id === acct) && !!acctList1.usageByAccount);
+    const acctSet = await call2("chat.account", { sessionId: "chat-acct-1", account: acct });
+    ok("a chat can run on another account", !acctSet.error, acctSet.error || "");
+    const prefsNow = JSON.parse(fs.readFileSync(path.join(process.env.PA_DATA, "prefs.json"), "utf8"));
+    ok("the chat's account is saved for a restart", prefsNow.chatAccount?.["chat-acct-1"] === acct);
+    const acctSub = await call2("subscribe", { sessionId: "chat-acct-1", after: 0 });
+    ok("a chat that isn't open yet says its account", acctSub.account === acct, acctSub.account || "");
+    const acctDefault = await call2("accounts.setDefault", { account: acct });
+    ok("new chats can default to the account", acctDefault.accounts?.find(a => a.id === acct)?.default === true, acctDefault.error || "");
+    const acctList2 = await call2("accounts.list");
+    ok("accounts.list says which account new chats use", acctList2.defaultAccount === acct);
+    const acctRemoved = await call2("accounts.remove", { account: acct });
+    const acctList3 = await call2("accounts.list");
+    ok("removing an account leaves the default one", acctRemoved.accounts?.length === 1 && acctList3.accounts.length === 1 && acctList3.defaultAccount === "default");
+    ws2.close();
+
+    // usage limits: from the rate_limit_event every reply carries (0–1, Unix seconds) and from Claude Code's /usage data (0–100, ISO)
+    const { noteRateLimit, refreshUsage, getUsage, getAllUsage } = await import("../src/usage.js");
+    noteRateLimit({ status: "allowed_warning", resetsAt: 1794658200, rateLimitType: "five_hour", utilization: 0.91,
+      unifiedWindows: { five_hour: { utilization: 0.91, resetsAt: 1794658200, status: "allowed_warning" }, seven_day: { utilization: 0.64, resetsAt: 1794909600, status: "allowed" } } });
+    const ev1 = getUsage();
+    ok("a rate-limit event gives both windows in percent, with reset times", ev1?.windows?.five_hour?.used === 91 && ev1.windows.five_hour.resetsAt === 1794658200000
+      && ev1.windows.five_hour.status === "allowed_warning" && ev1.windows.seven_day?.used === 64 && ev1.status === "allowed_warning");
+    let calls = 0;
+    const fakeQ = { usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => (calls++, { subscription_type: "max", rate_limits_available: true, rate_limits: {
+      five_hour: { utilization: 93, resets_at: "2026-11-14T15:30:00Z" }, seven_day: { utilization: 65, resets_at: "2026-11-20T09:00:00Z" }, seven_day_opus: null,
+      model_scoped: [{ display_name: "Fable", utilization: 40, resets_at: "2026-11-20T09:00:00Z" }] } }) };
+    const fresh = await refreshUsage(fakeQ, { asked: true });
+    ok("Claude Code's usage data adds per-model limits and keeps the warning", fresh?.windows?.five_hour?.used === 93 && fresh.windows.five_hour.resetsAt === Date.parse("2026-11-14T15:30:00Z")
+      && fresh.windows.five_hour.status === "allowed_warning" && fresh.models?.[0]?.name === "Fable" && fresh.models[0].used === 40 && fresh.plan === "max" && !("seven_day_opus" in fresh.windows));
+    await refreshUsage(fakeQ, { asked: true });
+    ok("asking again within 30 seconds doesn't fetch again", calls === 1);
+    ok("without the call (older Claude Code), the saved numbers stay", (await refreshUsage({}, { asked: true }))?.windows?.seven_day?.used === 65);
+
+    // numbers belong to the signed-in account; a service answer without a 5-hour window means 0% there
+    const { cache: C } = await import("../src/config.js");
+    const { accountChanged } = await import("../src/usage.js");
+    C.account = { email: "one@example.com" };
+    noteRateLimit({ status: "allowed", unifiedWindows: { seven_day: { utilization: 0.5, resetsAt: 1795024800, status: "allowed" } } });
+    ok("usage remembers whose numbers they are", getUsage()?.account === "one@example.com");
+    C.account = { email: "two@example.com" };
+    ok("after switching Claude accounts, the old account's numbers don't show", getUsage() === null);
+    accountChanged();
+    const q2 = { usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({ subscription_type: "max", rate_limits_available: true, rate_limits: { seven_day: { utilization: 72, resets_at: "2026-11-18T23:30:00Z" } } }) };
+    const u2 = await refreshUsage(q2, { asked: true });
+    ok("no 5-hour window from the service shows as 0%, the week as reported", u2?.windows?.five_hour?.used === 0 && u2.windows.seven_day.used === 72 && u2.account === "two@example.com");
+    delete C.account;
+
+    // usage is per account: an extra account's numbers never mix with the default one's
+    noteRateLimit({ status: "allowed", unifiedWindows: { seven_day: { utilization: 0.3, resetsAt: 1795024800, status: "allowed" } } }, "acct-x");
+    ok("a rate limit updates the account it came from", getUsage("acct-x")?.windows?.seven_day?.used === 30, JSON.stringify(getUsage("acct-x")?.windows?.seven_day));
+    ok("getAllUsage lists every account's numbers", !!getAllUsage()["acct-x"] && !!getAllUsage().default);
+
+    // after an unexpected stop, chats that were mid-reply continue: only right after it, once an hour, and not when turned off
+    const { continueInterrupted, clearWorking } = await import("../src/live-session.js");
+    const { prefs: P } = await import("../src/config.js");
+    const W = path.join(process.env.PA_DATA, "working.json");
+    fs.writeFileSync(W, JSON.stringify({ ids: ["chat-old"], at: Date.now() - 3 * 3600e3 }));
+    ok("a stop hours ago continues nothing, and the list is cleared", (await continueInterrupted()).length === 0 && !fs.existsSync(W));
+    P.continued = { "chat-again": [Date.now() - 60e3, Date.now() - 30e3, Date.now()] };
+    fs.writeFileSync(W, JSON.stringify({ ids: ["chat-again"], at: Date.now() }));
+    ok("a chat continued 3 times in 30 minutes isn't continued again (no crash loops)", (await continueInterrupted()).length === 0);
+    P.autoContinue = false;
+    fs.writeFileSync(W, JSON.stringify({ ids: ["chat-new"], at: Date.now() }));
+    ok("turned off, nothing continues", (await continueInterrupted()).length === 0);
+    delete P.autoContinue;
+    fs.writeFileSync(W, "{}"); clearWorking();
+    ok("a restart on purpose clears the list", !fs.existsSync(W));
+
+    // a background agent's own conversation is read from Claude Code's subagents folder
+    const { taskTranscript } = await import("../src/live-session.js");
+    const subDir = path.join(HOME, ".claude/projects/-tmp-x/chat-with-agents/subagents"); fs.mkdirSync(subDir, { recursive: true });
+    fs.writeFileSync(path.join(subDir, "agent-a0123456789abcdef.jsonl"), [
+      JSON.stringify({ type: "user", uuid: "u1", message: { role: "user", content: "Research the API" } }),
+      JSON.stringify({ type: "progress", data: {} }),
+      JSON.stringify({ type: "assistant", uuid: "u2", message: { role: "assistant", content: [{ type: "text", text: "Found it." }] } })].join("\n"));
+    const tr = taskTranscript("chat-with-agents", "a0123456789abcdef");
+    ok("an agent's conversation is found and read", tr?.length === 2 && tr[1].message.content[0].text === "Found it.");
+    ok("an unknown agent has none", taskTranscript("chat-with-agents", "a999") === null);
+    let refused = false; try { taskTranscript("../x", "a1"); } catch { refused = true; }
+    ok("ids with path characters are refused", refused);
   } finally { server.kill(); }
+
+  // ───── SSE catch-up: every live chat's status, and a missed "done" replayed once (#62f) ─────
+  {
+    const { live } = await import("../src/live-session.js");
+    const { createServer } = await import("../src/http.js");
+    const { TOKEN } = await import("../src/config.js");
+    const snap = (phase, label) => ({ phase, label, detail: "", turnStart: null, tokens: { thinking: 0, output: 0 }, steps: [] });
+    const fake = (sessionId, state, phase, lastDone = null) => ({ sessionId, title: sessionId, state, engine: "claude",
+      lastActive: Date.now(), lastDone, activity: { snapshot: () => snap(phase, phase) }, info: () => ({ pending: [] }) });
+    live.clear();   // the session opened above is closed; this test brings its own
+    const idle = fake("sse-idle", "idle", "idle", { at: Date.now() - 60_000, text: "Finished while away" });
+    const busy = fake("sse-busy", "running", "writing");
+    live.set(idle.sessionId, idle); live.set(busy.sessionId, busy);
+    const srv = createServer();
+    await new Promise(r => srv.listen(0, "127.0.0.1", r));
+    const port = srv.address().port;
+    const connect = async since => {
+      const q = new URLSearchParams({ v: "2", api: "0", token: TOKEN });
+      if (since !== null) q.set("since", String(since));
+      const ctl = new AbortController();
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/events?${q}`, { signal: ctl.signal });
+        const reader = res.body.getReader(); let text = "";
+        while (!text.includes("\n\n")) { const { value, done } = await reader.read(); if (done) break; text += Buffer.from(value).toString("utf8"); }
+        return JSON.parse(text.split("\n\n")[0].replace(/^data: /, ""));
+      } finally { ctl.abort(); }
+    };
+    try {
+      const first = await connect(0);
+      const evs = first.events || [];
+      const statuses = evs.filter(e => e.type === "notify" && e.spec?.id === "status");
+      ok("a connect with since=0 replays the done missed while away",
+        evs.find(e => e.type === "notify" && e.spec?.id === "done:sse-idle")?.spec?.text === "Finished while away");
+      ok("the batch has an activity for every live chat, idle ones as idle, busy last",
+        statuses.length === 2 && statuses[0].spec.text === "Listening for Claude" && statuses[1].spec.title === "writing");
+      const later = await connect(Date.now());
+      ok("a connect with since=now doesn't replay it", !(later.events || []).some(e => e.spec?.id === "done:sse-idle"));
+      const old = await connect(null);
+      ok("an old app without since gets no replay", !(old.events || []).some(e => e.spec?.id === "done:sse-idle"));
+    } finally { srv.close(); live.delete(idle.sessionId); live.delete(busy.sessionId); }
+  }
 } catch (e) { console.log("FAIL", e.stack); fails++; }
 finally { fs.rmSync(T, { recursive: true, force: true }); }
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");

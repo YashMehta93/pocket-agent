@@ -13,8 +13,13 @@ export const BACKUP_DIR = process.env.PA_BACKUP_DIR || "/sdcard/Download/Pocket 
 const ITEMS = [".claude", ".claude.json", "projects", path.relative(HOME, path.join(DATA, "prefs.json"))];
 const EXCLUDE = [".claude/.credentials.json", ".claude/shell-snapshots", ".claude/session-env", ".claude/cache",
   ".claude/downloads", ".config", "node_modules", ".cache",
-  ".l2s.*",
-  "release-key*.pem"];   // the release-signing key (scripts/release-key.mjs) never goes to shared storage   // proot's stand-ins for hard links: the linked files are stored by content instead (-h)
+  ".l2s.*",   // proot's stand-ins for hard links: the linked files are stored by content instead (-h)
+  // Keys and credentials never go to shared storage, at any depth: the APK signing key and the release key
+  // (back them up somewhere private, see docs/RELEASES.md), PEM/PKCS12 files, Claude logins, git credentials.
+  "*.keystore", "*.jks", "*.p12", "*.pem", ".credentials.json", ".git-credentials",
+  // Not in ITEMS anyway (only prefs.json is taken from ~/.pocket-agent), but a later change mustn't add them by accident:
+  // provider keys (the DeepSeek key) and the DeepSeek spend record.
+  "secrets", "deepseek-spend.json"];
 const NAME = /^pocket-agent-backup-[\w-]+\.tgz$/;
 
 const sizeOf = f => { try { return fs.statSync(f).size; } catch { return 0; } };

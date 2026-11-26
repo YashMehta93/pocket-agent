@@ -16,7 +16,13 @@ const dom = await JSDOM.fromURL(`http://127.0.0.1:${PORT}/ui/#token=${token}`, {
   runScripts: "dangerously", resources: "usable", pretendToBeVisual: true, virtualConsole: vc,
   beforeParse(w) {
     w.matchMedia = () => ({ matches: true, addEventListener() {} });
-    w.ResizeObserver = class { observe() {} };
+    w.__resizeObservers = [];
+    w.ResizeObserver = class {
+      constructor(cb) { this.cb = cb; this.targets = []; w.__resizeObservers.push(this); }
+      observe(t) { this.targets.push(t); }
+      unobserve() {}
+      disconnect() {}
+    };
     w.HTMLElement.prototype.scrollIntoView = () => {};
     if (!w.crypto.randomUUID) w.crypto.randomUUID = () => crypto.randomUUID();
   },
@@ -42,6 +48,45 @@ await until(() => $$("#messages > *").length > 0, 20000, "history render");
 ok(`history rendered: ${$$(".user-msg").length} user msgs, ${$$(".tool").length} tool cards, ${$$("#messages .md").length} text blocks`, $$(".user-msg").length > 0);
 ok("title set", $("#chat-title").textContent !== "New chat");
 
+// result lines: a turn that showed nothing (Claude Code noting stopped background tasks) gets none
+const lines0 = $$(".result-line").length;
+ev(`chat.event({ type: "result", subtype: "success", duration_ms: 431 })`);
+ok("a turn that showed nothing adds no result line", $$(".result-line").length === lines0);
+ev(`chat.event({ type: "assistant", uuid: "u-test-1", message: { id: "m-test-1", content: [{ type: "text", text: "Done." }] } }); chat.event({ type: "result", subtype: "success", duration_ms: 1200 })`);
+ok("a turn with a reply gets its result line", $$(".result-line").length === lines0 + 1);
+
+// thoughts stay in the chat (one tap opens them); a run of tool calls continues past them into one line
+ev(`chat.event({ type: "assistant", uuid: "u-t-2", message: { id: "m-t-2", content: [{ type: "tool_use", id: "tu-a", name: "Bash", input: { command: "ls", description: "List files" } }] } });
+  chat.event({ type: "assistant", uuid: "u-t-3", message: { id: "m-t-3", content: [{ type: "thinking", thinking: "Now check the size of each file." }] } });
+  chat.event({ type: "assistant", uuid: "u-t-4", message: { id: "m-t-4", content: [{ type: "tool_use", id: "tu-b", name: "Bash", input: { command: "du -sh *", description: "Check sizes" } }] } })`);
+const lastGroup = [...$$("#messages > .steps")].pop();
+ok("thoughts stay in the chat, not inside the steps line", $$("#messages .steps .thinking").length === 0 && $$("#messages > .thinking").length > 0);
+ev(`chat.event({ type: "assistant", uuid: "u-t-5", message: { id: "m-t-5", content: [{ type: "thinking", thinking: "Sizes look fine; summarise next." }] } })`);
+const th = [...$$("#messages > .thinking")].pop();
+ok("back-to-back thoughts share one block: " + th?.querySelector("summary").textContent, th?.querySelectorAll(".th-body > .md").length === 2 && /2 times/.test(th.querySelector("summary").textContent));
+ok("tool calls on both sides of a thought share one line: " + lastGroup?.querySelector(".sl-t").textContent, lastGroup?.querySelectorAll(".steps-list > .tool").length === 2);
+
+// grouped steps: one line per run of tool calls, a timeline sheet, a page per step that hands the card back
+const grp = $("#messages .steps.has-tools");
+if (grp) {
+  ok(`steps grouped into one line: "${grp.querySelector(".sl-t").textContent}"`, w.getComputedStyle(grp.querySelector(".steps-line")).display !== "none" && w.getComputedStyle(grp.querySelector(".steps-list")).display === "none" && grp.querySelector(".sl-t").textContent.length > 3);
+  grp.querySelector(".steps-line").click();
+  const nSteps = grp.querySelectorAll(".steps-list > *").length;
+  ok(`the line opens a timeline of its ${nSteps} steps`, ev("sheet.key") === "steps" && $$("#sheet .step-row").length === nSteps);
+  $("#sheet .step-row").click();
+  ok("a step opens its own page with the details", !$("#page").hidden && $("#page-body .in-page") !== null);
+  ev("page.back()");
+  ok("leaving the page puts the step back in the chat", $("#page").hidden && grp.querySelectorAll(".steps-list > *").length === nSteps && !grp.querySelector(".in-page"));
+  ok("back from a step returns to its timeline", ev("sheet.key") === "steps");
+  $("#sheet-x").click();
+  ok("the close button closes a sheet", !ev("sheet.isOpen"));
+  ev("openSettings()"); ev(`document.querySelector('[data-sec="look"]').click()`); $("#page-back2").click();
+  ok("the bottom back button goes back one page", !$("#page").hidden && $$(".set-cat").length >= 7); ev("page.close()");
+  ev("settings.groupSteps = false; applySettings()");
+  ok("the setting shows cards instead", w.getComputedStyle(grp.querySelector(".steps-list")).display !== "none");
+  ev("settings.groupSteps = true; applySettings()");
+} else console.log("  (this chat has no tool steps; grouping not checked)");
+
 // drawer search
 ev(`state.filter = "zzzz-no-match"; renderSessions()`);
 ok("search filter empties list", $$("#session-list .sess").length === 0);
@@ -54,9 +99,481 @@ ok(`slash popup shows ${$$("#popup button").length} commands`, $$("#popup button
 ev(`input.value = ""; document.querySelector("#popup").hidden = true`);
 
 // pages
-ev("openSettings()"); ok("settings page opens", !$("#page").hidden && $$(".set-row").length > 5); ev("page.close()");
+ev("openSettings()"); ok(`settings home shows categories (${$$(".set-cat").length})`, !$("#page").hidden && $$(".set-cat").length >= 7 && $$("#page-body .set-row").length === 0);
+ev(`const q = document.querySelector("#set-q"); q.value = "theme"; q.dispatchEvent(new window.Event("input"))`);
+ok("search finds a setting across categories", $$("#set-results .set-item:not([hidden])").length >= 1 && $("#set-results").textContent.includes("Theme") && $("#set-home").hidden);
+ev(`const q = document.querySelector("#set-q"); q.value = "zzz-nothing"; q.dispatchEvent(new window.Event("input"))`);
+ok("search says when nothing matches", /No setting matches/.test($("#set-results").textContent));
+ev(`document.querySelector("#set-q").value = ""; document.querySelector("#set-q").dispatchEvent(new window.Event("input")); document.querySelector('[data-sec="look"]').click()`);
+ok("a category opens its own page with its controls", ev("document.querySelector('#page-title').textContent") === "Appearance" && $$("#page-body .set-row").length >= 3 && $$("#page-body #s-theme button").length === 3);
+ev(`document.querySelector('#s-theme button[data-v="dark"]').click()`); ok("a setting works from its category page", ev("settings.theme") === "dark"); ev(`settings.theme = "system"; saveSettings()`);
+ev("page.close()");
+// agents Claude started (#52): the Chat · Agents switch under the header, the Agents tab, a page per agent
+const tx = s => ($(s)?.textContent || "").replace(/\s+/g, " ").trim();
+ev(`renderTabs()`);
+ok("a chat that started no agents has no switch", $("#chat-tabs").hidden && !$("#agents-line") && !$("#links-bar"));
+ev(`state.liveInfo[state.current.sessionId] = { ...(state.liveInfo[state.current.sessionId] || {}), tasks: [
+  { id: "a1234567890abcdef", kind: "agent", agentType: "general-purpose", description: "Research DeepSeek", status: "running", activity: "Reading the API docs", tokens: 23548, tools: 4, startedAt: Date.now() - 90000 },
+  { id: "box1", kind: "command", description: "Run the tests", status: "completed", summary: "Run the tests", startedAt: Date.now() - 60000, endedAt: Date.now() } ] }; renderTabs()`);
+ok(`the switch shows under the header, counting the agents at work: "${tx("#chat-tabs")}"`, !$("#chat-tabs").hidden && $("#chat-tabs").previousElementSibling === $("#topbar")
+  && tx("#tab-chat") === "Chat" && tx("#tab-agents") === "Agents1" && $("#tab-agents .tdot").hidden && $("#tab-chat").getAttribute("aria-selected") === "true"
+  && $("#tab-agents").getAttribute("aria-label") === "Agents, 1 at work");
+$("#tab-agents").click();
+ok("the Agents tab takes the chat's place (the message box goes with it)", ev("state.tab") === "agents" && !$("#agents-view").hidden && w.getComputedStyle($("#chat")).display === "none"
+  && w.getComputedStyle($("#composer")).display === "none" && $("#tab-agents").getAttribute("aria-selected") === "true");
+const agRows = $$("#agents-view .ag-row");
+ok(`one row per agent, working first: ${agRows.map(r => r.querySelector(".ag-ti").textContent).join(" / ")}`, agRows.length === 2 && agRows[0].querySelector(".ag-ti").textContent === "Research DeepSeek"
+  && tx("#agents-view .ag-row .ag-now") === "Working · Reading the API docs" && /^Subagent · 4 steps · 23\.5k tokens · 1m 3\ds$/.test(tx("#agents-view .ag-row .ag-meta"))
+  && agRows[0].querySelector(".ag-tile .spark") && agRows[1].querySelector(".ag-now").textContent === "Done" && /^Command · /.test(agRows[1].querySelector(".ag-meta").textContent));
+ok("each row is a thumb high or more", parseFloat(w.getComputedStyle(agRows[0]).minHeight) >= 56);
+agRows[0].click();
+await sleep(200);
+ok(`a row opens the agent's page: "${tx("#page-title")}" · ${tx(".ag-hst")}`, !$("#page").hidden && tx("#page-title") === "Research DeepSeek" && $("#page-title").classList.contains("ltr")
+  && tx(".ag-hst") === "Working · Reading the API docs" && !$('.ag-head [data-a="stop"]').hidden && !$('.ag-head [data-a="open"]'));
+ev("page.back()");
+ok("back returns to the Agents tab", $("#page").hidden && ev("state.tab") === "agents" && !$("#agents-view").hidden);
+ev(`state.liveInfo[state.current.sessionId].tasks[0].activity = "Writing the summary"; conn.fire("tasks", { sessionId: state.current.sessionId, tasks: state.liveInfo[state.current.sessionId].tasks })`);
+await sleep(150);
+ok("rows update in place as agents work", $$("#agents-view .ag-row")[0] === agRows[0] && /Writing the summary/.test(tx("#agents-view .ag-row .ag-now")));
+ok("Android back goes from the Agents tab to the chat", w.paBack() === true && ev("state.tab") === "chat" && w.getComputedStyle($("#chat")).display !== "none" && w.getComputedStyle($("#composer")).display !== "none");
+// a quick sideways swipe switches tabs; one that starts in something that scrolls sideways doesn't
+const swipe = (x0, x1, target = $("#messages")) => {
+  const t = (type, x) => { const e = new w.Event(type, { bubbles: true }); Object.defineProperty(e, type === "touchend" ? "changedTouches" : "touches", { value: [{ clientX: x, clientY: 300 }] }); target.dispatchEvent(e); };
+  t("touchstart", x0); t("touchend", x1);
+};
+swipe(330, 120);
+ok("a swipe to the left opens the Agents tab", ev("state.tab") === "agents");
+swipe(80, 300, $("#agents-view"));
+ok("…and to the right, the chat", ev("state.tab") === "chat");
+swipe(330, 300);
+ok("a short swipe does nothing", ev("state.tab") === "chat");
+ev(`delete state.liveInfo[state.current.sessionId].tasks; renderTabs()`);
+ok("no agents, no switch", $("#chat-tabs").hidden && ev("state.tab") === "chat");
+
+// background workers (#66): the Agents tab offers "Stop all" while one is at work; it calls workers.stopAll
+const wsid = "cccccccc-0000-4000-8000-0000000000e1", wid = "cccccccc-0000-4000-8000-0000000000e2";
+ev(`window.__saveCur = state.current; state.current = { ...state.current, sessionId: "${wsid}", isNew: false };
+  state.links["${wid}"] = { parent: "${wsid}", engine: "deepseek", title: "Background probe", at: Date.now(), runAt: Date.now(), result: null };
+  state.liveInfo["${wid}"] = { sessionId: "${wid}", state: "running", parent: "${wsid}", engine: "deepseek", title: "Background probe" };
+  renderTabs(); setTab("agents")`);
+ok(`a running background worker offers "Stop all" in the Agents tab: "${tx("#ag-stop-all")}"`, ev("state.tab") === "agents" && !$("#ag-stop-all").hidden
+  && tx("#ag-stop-all") === "Stop all" && $("#ag-stop-all").classList.contains("chip")
+  && $$("#agents-view .ag-row").some(r => r.querySelector(".ag-ti")?.textContent === "Background probe"));
+ev(`window.__origCall = conn.call; window.__calls = []; conn.call = (t, m) => { window.__calls.push([t, m]); return Promise.resolve({ stopped: 1 }); }`);
+$("#ag-stop-all").click();
+await sleep(50);
+ok("Stop all asks the server to stop this chat's workers", ev(`__calls.some(([t, m]) => t === "workers.stopAll" && m.sessionId === "${wsid}")`));
+ev(`conn.call = window.__origCall; delete window.__origCall; delete window.__calls;
+  delete state.links["${wid}"]; delete state.liveInfo["${wid}"]; renderAgentsView()`);
+ok("with no worker at work the button goes", $("#ag-stop-all").hidden && $("#agents-view .ag-top").hidden);
+ev(`state.current = window.__saveCur; delete window.__saveCur; setTab("chat"); renderTabs()`);
+
+// usage limits: drawer meter, the note above the message box from 90%, the details sheet, the settings row
+ev(`state.usage = { windows: { five_hour: { used: 91, resetsAt: Date.now() + 3 * 3600e3 + 50 * 60e3, status: "allowed_warning" }, seven_day: { used: 64, resetsAt: Date.now() + 4 * 86400e3, status: "allowed" } }, models: [{ name: "Fable", used: 40, resetsAt: Date.now() + 4 * 86400e3 }], at: Date.now() }; renderUsage()`);
+ok("drawer shows the 5-hour and weekly limits", !$("#usage-meter").hidden && $$("#usage-meter .u-row").length === 2 && /91%.*resets in 3h \d+m/.test($("#usage-meter").textContent) && $("#usage-meter .u-row.warn") !== null);
+ok("a ring in the chat header shows the fuller limit", !$("#btn-usage").hidden && /5-hour limit 91% used/.test($("#btn-usage").getAttribute("aria-label")) && $("#btn-usage").classList.contains("warn"));
+ok("a note above the message box warns from 90%", !$("#usage-note").hidden && /91% of your 5-hour limit used · resets in 3h/.test($("#usage-note").textContent));
+ev("openUsage()"); ok("tapping opens every limit, per model too", ev("sheet.key") === "usage" && $$("#sheet .u-row").length === 3 && $("#sheet").textContent.includes("Week · Fable")); ev("sheet.close(true)");
+ev(`state.usage.windows.five_hour.resetsAt = Date.now() - 1000; renderUsage()`);
+ok("once a window resets, it shows 0% and the note goes", $("#usage-note").hidden && /5-hour\s*0%/.test($("#usage-meter").textContent));
+ev("openSettings()"); ev(`const q = document.querySelector("#set-q"); q.value = "usage"; q.dispatchEvent(new window.Event("input"))`);
+ok("settings search finds the usage limits", $("#set-results").textContent.includes("Usage limits") && $("#set-results").textContent.includes("Week 64%")); ev("page.close()");
+ev(`state.usage = null; renderUsage()`);
+
+// questions: a chosen option can be unchosen, and a typed answer goes with the chosen options
+ev("window.__origCall = conn.call; window.__calls = []; conn.call = (t, m) => { window.__calls.push([t, m]); return Promise.resolve({}); }");
+ev(`askQuestionSheet({ sessionId: "s1", requestId: "r1", toolName: "AskUserQuestion", input: { questions: [ { question: "Pick one", header: "One", multiSelect: false, options: [{ label: "A" }, { label: "B" }] }, { question: "Pick many", header: "Many", multiSelect: true, options: [{ label: "X" }, { label: "Y" }] } ] } }, null)`);
+const q1 = $$("#sheet .q-block")[0], q2 = $$("#sheet .q-block")[1];
+const optA = q1.querySelectorAll(".opt")[0];
+optA.click(); optA.click();
+ok("a chosen option can be unchosen", !optA.classList.contains("on"));
+optA.click();
+ok("…and chosen again", optA.classList.contains("on"));
+q1.querySelector("input.field").value = "with a note";   // no input event: a keyboard may not have sent it yet
+q2.querySelectorAll(".opt")[0].click();
+q2.querySelector("input.field").value = "and Z";
+$('#sheet [data-a="ok"]').click();
+await sleep(50);
+const reply = ev("window.__calls[window.__calls.length - 1]");
+const sent = reply && reply[0] === "permission.reply" && reply[1].updatedInput.answers;
+ok("typed answers are sent with the chosen options", !!sent && sent["Pick one"] === "A — with a note" && sent["Pick many"] === "X, and Z" && Object.keys(sent).length === 2);
+ev("conn.call = window.__origCall");
+
+// Claude accounts (#61): the account chip and its sheet, Settings → Claude accounts, the limit card
+ev(`window.__origCall = conn.call; window.__save = { cur: state.current, accounts: state.accounts, defaultAccount: state.defaultAccount, usageByAccount: state.usageByAccount, newChatAccount: state.newChatAccount };
+  window.__calls = []; conn.call = (t, m) => { window.__calls.push([t, m]); return Promise.resolve(t === "sessions.list" ? { sessions: [] } : {}); }`);
+ev(`state.accounts = [{ id: "default", name: "Personal", email: "p@example.com", plan: "max" }]; state.defaultAccount = "default"; state.newChatAccount = null;
+  state.current = { ...state.current, isNew: true, account: null, engine: "claude" }; updateComposer()`);
+ok("with one Claude account there is no account chip", $("#chip-account").hidden);
+ev(`state.accounts = [{ id: "default", name: "Personal", email: "p@example.com", plan: "max" }, { id: "work-1a2b", name: "Work", email: "w@example.com", plan: "pro" }]; updateComposer()`);
+ok(`with two, the chip names the account a new chat runs on: "${tx("#chip-account")}"`, !$("#chip-account").hidden && tx("#chip-account") === "Personal" && $("#chip-account").getAttribute("aria-label") === "Claude account: Personal");
+ev(`state.current = { ...state.current, isNew: false, sessionId: "cccccccc-0000-4000-8000-0000000000a1", account: "default" }; updateComposer()`);
+$("#chip-account").click();
+ok(`an existing chat's sheet offers the other account: "${tx("#sheet h2")}"`, ev("sheet.key") === "account" && tx("#sheet h2") === "This chat runs on Personal" && $$("#sheet .opt").length === 1 && /Continue on Work/.test(tx("#sheet")));
+$$("#sheet .opt")[0].click();
+await sleep(50);
+ok("continuing on Work moves the chat and says so", ev(`__calls.some(([t, m]) => t === "chat.account" && m.sessionId === "cccccccc-0000-4000-8000-0000000000a1" && m.account === "work-1a2b")`) && ev("state.current.account") === "work-1a2b" && /Your next message goes to Work/.test(tx("#toast")));
+ev("openSettings()");
+const accCat = $('[data-sec="accounts"]');
+ok(`Settings has Claude accounts: "${accCat?.querySelector("small")?.textContent}"`, !!accCat && accCat.textContent.includes("Claude accounts") && accCat.textContent.includes("2 accounts · new chats: Personal"));
+$('[data-sec="accounts"]').click();
+const accRows = $$("#page-body .acc-row"), accChips = accRows.map(r => [...r.querySelectorAll(".chip")].map(c => c.textContent).join(","));
+ok(`one row per account, with its chips: ${accChips.join(" / ")}`, accRows.length === 2 && accChips[0] === "Rename" && accChips[1] === "Make default,Rename,Remove" && !!$("#page-body #acc-add"));
+ok("each row says its email and plan, and which is the default", accRows[0].querySelector("small").textContent === "p@example.com · max · default" && accRows[1].querySelector("small").textContent === "w@example.com · pro");
+ev("page.close(); openSettings()");
+ev(`const q = document.querySelector("#set-q"); q.value = "accounts"; q.dispatchEvent(new window.Event("input"))`);
+ok("settings search finds Claude accounts", /Claude accounts/.test(tx("#set-results")) && !$('#set-results [data-sec="accounts"]').hidden && /Add account/.test(tx('#set-results [data-sec="accounts"]')));
+ev("page.close()");
+ev(`state.current = { ...state.current, account: "default" }; updateComposer(); window.__calls = []`);
+ev(`conn.fire("account.limit", { sessionId: "cccccccc-0000-4000-8000-0000000000a1", account: "default", limit: "seven_day", resetsAt: Date.now() + 3 * 3600e3 })`);
+ok(`the limit card names the limit and offers the way out: "${tx("#account-limit")}"`, !$("#account-limit").hidden && /Personal is at its weekly limit · resets in (2h 59m|3h 0m)/.test(tx("#account-limit")) && /Continue on Work/.test(tx("#account-limit")));
+$("#account-limit button").click();
+await sleep(150);
+ok("continuing from the limit card moves the chat and carries on in it", ev(`__calls.some(([t, m]) => t === "chat.account" && m.sessionId === "cccccccc-0000-4000-8000-0000000000a1" && m.account === "work-1a2b")`) && ev(`__calls.some(([t, m]) => t === "send" && /Continued on the Work account/.test(m.text))`) && $("#account-limit").hidden);
+// the account is sent as "account": a param named "id" would overwrite the request's own id (conn.call) and hang
+ev("window.__calls = []");
+await ev(`(async () => {
+  const rp = renameAccountPrompt("work-1a2b");
+  await new Promise(r => setTimeout(r, 60));
+  document.querySelector("#ps-in").value = "Work 2";
+  document.querySelector('#sheet [data-r="1"]').click();
+  await rp;
+  await makeAccountDefault("work-1a2b");
+  accountLoginSheet({ id: "work-1a2b", name: "Work" });
+  document.querySelector("#acc-open").click();
+})()`);
+await sleep(100);
+const accCheck = ev(`(() => { const accs = window.__calls.filter(([t]) => typeof t === "string" && t.startsWith("accounts."));
+  return { types: accs.map(([t]) => t), bad: accs.filter(([, m]) => m && Object.prototype.hasOwnProperty.call(m, "id")).map(([t]) => t) }; })()`);
+ok("account calls never send a param named id", accCheck.bad.length === 0 && ["accounts.rename", "accounts.setDefault", "accounts.login.start"].every(t => accCheck.types.includes(t)));
+ev("sheet.close(true)");
+ev(`state.current = window.__save.cur; state.accounts = window.__save.accounts; state.defaultAccount = window.__save.defaultAccount; state.usageByAccount = window.__save.usageByAccount; state.newChatAccount = window.__save.newChatAccount;
+  conn.call = window.__origCall; delete window.__save; delete window.__origCall; updateComposer()`);
+
+// #57 Send keeps the keyboard up: a tap on the button must not take focus from the field, and send() gives it back
+const pd = new w.Event("pointerdown", { bubbles: true, cancelable: true });
+$("#btn-send").dispatchEvent(pd);
+ok("a tap on Send keeps the field focused (the pointerdown's default is prevented)", pd.defaultPrevented);
+ev("window.__origCall = conn.call; window.__sendCalls = []; conn.call = (t, m) => { if (t === 'send') { window.__sendCalls.push(m); return Promise.resolve({}); } return window.__origCall(t, m); }");
+ev("input.value = 'keep the keyboard'; input.blur(); send(); window.__focusAfterSend = document.activeElement === input");
+await sleep(100);
+ok("after sending, the field has focus again and is empty", ev("window.__focusAfterSend") && $("#input").value === "" && ev("window.__sendCalls.length") === 1);
+ev("delete window.__focusAfterSend");
+ev("conn.call = window.__origCall; delete window.__origCall; delete window.__sendCalls");
+
+// #58 A long press opens the chat's menu; finger wobble doesn't cancel it, and the lift must not also open the chat
+// (or land on the menu's scrim and close it)
+await sleep(500);   // #57's send scheduled a drawer refresh; let it finish before picking a row to hold
+await ev("refreshSessions()");
+const drawerRow = $$("#session-list .sess")[0];
+const curBefore = ev("state.current");
+const touchRow = (type, x = 20, y = 20) => {
+  const e = new w.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(e, type === "touchend" ? "changedTouches" : "touches", { value: [{ clientX: x, clientY: y }] });
+  drawerRow.dispatchEvent(e);
+};
+ev("document.body.classList.add('drawer-open')");
+touchRow("touchstart");
+touchRow("touchmove", 24, 22);   // 4-5 px of wobble: still a press, not a drag
+await sleep(620);
+touchRow("touchend", 24, 22);
+drawerRow.click();
+await sleep(50);
+ok(`a long press opens the chat's menu, and the lift doesn't open the chat or close the menu: "${tx("#sheet h2")}"`,
+  ev("sheet.isOpen") && $$("#sheet .menu-item").length >= 4 && ev("state.current") === curBefore
+  && ev("document.body.classList.contains('drawer-open')"));
+ev("sheet.close(true)");
+drawerRow.dispatchEvent(new w.Event("contextmenu", { bubbles: true, cancelable: true }));
+await sleep(30);
+ok("a context menu during the press doesn't open the menu a second time", !ev("sheet.isOpen"));
+ev("document.body.classList.remove('drawer-open')");
+
+// #56 Only the person's own scrolling unpins; content growing keeps a pinned chat at the bottom
+const chatBox = $("#chat"), msgBox = $("#messages");
+Object.defineProperty(chatBox, "scrollHeight", { configurable: true, get: () => Number(chatBox.dataset.sh || 0) });
+Object.defineProperty(chatBox, "clientHeight", { configurable: true, get: () => 300 });
+chatBox.dataset.sh = 2000;
+await sleep(1600);   // let any earlier touch in the tests age out of the 1.5 s "the person is scrolling" window
+ev("scrollToBottom(true)");
+await sleep(80);
+ok("the chat sits at the bottom and is pinned", ev("pinned") === true && chatBox.scrollTop === 2000);
+const grow = w.document.createElement("div"); grow.style.height = "400px"; grow.textContent = "more output";
+msgBox.append(grow);
+chatBox.dataset.sh = 2400;
+chatBox.dispatchEvent(new w.Event("scroll"));   // what scroll anchoring sends when content grows under the reader
+ok("content growing doesn't unpin the chat", ev("pinned") === true);
+const messagesObserver = w.__resizeObservers.find(o => o.targets.includes(msgBox));
+messagesObserver?.cb([]);   // the browser reports that #messages grew
+await sleep(100);
+ok("a pinned chat follows the growth to the bottom", !!messagesObserver && chatBox.scrollTop === 2400);
+grow.remove();
+delete chatBox.scrollHeight; delete chatBox.clientHeight; delete chatBox.dataset.sh;
+chatBox.scrollTop = 0;
+// streaming placeholders (#54, #55): a final block takes only its own ghost, and each parent has its own message
+const r54 = ev(`(() => {
+  const send = e => chat.event({ type: "stream_event", event: e });
+  const before = document.querySelectorAll("#messages > .md").length;
+  send({ type: "message_start", message: { id: "m-54" } });
+  send({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } });
+  send({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Second block." } });
+  send({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+  send({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "First block." } });
+  send({ type: "content_block_stop", index: 1 });   // the blocks finish out of order
+  send({ type: "content_block_stop", index: 0 });
+  const ghosts = [...document.querySelectorAll("#messages > .md.ghost")];
+  chat.event({ type: "assistant", uuid: "u-54", message: { id: "m-54", content: [
+    { type: "text", text: "First block." }, { type: "text", text: "Second block." } ] } });
+  const after = [...document.querySelectorAll("#messages > .md")];
+  return { before, ghosts: ghosts.length, kept: after.length === before + 2 && ghosts.every((el, i) => el === after[after.length - 2 + i]),
+    texts: after.slice(-2).map(el => el.textContent.replace(/\\s+/g, " ").trim()), left: document.querySelectorAll("#messages > .md.ghost").length };
+})()`);
+ok(`(#54) a final block takes only its own placeholder: ${r54.texts.join(" / ")}`, r54.ghosts === 2 && r54.kept && r54.left === 0 && r54.texts.join("|") === "Second block.|First block.");
+
+const r55 = ev(`(() => {
+  const send = (parent, e) => chat.event({ type: "stream_event", parent_tool_use_id: parent, event: e });
+  chat.event({ type: "assistant", uuid: "u-55-card", message: { id: "m-55-card", content: [
+    { type: "tool_use", id: "tu-x", name: "Task", input: { description: "Subagent stream check" } } ] } });
+  send(null, { type: "message_start", message: { id: "m-55-main" } });
+  send("tu-x", { type: "message_start", message: { id: "m-55-sub" } });
+  send(null, { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+  send("tu-x", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+  send("tu-x", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Inside the subagent." } });
+  send(null, { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "On the main thread." } });
+  // the main reply finishes first, while the subagent's stream is still open
+  chat.event({ type: "assistant", uuid: "u-55-main", message: { id: "m-55-main", content: [{ type: "text", text: "On the main thread." }] } });
+  chat.event({ type: "assistant", uuid: "u-55-sub", parent_tool_use_id: "tu-x", message: { id: "m-55-sub", content: [{ type: "text", text: "Inside the subagent." }] } });
+  const card = [...document.querySelectorAll("#messages .tool")].find(t => t.querySelector(".ts")?.textContent === "Subagent stream check");
+  return { found: !!card, sub: card ? [...card.querySelectorAll(".subagent .md")].map(m => m.textContent.trim()) : [],
+    main: [...document.querySelectorAll("#messages > .md")].map(m => m.textContent.replace(/\\s+/g, " ").trim()),
+    ghosts: card ? card.querySelectorAll(".md.ghost").length : -1 };
+})()`);
+ok(`(#55) interleaved subagent streams stay on their own message: "${r55.sub.join(" / ")}"`, r55.found && r55.ghosts === 0
+  && r55.sub.length === 1 && r55.sub[0] === "Inside the subagent."
+  && r55.main.includes("On the main thread.") && !r55.main.some(t => /Inside the subagent/.test(t)));
+
+const r53 = ev(`(() => {
+  const send = e => chat.event({ type: "stream_event", event: e });
+  chat.event({ type: "assistant", uuid: "u-53-sep", message: { id: "m-53-sep", content: [{ type: "text", text: "Separator." }] } });
+  send({ type: "message_start", message: { id: "m-53" } });
+  send({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } });   // withheld: no text
+  send({ type: "content_block_stop", index: 0 });
+  send({ type: "content_block_start", index: 1, content_block: { type: "thinking", thinking: "" } });
+  send({ type: "content_block_delta", index: 1, delta: { type: "thinking_delta", thinking: "The thought, summarised." } });
+  send({ type: "content_block_stop", index: 1 });
+  chat.event({ type: "assistant", uuid: "u-53", message: { id: "m-53", content: [
+    { type: "thinking", thinking: "", signature: "sig-53" }, { type: "thinking", thinking: "The thought, summarised." } ] } });
+  const th = [...document.querySelectorAll("#messages > .thinking")].pop();
+  return { label: th?.querySelector("summary span")?.textContent,
+    mds: th ? [...th.querySelectorAll(".th-body > .md")].map(m => m.textContent.replace(/\\s+/g, " ").trim()) : [] };
+})()`);
+ok(`(#53) an empty thought block adds no entry: "${r53.label}" · ${r53.mds.length} entr${r53.mds.length === 1 ? "y" : "ies"}`,
+  r53.label === "Thought" && r53.mds.length === 1 && r53.mds[0] === "The thought, summarised.");
+
+// this device (server/src/environment.js): Settings shows its name, with a way to rename it
+ev("openSettings()"); ev(`const q = document.querySelector("#set-q"); q.value = "this device"; q.dispatchEvent(new window.Event("input"))`);
+ok("Settings has a This device row, with its name and Rename",
+  /This device/.test(tx("#set-results")) && !!$("#set-results .set-item:not([hidden]) #env-rename") && $("#set-results .set-item:not([hidden]) #env-name").textContent.length > 0);
+ev("page.close()");
+// Profiles (#68): the Settings row, the drawer's filter with two profiles, and the folder rule
+ev("page.close(); openSettings()");
+const profCat = $('[data-sec="profiles"]');
+ok(`Settings has Profiles: "${profCat?.querySelector("small")?.textContent}"`, !!profCat && profCat.textContent.includes("Personal"));
+ev(`window.__saveProfiles = { profiles: state.profiles, defaultProfile: state.defaultProfile };
+  applyProfiles({ profiles: [
+    { id: "personal", name: "Personal", color: "teal", workspaces: [], accounts: {}, env: {} },
+    { id: "work", name: "Work", color: "blue", workspaces: ["/tmp/pa-work"], accounts: {}, env: {} } ], defaultProfile: "personal" })`);
+const profChips = $$("#profile-filters button").map(b => b.textContent);
+ok(`two profiles: the drawer filter has three chips: ${profChips.join(" · ")}`, !$("#profile-filters").hidden && profChips.join(",") === "All,Personal,Work");
+const allRows = $$("#session-list .sess").length;
+$$("#profile-filters button").find(b => b.textContent === "Work").click();
+ok(`choosing Work hides the personal chats (${allRows} → ${$$("#session-list .sess").length})`, allRows > 0 && $$("#session-list .sess").length === 0 && ev(`state.sessions.every(s => s.profile === "personal")`));
+$$("#profile-filters button")[0].click();
+ok("back on All, each chat row shows its profile's dot", $$("#session-list .sess").length === allRows && $$("#session-list .sess .pdot").length === allRows && $$("#session-list .sess .pdot.pc-teal").length === allRows);
+ev(`applyProfiles({ profiles: window.__saveProfiles.profiles, defaultProfile: window.__saveProfiles.defaultProfile }); delete window.__saveProfiles; page.close()`);
+ok("one profile: no filter row, no dots", $("#profile-filters").hidden && $$("#session-list .sess .pdot").length === 0);
+// Profiles and environments share ONE compact filter row (#69): chips, a thin divider, both choices apply
+ev(`window.__saveRow69 = { profiles: state.profiles, defaultProfile: state.defaultProfile, envs: state.environments, sessions: state.sessions };
+  applyProfiles({ profiles: [
+    { id: "personal", name: "Personal", color: "teal", workspaces: [], accounts: {}, env: {} },
+    { id: "work", name: "Work", color: "blue", workspaces: ["/tmp/pa-work"], accounts: {}, env: {} } ], defaultProfile: "personal" });
+  environmentsChanged([{ id: "env-row", name: "Laptop", url: "http://127.0.0.1:9", profile: "personal", state: "online", version: "1.2.0", protocol: 1, error: null, lastOnlineAt: Date.now() }]);
+  const now = Date.now();
+  state.sessions = [
+    { sessionId: "aaaaaaaa-0000-4000-8000-000000000011", title: "Local personal", cwd: "/tmp/pa-personal", lastModified: now, profile: "personal" },
+    { sessionId: "bbbbbbbb-0000-4000-8000-000000000012", title: "Local work", cwd: "/tmp/pa-work", lastModified: now - 1, profile: "work" },
+    { sessionId: "env-row:cccccccc-0000-4000-8000-000000000013", title: "Laptop work", cwd: "/home/work", lastModified: now - 2, remote: true, environment: "env-row", environmentName: "Laptop", offline: false, profile: "work" },
+    { sessionId: "env-row:dddddddd-0000-4000-8000-000000000014", title: "Laptop personal", cwd: "/home/personal", lastModified: now - 3, remote: true, environment: "env-row", environmentName: "Laptop", offline: false, profile: "personal" } ];
+  renderProfileFilter(); renderEnvFilters(); renderSessions()`);
+const rowIds = [...$("#chat-filters").children].map(el => el.id);
+ok(`one compact filter row: ${rowIds.join(" · ")}`, $("#chat-filters").parentElement === $("#drawer")
+  && rowIds.join(",") === "profile-filters,filter-sep,env-filters" && !$("#chat-filters").hidden
+  && !$("#profile-filters").hidden && !$("#env-filters").hidden && !$("#filter-sep").hidden
+  && $$("#profile-filters button").map(b => b.textContent).join(",") === "All,Personal,Work"
+  && $$("#env-filters button").map(b => b.textContent).join(",") === "All,Phone,Laptop");
+ok("the profile chips come first, then the thin divider, then the environments",
+  $("#chat-filters").firstElementChild.id === "profile-filters" && $("#filter-sep").nextElementSibling.id === "env-filters");
+$$("#profile-filters button").find(b => b.textContent === "Work").click();
+$$("#env-filters button").find(b => b.textContent === "Laptop").click();
+ok("both choices apply together", ev("state.profileFilter") === "work" && ev("state.envFilter") === "env-row"
+  && $$("#session-list .sess").length === 1 && /Laptop work/.test($("#session-list").textContent));
+ev(`if (window.__saveRow69) { applyProfiles({ profiles: window.__saveRow69.profiles, defaultProfile: window.__saveRow69.defaultProfile });
+    state.sessions = window.__saveRow69.sessions; environmentsChanged(window.__saveRow69.envs); delete window.__saveRow69; }
+  setProfileFilter(""); renderSessions()`);
+ok("with neither part showing, the filter row is hidden", $("#chat-filters").hidden && $("#profile-filters").hidden && $("#env-filters").hidden);
+// Remote text is untrusted (#69, R3): a chat title that looks like HTML stays text
+ev(`window.__saveXss69 = state.sessions;
+  state.sessions = [{ sessionId: "env-xss:eeeeeeee-0000-4000-8000-000000000015", title: "<img src=x onerror=alert(1)>",
+    cwd: "/tmp/<b>cwd", lastModified: Date.now(), remote: true, environment: "env-xss", environmentName: "<img src=x onerror=alert(1)>", offline: false, profile: "personal" }];
+  renderSessions()`);
+const xssRow = $$("#session-list .sess").find(b => (b.querySelector(".t div")?.textContent || "").includes("<img"));
+ok("a remote chat title renders as text, with no img element",
+  !!xssRow && xssRow.querySelector(".t div").textContent === "<img src=x onerror=alert(1)>"
+  && !$("#session-list img") && (xssRow.querySelector(".meta").textContent || "").includes("<b>cwd"));
+ev(`state.sessions = window.__saveXss69; delete window.__saveXss69; renderSessions()`);
+ok("a folder takes its longest profile workspace", ev(`(() => {
+  const save = state.profiles, def = state.defaultProfile;
+  state.profiles = [
+    { id: "personal", name: "Personal", color: "teal", workspaces: ["/work"], accounts: {}, env: {} },
+    { id: "work", name: "Work", color: "blue", workspaces: ["/work/app"], accounts: {}, env: {} } ];
+  state.defaultProfile = "personal";
+  const r = profileOfCwd("/work/app/src").id === "work" && profileOfCwd("/work/app").id === "work"
+    && profileOfCwd("/work/other").id === "personal" && profileOfCwd("/work/apple").id === "personal" && profileOfCwd("/elsewhere").id === "personal";
+  state.profiles = save; state.defaultProfile = def;
+  return r; })()`));
+// #62e A send that fails keeps the draft in the field, and the chat stays new until the server has it
+ev(`window.__origCall = conn.call; window.__saveCur62 = state.current; window.__saveEmpty62 = $("#empty").hidden;
+  state.current = { ...state.current, isNew: true, title: "New chat", sessionId: "cccccccc-0000-4000-8000-0000000000e9" };
+  input.value = "this draft must survive"; updateHeader(); hideEmpty();
+  conn.call = () => Promise.reject(new Error("Disconnected"))`);
+ev("send()");
+await sleep(100);
+ok("a failed send puts the draft back in the field", $("#input").value === "this draft must survive");
+ok("…and its new chat stays new", ev("state.current.isNew") === true && $("#chat-title").textContent === "New chat");
+ev(`conn.call = window.__origCall; delete window.__origCall; state.current = window.__saveCur62; delete window.__saveCur62;
+  input.value = ""; autosize(); updateHeader(); if (window.__saveEmpty62) hideEmpty(); else showEmpty(); delete window.__saveEmpty62`);
+
+// #62d connect() while the socket is already open must keep that one socket
+const twoConnects = ev(`(() => { const before = conn.ws; conn.connect(); conn.connect();
+  return { same: conn.ws === before, ok: conn.ok, state: conn.ws && conn.ws.readyState }; })()`);
+ok("calling connect twice while open keeps one socket", twoConnects.same && twoConnects.ok && twoConnects.state === 1);
+
+// #62a/b A reconnect keeps the chat on screen and replays only what it missed
+const r62 = await ev(`(async () => {
+  const sid = state.current.sessionId;
+  const send = (seq, e) => conn.fire("ev", { sessionId: sid, seq, ev: e });
+  const last0 = state.current.lastSeq, users0 = document.querySelectorAll(".user-msg").length;
+  // A reply is mid-stream when the connection drops: its block started and some words are drawn.
+  send(last0 + 1, { type: "stream_event", event: { type: "message_start", message: { id: "m-62-ghost" } } });
+  send(last0 + 2, { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+  send(last0 + 3, { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Before the drop" } } });
+  await new Promise(r => setTimeout(r, 150));
+  window.__ghost62 = document.querySelector("#messages .md.ghost");
+  const resume = state.current.lastSeq, count1 = document.querySelector("#messages").children.length;
+  const notes = { after: null, history: 0, subs: 0 };
+  const real = conn.call;
+  conn.call = (t, m = {}) => {
+    if (t === "session.history") { notes.history++; return real.call(conn, t, m); }
+    if (t === "subscribe") {
+      notes.subs++;
+      if (notes.subs === 1) {   // the server still has every event after the app's position
+        notes.after = m.after;
+        return Promise.resolve({ sessionId: sid, info: { sessionId: sid, state: "running", seq: resume + 2 }, firstSeq: resume + 1, events: [
+          { seq: resume + 1, ev: { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " and after." } } } },
+          { seq: resume + 2, ev: { type: "stream_event", event: { type: "content_block_stop", index: 0 } } }] });
+      }
+      return Promise.resolve({ sessionId: sid, info: { sessionId: sid, state: "idle", seq: resume + 30 }, firstSeq: resume + 20, events: [] });
+    }
+    return real.call(conn, t, m);
+  };
+  conn.ws.close();   // the socket drops; the app reconnects and catches up
+  for (let i = 0; i < 100 && !(conn.ok && notes.after === resume && state.current.lastSeq === resume + 2); i++) await new Promise(r => setTimeout(r, 100));
+  await new Promise(r => setTimeout(r, 150));
+  const kept = { resume, after: notes.after, history: notes.history, same: state.current.sessionId === sid, ok: conn.ok,
+    count: document.querySelector("#messages").children.length, users: document.querySelectorAll(".user-msg").length,
+    ghost: !!window.__ghost62 && window.__ghost62.isConnected, text: window.__ghost62 ? window.__ghost62.textContent.trim() : "",
+    copies: [...document.querySelectorAll("#messages .md")].filter(m => m.textContent.includes("Before the drop and after.")).length };
+  // A position the buffer no longer reaches must reload the transcript instead.
+  await openSession(sid, { keepChat: true });
+  const fellBack = { history: notes.history, ghost: document.querySelectorAll("#messages .md.ghost").length };
+  conn.call = real;
+  return { kept, fellBack, count1, users0 };
+})()`);
+ok(`(#62b) a reconnect resumes after the old seq (${r62.kept.after}) and keeps the chat`, r62.kept.ok && r62.kept.same && r62.kept.after === r62.kept.resume
+  && r62.kept.history === 0 && r62.kept.count === r62.count1 && r62.kept.users === r62.users0);
+ok(`(#62a) …and a mid-stream block keeps streaming, once: "${r62.kept.text}"`, r62.kept.ghost && r62.kept.text === "Before the drop and after." && r62.kept.copies === 1);
+ok("(#62b) a position the buffer no longer reaches reloads the transcript", r62.fellBack.history === 1 && r62.fellBack.ghost === 0);
+// environments (#69): the Settings row, the page the "environments" event renders, a device's chat in the drawer,
+// and the new-chat Where row. The device requests themselves are covered by tests/ui/environments.test.mjs.
+ev("openSettings()");
+const envCat = $('[data-sec="environments"]');
+ok(`Settings has an Environments row: "${envCat?.querySelector("small")?.textContent}"`, !!envCat && envCat.textContent.includes("Environments") && envCat.querySelector("small").textContent === "None");
+ev("page.close()");
+const testEnvs = [
+  { id: "env-test-a", name: "Laptop", url: "http://100.64.1.1:8765", profile: "personal", state: "online", version: "1.3.0", protocol: 1, error: null, lastOnlineAt: Date.now() },
+  { id: "env-test-b", name: "Studio PC", url: "http://100.64.1.2:8765", profile: "personal", state: "offline", version: null, protocol: null, error: "Can't reach 100.64.1.2:8765", lastOnlineAt: null },
+];
+ev(`conn.fire("environments", { environments: ${JSON.stringify(testEnvs)} })`);
+ev("openSettings()"); ev(`document.querySelector('[data-sec="environments"]').click()`);
+const envRows = $$("#page-body .env-row");
+ok("the environments event lists them on the page, with the right dots", envRows.length === 2 && !!envRows[0].querySelector(".dot.online") && !!envRows[1].querySelector(".dot.offline"));
+ev("page.close()");
+const savedSessions = ev("JSON.stringify(state.sessions)"), savedCurrent = ev("JSON.stringify(state.current)");
+ev(`state.sessions = [{ sessionId: "env-test-b:11111111-2222-4333-8444-555555555555", title: "Laptop work", cwd: "/home/me/work", lastModified: Date.now(), remote: true, environment: "env-test-b", environmentName: "Studio PC", offline: true }, ...state.sessions]; renderSessions()`);
+const dimRow = $$("#session-list .sess").find(x => /Laptop work/.test(x.textContent));
+ok("a device's offline chat is dimmed, says offline and shows its chip", !!dimRow && dimRow.classList.contains("offline") && /offline/.test(dimRow.querySelector(".meta").textContent) && dimRow.querySelector(".meta .meta-env")?.textContent === "Studio PC");
+ev(`state.sessions = ${savedSessions}; renderSessions()`);
+ev(`conn.fire("environments", { environments: [${JSON.stringify({ ...testEnvs[1], state: "offline" })}] }); newChat()`);
+ok("no online device: no Where row", $("#new-where").hidden);
+ev(`conn.fire("environments", { environments: ${JSON.stringify(testEnvs)} }); newChat()`);
+const whereBtns = $$("#new-where button");
+ok("an online device adds the Where row: Phone and each device, offline disabled", !$("#new-where").hidden && whereBtns.map(b => b.textContent).join(" | ") === "Phone | Laptop | Studio PC" && whereBtns.filter(b => b.disabled).length === 1);
+ev(`state.current = ${savedCurrent}; conn.fire("environments", { environments: [] }); state.envFilter = ""; renderEnvFilters(); renderSessions(); updateHeader(); updateComposer()`);
+
+// #75 Settings loads the paired-device count when it opens, so the Devices row is never stale
+ev(`window.__origCallD = conn.call; window.__devCalls = 0; conn.call = (t, m) => {
+  if (t === "devices.list") { window.__devCalls++; return Promise.resolve({ devices: [{ id: "dev-75", name: "Tablet", scopes: ["chat"], roots: [], createdAt: Date.now(), lastSeenAt: Date.now() }] }); }
+  return window.__origCallD(t, m); }`);
+ev("openSettings()");
+await until(() => tx('[data-sec="devices"] small') === "1 device", 3000, "device count");
+ok("Settings asks for the devices and its Devices row says how many are paired", ev("__devCalls") === 1 && tx('[data-sec="devices"] small') === "1 device");
+ev(`conn.call = window.__origCallD; delete window.__origCallD; delete window.__devCalls; page.close()`);
+
+// #75 with a pair code showing, nothing is left saying "Making a code…"; New code appears once it expires
+ev(`window.__origCallP = conn.call;
+  conn.call = (t, m) => t === "devices.pair" ? Promise.resolve({ code: "ABCD-EF12", expiresAt: Date.now() + 60000, roots: [] }) : window.__origCallP(t, m);
+  openPairSheet(document.body)`);
+$("#dev-pair-go").click();
+await until(() => $("#sheet #pair-code")?.textContent === "ABCD-EF12", 3000, "pair code");
+ok("a shown code leaves no 'Making a code…' button, and New code stays hidden while it is good",
+  !/Making a code/.test(tx("#sheet")) && $("#sheet #dev-pair-new").hidden && !$("#sheet .btn.primary:not([hidden])"));
+ev(`showPairCode(document.body, { code: "ZZZZ-ZZZZ", expiresAt: Date.now() - 1000, roots: [] })`);
+await sleep(50);
+ok("an expired code offers New code", !$("#sheet #dev-pair-new").hidden && tx("#sheet #dev-pair-new") === "New code" && /expired/.test(tx("#sheet")));
+ev(`sheet.close(true); clearPairTimer(); conn.call = window.__origCallP; delete window.__origCallP; page.close()`);
+
+// #75 a fence with no known language stays plain text, labelled TEXT; a fence that names one is highlighted
+const r75 = ev(`(() => {
+  const d = document.createElement("div"); document.body.append(d);
+  const f = String.fromCharCode(96, 96, 96);
+  setMd(d, f + "\\nquiet leaves unfold in heat\\n" + f + "\\n\\n" + f + "js\\nlet tea = 1;\\n" + f);
+  const pre = [...d.querySelectorAll("pre")];
+  const r = { plainLabel: pre[0]?.querySelector(".code-head span")?.textContent,
+    plainHl: !!pre[0]?.querySelector(".hljs, [class^=hljs-]"),
+    plainText: pre[0]?.querySelector("code")?.textContent,
+    jsLabel: pre[1]?.querySelector(".code-head span")?.textContent,
+    jsHl: !!pre[1]?.querySelector("[class^=hljs-]") };
+  d.remove();
+  return r;
+})()`);
+ok(`(#75) a fence without a language stays plain and is labelled TEXT: "${r75.plainLabel}"`, r75.plainLabel === "TEXT" && !r75.plainHl && /quiet leaves unfold in heat/.test(r75.plainText || ""));
+ok(`(#75) a fence that names a language is highlighted: "${r75.jsLabel}"`, r75.jsLabel === "js" && r75.jsHl);
+
 ev("openFiles(state.home)"); await until(() => $$("#page-body .list-row").length > 0, 10000, "files list"); ok("files page lists entries", true); ev("page.close()");
 ev(`document.querySelector("#chip-mode").click()`); ok("mode sheet opens", ev("sheet.isOpen") && $$("#sheet .opt").length === 5); ev("sheet.close(true)");
+ev(`state.models = [{ value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)" }, { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5" }]`);
+ev(`document.querySelector("#chip-model").click()`);
+ok("the model sheet ticks Default when the chat uses the default", $$("#sheet .opt.on").length === 1 && $("#sheet .opt.on").textContent.includes("Default")); ev("sheet.close(true)");
+ok("the model chip names the real model, never Default", ev('modelLabel(null)') === "Opus 5.5" && ev('modelLabel("default")') === "Opus 5.5" && ev('modelLabel("claude-haiku-4-5-20251001")') === "Haiku 4.5" && ev('modelLabel("claude-sonnet-5-5[1m]")') === "Sonnet 5.5");
 ev(`document.querySelector("#chip-model").click()`); ok("model sheet opens", ev("sheet.isOpen")); ev("sheet.close(true)");
 ev(`document.querySelector("#btn-more").click()`); ok("overflow menu opens", $$("#sheet .menu-item").length > 3); ev("sheet.close(true)");
 

@@ -38,6 +38,7 @@ Pocket Agent follows this repo's releases on its own, with nothing to set up. Wh
 - File browser for your projects. Phone storage is at `/sdcard`.
 - **Builds itself**: Settings → *Build Pocket Agent yourself* sets up Java and the Android build tools and clones this repo, so Claude can change and rebuild the app on the phone.
 - Optional phone control groundwork (accessibility, notification access), off until you enable it.
+- **Background services**: `pa-service add preview -- npm run dev` keeps a dev or preview server running; Pocket Agent starts it again after Android kills the app.
 - **Back up and restore** chats, memory, settings and projects to phone storage (Settings → Updates & chats).
 - **Termux (optional)**: Settings → Termux → *Set up Termux* gives you one command to paste into Termux. Claude in the app can then run commands there (`termux <command>`), and you can run Claude in Termux instead of the built-in Linux. Coming from an older Termux setup? *Move everything from Termux* brings your projects, chats, memory and settings over.
 

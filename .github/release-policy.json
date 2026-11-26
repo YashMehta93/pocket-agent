@@ -1,0 +1,8 @@
+{
+  "$comment": "Rules scripts/release.sh enforces before publishing (docs/RELEASES.md, 'Release rules'). Edit this file, through a PR, to change them.",
+  "approvers": ["YashMehta93", "bhavyadhoru", "JetErorr"],
+  "releaseBranches": ["v1.x"],
+  "betaBeforeFinal": true,
+  "minBetaDays": 0,
+  "finalMayChange": ["VERSION", "CHANGELOG.md", "README.md", "docs/", ".github/"]
+}

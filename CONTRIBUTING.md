@@ -18,11 +18,11 @@ Changes to the screens (`app/assets/ui`) and the server (`server/`) reach your a
 
 Java changes need a new APK. Your builds are signed with **your own** `pocket-agent.keystore` (made on your first build, ignored by git), and Android only installs an update signed with the same key as the installed app. So while you're on the official app, the update banner says *"signed with a different key"* instead of installing. To switch to your own build, once:
 
-1. Settings → **Back up to phone storage** (chats, memory, settings, projects; never your sign-in or tokens).
+1. Settings → **Back up to phone storage** (chats, memory, settings, projects; never your sign-in, tokens or signing keys). Copy `pocket-agent.keystore` somewhere private yourself.
 2. Uninstall Pocket Agent and install `Download/claude apps/pocket-agent.apk` (every build copies it there).
 3. Set it up and sign in, then Settings → **Restore a backup**, and run *Build Pocket Agent yourself* again (it reuses your code).
 
-From then on, your own builds update your app with one tap. Official releases then reach you through git: merge `origin/v1.x` into your branch. **Back up `pocket-agent.keystore`** (the backup includes it): without it, you're back to reinstalling.
+From then on, your own builds update your app with one tap. Official releases then reach you through git: merge `origin/v1.x` into your branch. **Back up `pocket-agent.keystore` separately**, somewhere private like a password manager. The app's backup leaves keys out on purpose, because phone storage is readable by other apps. Without it, you're back to reinstalling.
 
 ### On a computer instead
 
@@ -53,7 +53,12 @@ Updating the bundled proot: `bash app/native/prepare-proot.sh` (downloads Termux
 
 ## Branches and releases
 
-Read [docs/RELEASES.md](docs/RELEASES.md): work happens on feature branches with PRs into `v1.x`; `master` and the `v1.x` line change only by merging PRs; `v1.0` is frozen.
+Read [docs/RELEASES.md](docs/RELEASES.md). In short:
+- Every change starts as an issue.
+- Work happens on a branch, with a PR into `v1.x` that says `Closes #N`, has a `type: …` label, and mentions the issue in every commit message. GitHub checks all of this, and runs the tests.
+- An approver (`.github/CODEOWNERS`) approves.
+- Releases are batched by milestone and always ship as a beta before the final.
+- `master` and `v1.x` change only by merging PRs; `v1.0` is frozen.
 
 ## Releases (what friends' apps update from)
 
@@ -78,7 +83,8 @@ PA_PORT=8766 npm run test:ui
 ## Tests
 
 ```bash
-npm run test:ui          # headless UI (jsdom) against a running server, no Claude turns
+npm run test:ui          # headless UI (jsdom) against a running server, no Claude turns; opens an existing
+                         # chat (none yet? sh tests/ui/seed-sample-chat.sh adds a made-up one, as CI does)
 npm run test:ui:live     # + a real Claude turn with an approval (uses your Claude plan)
 npm run test:server      # protocol end-to-end, includes a real Claude turn
 npm run test:native      # server ↔ phone channel with a fake phone (fast, no Claude)
@@ -86,6 +92,7 @@ npm run test:setup       # first-run setup screen with a fake native bridge
 npm run test:tar         # the app's tar extractor vs GNU tar on the real Alpine archive
 npm run test:github      # updating from GitHub releases, against a fake GitHub API
 npm run test:upgrade     # an install on v1.0.0 updates to this code and is then up to date
+npm run test:services    # background services survive being killed and the server restarting
 npm run test:migrate     # Move from Termux, into a throwaway home (needs a Termux server)
 npm run test:transfer    # chat import + update channel between servers (needs a Termux server)
 ```

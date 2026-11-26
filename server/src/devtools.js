@@ -7,8 +7,8 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { HOME, CLAUDE_DIR, prefs, savePrefs, log, githubRepo } from "./config.js";
+import { IS_WIN, shellSpawn } from "./platform.js";
 import { broadcastAll, callNative } from "./hub.js";
 import { ROOT } from "./transfer.js";
 
@@ -21,7 +21,7 @@ const ALPINE_EDGE = "https://dl-cdn.alpinelinux.org/alpine/edge";
 const exists = p => { try { fs.lstatSync(p); return true; } catch { return false; } };
 export function sh(cmd, onLine, opts = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn("/bin/sh", ["-c", cmd], { stdio: ["ignore", "pipe", "pipe"], ...opts });
+    const p = shellSpawn(cmd, { stdio: ["ignore", "pipe", "pipe"], ...opts });
     let out = "";
     const on = d => { out += d; if (onLine) for (const l of d.toString().split("\n")) if (l.trim()) onLine(l); };
     p.stdout.on("data", on); p.stderr.on("data", on);
@@ -158,12 +158,16 @@ export function devRepo() {
 // ───── what Claude is told about this phone ─────
 export function phoneContext() {
   const standalone = process.env.PA_MODE === "standalone";
+  // A Windows computer has none of the phone tools below (termux, cs, pa-service aren't on its PATH).
+  if (IS_WIN) return ["# Pocket Agent",
+    "You're running through Pocket Agent, an Android app: the user is on their phone, driving this Windows computer, so keep replies compact and readable on a small screen."].join("\n");
   const lines = [
     "# Pocket Agent",
     "You're running through Pocket Agent, an Android app; the user is on their phone, so keep replies compact and readable on a small screen.",
     standalone ? "This shell is the app's built-in Alpine Linux (proot) with home /root. Phone storage is at /sdcard (Downloads: /sdcard/Download). `apk add` needs root, which this shell doesn't have: ask the user, or use `apk --usermode --root ~/sys`." : "",
     "- `termux <command>` runs a shell command in Termux (if installed and allowed in the app's Settings) and prints its output: Termux packages, termux-api (`termux termux-battery-status`), etc.",
     "- `cs` lists Claude Code sessions.",
+    "- `pa-service add <name> [--cwd DIR] -- <command>` keeps a background process (a dev server, a preview server) running: Pocket Agent restarts it after Android kills the app and if it exits. Use it instead of `nohup`/`&` for anything the user should be able to keep using. `pa-service list | logs <name> | restart <name> | remove <name>`.",
     devRepo() ? `- This app's own source code is at ${devRepo()}; it's the user's personal version. Read its CLAUDE.md before changing the app.` : "",
   ];
   return lines.filter(Boolean).join("\n");
@@ -174,7 +178,7 @@ export function phoneContext() {
 export async function ensureDefaults() {
   try {
     const writable = d => { try { fs.accessSync(d, fs.constants.W_OK); return true; } catch { return false; } };
-    for (const name of ["cs", "termux"]) {
+    for (const name of ["cs", "termux", "pa-service"]) {
       const src = path.join(ROOT, "server/devtools", name), dst = path.join("/usr/local/bin", name);
       if (!exists(src) || !writable("/usr/local/bin")) continue;
       const want = await fsp.readFile(src, "utf8");

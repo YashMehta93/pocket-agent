@@ -16,6 +16,10 @@ conn.on("retrying", async n => {
   else if (standalone) showBanner(state.updating ? "Installing the update… back in a few seconds." : "Restarting Pocket Agent's server…");
   else showBanner(native ?"Starting the Claude server in Termux… If this takes long, open Termux and run: pocket-agent start" : "Can't reach the server.", native ? "Open Termux" : null, () => nativeCall("openTermux"));
 });
+// Back to the screen, or the network is back: retry now rather than at the end of the backoff (#62d).
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") conn.reconnect(); });
+window.addEventListener("online", () => conn.reconnect());
+
 async function pairServer() {
   const tok = await promptSheet({ title: "Pair with the server", placeholder: "Paste the token here", ok: "Pair",
     value: "" });
@@ -26,19 +30,27 @@ async function pairServer() {
 
 async function onConnected() {
   hideBanner();
-  const hello = await conn.call("hello");
+  const hello = await conn.call("hello", { tzOffset: new Date().getTimezoneOffset() });   // DeepSeek counts spend by the phone's day
   // The server serves the UI; if its files changed since this page loaded, reload to pick them up.
   if (window.__uiVersion && hello.uiVersion && hello.uiVersion !== window.__uiVersion && !Object.values(hello.live || {}).some(i => i.state === "running")) { location.reload(); return; }
   window.__uiVersion = hello.uiVersion;
-  Object.assign(state, { home: hello.home, hostName: hello.host, defaults: hello.defaults || {}, pinned: hello.pinned || [],
-    commands: hello.commands || [], models: hello.models || [], account: hello.account });
+  Object.assign(state, { home: hello.home, hostName: hello.host, environment: hello.environment || null, defaults: hello.defaults || {}, pinned: hello.pinned || [],
+    commands: hello.commands || [], models: hello.models || [], account: hello.account, usage: hello.usage || null,
+    accounts: hello.accounts || [], defaultAccount: hello.defaultAccount || "default", usageByAccount: hello.usageByAccount || {} });
+  if (typeof dsHello === "function") dsHello(hello);   // engines and the DeepSeek status (deepseek.js)
+  if (typeof accountsHello === "function") accountsHello(hello);   // the Claude accounts (accounts.js)
+  if (typeof profilesHello === "function") profilesHello(hello);   // the profiles (profiles.js)
+  if (typeof environmentsHello === "function") environmentsHello(hello);   // other Pocket Agent servers (environments.js)
+  renderUsage();
+  // the server may have restarted: only the chats it reports are live now (stale ones kept a Stop button that did nothing)
+  for (const id of Object.keys(state.liveInfo)) if (!(hello.live || []).some(i => i.sessionId === id)) { delete state.liveInfo[id]; delete state.activity[id]; }
   for (const i of hello.live || []) { state.liveInfo[i.sessionId] = i; if (i.activity) state.activity[i.sessionId] = i.activity; }
   state.pending = (hello.live || []).flatMap(i => i.pending || []);
   const where = hello.mode === "standalone" ? "This phone" : settings.server ? settings.server.replace(/^https?:\/\//, "") : hello.host;
   $("#conn-foot").innerHTML = `${icon("wifi")}<span>${esc(where)} · server ${esc(hello.version)}</span>`;
   await refreshSessions();
   const cur = state.current;
-  if (cur && !cur.isNew) await openSession(cur.sessionId, { keepScroll: true });
+  if (cur && !cur.isNew) await openSession(cur.sessionId, { keepScroll: true, keepChat: true });   // catch up in place if the server still has the gap (#62b)
   else updateHeader();
   updateComposer();
   if (window.__pendingIntent) { const i = window.__pendingIntent; window.__pendingIntent = null; handleIntent(i); }
@@ -96,15 +108,7 @@ function showBanner(text, action, fn) {
 function hideBanner() { $("#banner").hidden = true; }
 
 // ───────────── server events ─────────────
-conn.on("ev", m => {
-  const cur = state.current;
-  if (!cur || m.sessionId !== cur.sessionId) return;
-  if (m.seq <= (cur.lastSeq || 0)) return;
-  cur.lastSeq = m.seq;
-  hideEmpty();
-  chat.event(m.ev);
-  if (m.ev.type === "system" && m.ev.subtype === "init") { cur.model = m.ev.model; updateComposer(); }
-});
+conn.on("ev", chatLiveEvent);   // sessions.js: the chat on screen, live or caught up by a reconnect (#62a)
 conn.on("state", m => {
   state.liveInfo[m.sessionId] = m.info;
   if (m.state === "closed") delete state.liveInfo[m.sessionId];
@@ -112,31 +116,47 @@ conn.on("state", m => {
   renderSessions();
   if (m.state === "idle") debouncedRefresh();
 });
+// a worker's approval shows in the chat that started it, and in the worker's own views (approvals.js, requestHere)
 conn.on("permission.request", m => {
   state.pending = state.pending.filter(p => p.requestId !== m.requestId).concat(m);
   haptic("alert");
-  updateMenuBadge(); renderSessions();
-  if (state.current?.sessionId === m.sessionId) showNextPermission();
+  updateMenuBadge(); renderSessions(); updateHeader();
+  if (requestHere(m)) showNextPermission();
 });
 conn.on("permission.resolved", m => {
+  const was = state.pending.find(p => p.requestId === m.requestId) || m;
   state.pending = state.pending.filter(p => p.requestId !== m.requestId);
   if (sheet.key === "perm:" + m.requestId) sheet.close(true);
-  updateMenuBadge(); renderSessions();
-  if (state.current?.sessionId === m.sessionId) showNextPermission();
+  updateMenuBadge(); renderSessions(); updateHeader();
+  if (requestHere(was)) showNextPermission();
 });
 conn.on("activity", m => {
   state.activity[m.sessionId] = m.activity;
+  if (m.spend != null && state.liveInfo[m.sessionId]) state.liveInfo[m.sessionId].spend = m.spend;   // a DeepSeek chat's cost so far
   if (state.current?.sessionId === m.sessionId) renderActivity();
 });
+conn.on("tasks", m => { (state.liveInfo[m.sessionId] ||= { sessionId: m.sessionId }).tasks = m.tasks; if (m.sessionId === state.current?.sessionId) renderTabs(); });
+// state.usage is the default account's (the meter and its sheet); the others live in state.usageByAccount (accounts.js)
+conn.on("usage", m => { if (!m.account || m.account === "default") { state.usage = m.usage; renderUsage(); } });
+// after a profile is saved, removed or made default: the list, the drawer's filter and the chats' profiles
+conn.on("profiles", m => { if (typeof applyProfiles === "function") applyProfiles(m); });
 conn.on("meta", m => { state.commands = m.commands || state.commands; state.models = m.models || state.models; state.account = m.account || state.account; updateComposer(); });
 conn.on("sessions.changed", () => debouncedRefresh());
 const debouncedRefresh = debounce(refreshSessions, 400);
 
 // ───────────── scrolling ─────────────
-const chatEl = $("#chat");
-let pinned = true;
+const chatEl = $("#chat"), messagesEl = $("#messages");
+let pinned = true, userScrollAt = 0;
+const nearBottom = () => chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 80;
+// Only the person's own scrolling can unpin: content growing, or the browser's scroll anchoring, must not (#56).
+const markUserScroll = () => { userScrollAt = Date.now(); };
+for (const ev of ["touchstart", "touchmove", "wheel"]) chatEl.addEventListener(ev, markUserScroll, { passive: true });
+document.addEventListener("keydown", e => {
+  if (/^(PageUp|PageDown|ArrowUp|ArrowDown|Home|End| )$/.test(e.key) && e.target === document.body) markUserScroll();
+});
 chatEl.addEventListener("scroll", () => {
-  pinned = chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 80;
+  if (nearBottom()) pinned = true;
+  else if (Date.now() - userScrollAt < 1500) pinned = false;   // the person (or their fling) moved away
   $("#jump").hidden = pinned;
   $("#topbar").classList.toggle("scrolled", chatEl.scrollTop > 4);
 }, { passive: true });
@@ -144,6 +164,8 @@ function scrollIfPinned() { if (pinned) chatEl.scrollTop = chatEl.scrollHeight; 
 function scrollToBottom(force) { if (force) pinned = true; requestAnimationFrame(() => { chatEl.scrollTop = chatEl.scrollHeight; }); }
 $("#jump").onclick = () => scrollToBottom(true);
 new ResizeObserver(() => scrollIfPinned()).observe($("#composer"));
+// Whatever makes the chat taller (streaming text, a fold opening, images loading) keeps a pinned chat at the bottom.
+new ResizeObserver(() => scrollIfPinned()).observe(messagesEl);
 // Live messages fade in (css .enter); history loads without animation.
 new MutationObserver(muts => {
   if (chat.loadingHistory) return;

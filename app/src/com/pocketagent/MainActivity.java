@@ -5,6 +5,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
@@ -67,11 +68,28 @@ public class MainActivity extends Activity {
     private boolean pageReady = false;
     private String pendingIntentJson;
     private String loadedFrom = "";
+    /** Whether the page now in the WebView may use the PA bridge. Set from the page's URL in onPageStarted:
+     *  only the app's bundled pages and the phone's own server are trusted. A page served by a server chosen
+     *  in Settings is a different machine, so it gets no bridge at all. See issue #65. */
+    private volatile boolean pageTrusted = false;
+
+    /** The app's own pages: the bundled screens and the phone's built-in server. Nothing else. */
+    private boolean isAppPage(Uri u) {
+        String scheme = u.getScheme() == null ? "" : u.getScheme();
+        if (scheme.equals("file")) return u.getPath() != null && u.getPath().startsWith("/android_asset/");
+        if (!scheme.equals("http") && !scheme.equals("https")) return false;
+        return origin(u).equals("http://127.0.0.1:" + Linux.PORT);
+    }
+    private static String origin(Uri u) {
+        int port = u.getPort() > 0 ? u.getPort() : ("https".equals(u.getScheme()) ? 443 : 80);
+        return u.getScheme() + "://" + u.getHost() + ":" + port;
+    }
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        WebView.setWebContentsDebuggingEnabled(true);
+        // Remote debugging lets anything with USB debugging access drive the app (and its bridge): debug builds only.
+        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) WebView.setWebContentsDebuggingEnabled(true);
         web = new WebView(this);
         web.setBackgroundColor(Color.parseColor("#1f1e1c"));
         WebSettings s = web.getSettings();
@@ -84,10 +102,16 @@ public class MainActivity extends Activity {
         s.setTextZoom(100);
         web.addJavascriptInterface(new Bridge(), "PA");
         web.setWebViewClient(new WebViewClient() {
+            @Override public void onPageStarted(WebView v, String url, Bitmap favicon) {
+                // The bridge is on/off for the page that is actually loading (redirects included). Nothing
+                // that isn't a bundled asset page or the phone's own server may call it. See #65.
+                pageTrusted = url != null && isAppPage(Uri.parse(url));
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
                 Uri u = r.getUrl();
-                String host = u.getHost() == null ? "" : u.getHost();
-                if (host.equals("127.0.0.1") || u.getScheme().equals("file") || Prefs.server(MainActivity.this).contains(host)) return false;
+                // Only the app's own pages load here (this WebView carries the PA bridge); every other link,
+                // including the server chosen in Settings and local dev servers, opens in the browser, where Back works.
+                if (isAppPage(u)) return false;
                 try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception ignored) {}
                 return true;
             }
@@ -112,8 +136,9 @@ public class MainActivity extends Activity {
 
     /**
      * Standalone: first run shows the setup screen (bundled), otherwise starts the built-in server and
-     * loads the UI from it. Server mode: loads the UI from the configured server (so UI updates need no
-     * reinstall), falling back to the bundled copy while it's unreachable.
+     * loads the UI from it. Server mode: always loads the bundled UI, which connects to the configured
+     * server itself (core.js conn.base() reads settings.server). The chosen server is another machine and
+     * is not trusted with this WebView's bridge, so its pages are never loaded here. See #65.
      */
     void boot() {
         new Thread(() -> {
@@ -127,7 +152,7 @@ public class MainActivity extends Activity {
                 load(up ? server + "/ui/" : "file:///android_asset/ui/setup.html#trouble");
                 return;
             }
-            load(up ? server + "/ui/" : "file:///android_asset/ui/index.html");
+            load("file:///android_asset/ui/index.html");
         }).start();
     }
     private void load(String url) { ui.post(() -> { loadedFrom = url; pageReady = false; web.loadUrl(url); }); }
@@ -283,11 +308,14 @@ public class MainActivity extends Activity {
     private void toast(String m) { ui.post(() -> Toast.makeText(this, m, Toast.LENGTH_SHORT).show()); }
 
     // ───────────── JavaScript bridge (window.PA) ─────────────
+    /** window.PA. Every method does nothing unless the page in the WebView is one of ours (pageTrusted),
+     *  so a page served by another machine can't read tokens, run capabilities or start anything. See #65. */
     private class Bridge {
-        @JavascriptInterface public String token() { return Prefs.serverToken(MainActivity.this); }
-        @JavascriptInterface public String serverUrl() { return Prefs.server(MainActivity.this); }
+        @JavascriptInterface public String token() { if (!pageTrusted) return ""; return Prefs.serverToken(MainActivity.this); }
+        @JavascriptInterface public String serverUrl() { if (!pageTrusted) return ""; return Prefs.server(MainActivity.this); }
         /** Generic capability call; result arrives as paNative.emit("rpc", {id, result | error}). See Rpc.java. */
         @JavascriptInterface public void rpc(String id, String method, String paramsJson) {
+            if (!pageTrusted) return;
             JSONObject params;
             try { params = paramsJson == null || paramsJson.isEmpty() ? new JSONObject() : new JSONObject(paramsJson); } catch (Exception e) { params = new JSONObject(); }
             Rpc.call(MainActivity.this, method, params, new Rpc.Done() {
@@ -299,52 +327,63 @@ public class MainActivity extends Activity {
             try { final String json = new JSONObject().put("id", id).put(key, value).toString(); ui.post(() -> emit("rpc", json)); } catch (Exception ignored) {}
         }
         @JavascriptInterface public int appVersionCode() {
+            if (!pageTrusted) return 0;
             try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode; } catch (Exception e) { return 0; }
         }
-        @JavascriptInterface public int rpcApi() { return Rpc.API_VERSION; }
+        @JavascriptInterface public int rpcApi() { if (!pageTrusted) return 0; return Rpc.API_VERSION; }
         @JavascriptInterface public String appVersion() {
+            if (!pageTrusted) return "";
             try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception e) { return "?"; }
         }
         @JavascriptInterface public void ready() {
+            if (!pageTrusted) return;
             ui.post(() -> { pageReady = true; if (pendingIntentJson != null) { emit("intent", pendingIntentJson); pendingIntentJson = null; } });
         }
         /** The UI lost its server: in standalone mode make sure the built-in one is running. */
         @JavascriptInterface public void ensureServer() {
+            if (!pageTrusted) return;
             if (Prefs.standalone(MainActivity.this)) { if (Linux.installed(MainActivity.this)) Linux.startServer(MainActivity.this); else boot(); }
         }
         @JavascriptInterface public void restartServer() {
+            if (!pageTrusted) return;
             if (Prefs.standalone(MainActivity.this)) Linux.restartServer();
             else Termux.restartServer(MainActivity.this, Prefs.token(MainActivity.this));
         }
-        @JavascriptInterface public boolean isStandalone() { return Prefs.standalone(MainActivity.this); }
+        @JavascriptInterface public boolean isStandalone() { if (!pageTrusted) return false; return Prefs.standalone(MainActivity.this); }
         /** Switches between the built-in server and an external one, then reloads. */
-        @JavascriptInterface public void reboot() { ui.post(MainActivity.this::boot); }
+        @JavascriptInterface public void reboot() { if (!pageTrusted) return; ui.post(MainActivity.this::boot); }
         /** Opens the bundled setup screen (e.g. "#login" to sign in again); http pages can't link to file:// themselves. */
-        @JavascriptInterface public void openSetup(String hash) { load("file:///android_asset/ui/setup.html" + (hash == null ? "" : hash)); }
-        @JavascriptInterface public void openTermux() { ui.post(() -> Termux.openApp(MainActivity.this)); }
+        @JavascriptInterface public void openSetup(String hash) { if (!pageTrusted) return; load("file:///android_asset/ui/setup.html" + (hash == null ? "" : hash)); }
+        @JavascriptInterface public void openTermux() { if (!pageTrusted) return; ui.post(() -> Termux.openApp(MainActivity.this)); }
         @JavascriptInterface public void openInTermux(String cwd, String sessionId) {
+            if (!pageTrusted) return;
             if (!Termux.openClaude(MainActivity.this, cwd, sessionId)) { toast("Allow Pocket Agent to run Termux commands first"); ui.post(() -> Termux.openApp(MainActivity.this)); }
         }
         @JavascriptInterface public void haptic(String kind) {
+            if (!pageTrusted) return;
             ui.post(() -> web.performHapticFeedback("long".equals(kind) ? HapticFeedbackConstants.LONG_PRESS
                 : "alert".equals(kind) ? HapticFeedbackConstants.REJECT : HapticFeedbackConstants.CLOCK_TICK));
         }
         @JavascriptInterface public void copy(String text) {
+            if (!pageTrusted) return;
             ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             cm.setPrimaryClip(ClipData.newPlainText("Pocket Agent", text));
         }
         @JavascriptInterface public void share(String text, String title) {
+            if (!pageTrusted) return;
             Intent i = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text);
             if (title != null && !title.isEmpty()) i.putExtra(Intent.EXTRA_SUBJECT, title);
             ui.post(() -> startActivity(Intent.createChooser(i, "Share")));
         }
         @JavascriptInterface public void startVoice() {
+            if (!pageTrusted) return;
             Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 .putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Claude");
             ui.post(() -> { try { startActivityForResult(i, REQ_VOICE); } catch (Exception e) { toast("No speech recognizer on this device"); } });
         }
         @JavascriptInterface public void takePhoto() {
+            if (!pageTrusted) return;
             // The manifest declares CAMERA (for future features), so Android requires it to be granted
             // before the camera app can be used for capture.
             if (checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -359,30 +398,42 @@ public class MainActivity extends Activity {
                     ContentValues v = new ContentValues();
                     v.put(MediaStore.Images.Media.DISPLAY_NAME, "pocket-agent-" + System.currentTimeMillis() + ".jpg");
                     v.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-                    v.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Pocket Agent");
+                    // RELATIVE_PATH is an Android 10+ column; older versions reject the insert ("Camera not available").
+                    if (Build.VERSION.SDK_INT >= 29) v.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Pocket Agent");
                     photoUri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v);
                     startActivityForResult(new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT, photoUri), REQ_PHOTO);
                 } catch (Exception e) { toast("Camera not available"); }
             });
         }
         @JavascriptInterface public void setTheme(String mode, String bg) {
+            if (!pageTrusted) return;
             ui.post(() -> {
                 try {
                     int color = Color.parseColor(bg.trim());
                     getWindow().setStatusBarColor(color);
                     getWindow().setNavigationBarColor(color);
                     web.setBackgroundColor(color);
-                    WindowInsetsController c = getWindow().getInsetsController();
-                    if (c != null) {
-                        int light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
-                        c.setSystemBarsAppearance("light".equals(mode) ? light : 0, light);
+                    boolean lightBars = "light".equals(mode);
+                    if (Build.VERSION.SDK_INT >= 30) {
+                        WindowInsetsController c = getWindow().getInsetsController();
+                        if (c != null) {
+                            int light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                            c.setSystemBarsAppearance(lightBars ? light : 0, light);
+                        }
+                    } else {
+                        // Android 8–10 has no WindowInsetsController: calling it there is a NoSuchMethodError,
+                        // which the catch below doesn't cover, so the app died as soon as the UI set its theme.
+                        View decor = getWindow().getDecorView();
+                        int light = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                        int flags = decor.getSystemUiVisibility();
+                        decor.setSystemUiVisibility(lightBars ? flags | light : flags & ~light);
                     }
                 } catch (Exception ignored) {}
             });
         }
-        @JavascriptInterface public void settingsChanged(String json) { Prefs.setUi(MainActivity.this, json); }
+        @JavascriptInterface public void settingsChanged(String json) { if (!pageTrusted) return; Prefs.setUi(MainActivity.this, json); }
         /** UI settings live natively too: each server is a different web origin with its own localStorage. */
-        @JavascriptInterface public String uiSettings() { return Prefs.ui(MainActivity.this).toString(); }
-        @JavascriptInterface public void setBackHandler(boolean on) { /* back is always routed through paBack() */ }
+        @JavascriptInterface public String uiSettings() { if (!pageTrusted) return ""; return Prefs.ui(MainActivity.this).toString(); }
+        @JavascriptInterface public void setBackHandler(boolean on) { if (!pageTrusted) return; /* back is always routed through paBack() */ }
     }
 }

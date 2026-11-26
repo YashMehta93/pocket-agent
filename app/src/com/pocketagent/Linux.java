@@ -315,8 +315,49 @@ final class Linux {
         for (int pid : pids) try { Os.kill(pid, android.system.OsConstants.SIGKILL); } catch (Exception ignored) {}
     }
     private static boolean anyAlive(List<Integer> pids) { for (int p : pids) if (new File("/proc/" + p).exists()) return true; return false; }
-    static void stopServer() { serverWanted = false; Process p = server; if (p != null) p.destroy(); }
-    static void restartServer() { Process p = server; if (p != null) p.destroy(); }   // the supervisor restarts it
+    static void stopServer() { serverWanted = false; stopTree(); }
+    static void restartServer() { stopTree(); }   // the supervisor restarts it
+
+    /**
+     * proot ignores SIGTERM while anything runs inside it (Claude Code, background services), so destroy() alone
+     * left the server running. Stop everything under our proot instead: SIGTERM first (the server closes its chats
+     * cleanly), then SIGKILL whatever is left, the children before proot itself.
+     */
+    private static void stopTree() {
+        Process p = server;
+        if (p == null) return;
+        new Thread(() -> {
+            List<Integer> roots = new ArrayList<>();
+            String mark = "exec node src/index.js --port " + PORT + " ";
+            java.util.Map<Integer, Integer> parent = new java.util.HashMap<>();
+            File[] procs = new File("/proc").listFiles();
+            if (procs != null) for (File d : procs) {
+                int pid; try { pid = Integer.parseInt(d.getName()); } catch (NumberFormatException e) { continue; }
+                try (FileInputStream in = new FileInputStream(new File(d, "stat"))) {
+                    byte[] b = new byte[512]; int n = in.read(b); String st = new String(b, 0, Math.max(n, 0), StandardCharsets.UTF_8);
+                    String[] f = st.substring(st.lastIndexOf(')') + 2).split(" ");
+                    parent.put(pid, Integer.parseInt(f[1]));
+                } catch (Exception ignored) { continue; }
+                try (FileInputStream in = new FileInputStream(new File(d, "cmdline"))) {
+                    byte[] b = new byte[8192]; int n = in.read(b);
+                    String cmd = n > 0 ? new String(b, 0, n, StandardCharsets.UTF_8).replace('\0', ' ') : "";
+                    if (cmd.contains("libproot.so") && cmd.contains(mark)) roots.add(pid);
+                } catch (IOException ignored) {}
+            }
+            List<Integer> tree = new ArrayList<>();
+            for (int r : roots) collect(r, parent, tree);
+            List<Integer> kids = new ArrayList<>(tree); kids.removeAll(roots);
+            for (int pid : kids) try { Os.kill(pid, android.system.OsConstants.SIGTERM); } catch (Exception ignored) {}
+            for (int i = 0; i < 50 && anyAlive(kids); i++) try { Thread.sleep(100); } catch (InterruptedException e) { return; }
+            for (int pid : kids) try { Os.kill(pid, android.system.OsConstants.SIGKILL); } catch (Exception ignored) {}
+            for (int pid : roots) try { Os.kill(pid, android.system.OsConstants.SIGKILL); } catch (Exception ignored) {}
+            p.destroy();
+        }, "pa-stop").start();
+    }
+    private static void collect(int pid, java.util.Map<Integer, Integer> parent, List<Integer> out) {
+        for (java.util.Map.Entry<Integer, Integer> e : parent.entrySet()) if (e.getValue() == pid && !out.contains(e.getKey())) collect(e.getKey(), parent, out);
+        out.add(pid);
+    }
     static boolean serverAlive() { Process p = server; return p != null && p.isAlive(); }
 
     // ───── sign-in (Claude Code's own login: URL in, pasted code out) ─────

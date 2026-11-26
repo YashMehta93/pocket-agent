@@ -18,8 +18,14 @@
     </div>
     <button class="new-chat" id="btn-new"><span data-icon="plus"></span>New chat</button>
     <div class="search"><span data-icon="search"></span><input id="session-search" type="search" placeholder="Search chats" autocomplete="off"></div>
+    <div class="filters chat-filters" id="chat-filters" role="group" aria-label="Filter chats">
+      <div class="filter-part" id="profile-filters" hidden></div>
+      <span class="filter-sep" id="filter-sep" aria-hidden="true" hidden></span>
+      <div class="filter-part" id="env-filters" hidden></div>
+    </div>
     <div class="filters" id="project-filters"></div>
     <div id="session-list" class="session-list"></div>
+    <button class="usage-meter" id="usage-meter" aria-label="Usage limits" hidden></button>
     <div class="drawer-foot" id="conn-foot"></div>
   </aside>
   <div id="scrim"></div>
@@ -32,9 +38,14 @@
         <div id="chat-title">New chat</div>
         <div id="chat-sub"></div>
       </div>
+      <button class="icon-btn usage-ring" id="btn-usage" aria-label="Usage" hidden></button>
       <button class="icon-btn" id="btn-files" aria-label="Files" data-icon="folder"></button>
       <button class="icon-btn" id="btn-more" aria-label="More" data-icon="dots"></button>
     </header>
+    <nav id="chat-tabs" role="tablist" aria-label="This chat" hidden>
+      <button class="tab" id="tab-chat" role="tab" aria-selected="true" aria-controls="chat"><span class="tl">Chat</span></button>
+      <button class="tab" id="tab-agents" role="tab" aria-selected="false" aria-controls="agents-view"><span class="tl">Agents<span class="ct"></span><i class="tdot" hidden></i></span></button>
+    </nav>
     <div id="banner" hidden></div>
     <div id="todo-bar" hidden></div>
     <section id="chat" aria-live="polite">
@@ -43,13 +54,21 @@
         <div class="logo big"></div>
         <h1 id="empty-greet">What should we build?</h1>
         <div class="empty-cwd" id="empty-cwd"></div>
+        <div class="where" id="new-where" hidden></div>
         <div class="suggestions" id="suggestions"></div>
       </div>
+    </section>
+    <section id="agents-view" role="tabpanel" aria-labelledby="tab-agents" hidden>
+      <div class="ag-top" hidden><button id="ag-stop-all" class="chip" hidden>Stop all</button></div>
+      <div class="ag-list"></div>
     </section>
     <button id="jump" hidden aria-label="Jump to latest" data-icon="down"></button>
 
     <footer id="composer">
+      <div id="env-offline" hidden></div>
       <div id="status-line" hidden></div>
+      <button id="usage-note" hidden></button>
+      <div id="account-limit" hidden></div>
       <button id="activity" class="activity" hidden aria-live="polite"></button>
       <div id="popup" hidden></div>
       <div id="attachments" hidden></div>
@@ -57,9 +76,7 @@
         <textarea id="input" rows="1" placeholder="Message Claude…" enterkeyhint="send" autocapitalize="sentences"></textarea>
         <div class="row">
           <button class="icon-btn sm" id="btn-attach" aria-label="Attach" data-icon="clip"></button>
-          <button class="chip" id="chip-mode"></button>
-          <button class="chip" id="chip-model"></button>
-          <span class="grow"></span>
+          <span class="chips"><button class="chip" id="chip-engine" hidden></button><button class="chip" id="chip-account" hidden></button><button class="chip" id="chip-mode"></button><button class="chip" id="chip-model"></button></span>
           <button class="icon-btn sm" id="btn-mic" aria-label="Voice input" data-icon="mic"></button>
           <button class="send" id="btn-send" aria-label="Send" data-icon="up"></button>
         </div>
@@ -70,9 +87,9 @@
 
   <!-- Bottom sheet (approvals, pickers, menus) -->
   <div id="sheet-scrim"></div>
-  <section id="sheet" role="dialog" aria-modal="true"><div class="grip"></div><div id="sheet-body"></div></section>
+  <section id="sheet" role="dialog" aria-modal="true"><div class="grip"></div><button class="icon-btn sheet-x" id="sheet-x" aria-label="Close" data-icon="x"></button><div id="sheet-body"></div></section>
   <!-- Full-screen pages (settings, files, viewer) -->
-  <section id="page" hidden><header><button class="icon-btn" id="page-back" data-icon="back" aria-label="Back"></button><div id="page-title"></div><div id="page-actions"></div></header><div id="page-body"></div></section>
+  <section id="page" hidden><header><button class="icon-btn" id="page-back" data-icon="back" aria-label="Back"></button><div id="page-title"></div><div id="page-actions"></div></header><div id="page-body"></div><button class="page-back2" id="page-back2" aria-label="Back" data-icon="back"></button></section>
   <div id="toast"></div>
 </div>
 <script src="lib/marked.min.js"></script>
@@ -80,12 +97,20 @@
 <script src="lib/highlight.min.js"></script>
 <script src="js/core.js"></script>
 <script src="js/render.js"></script>
+<script src="js/steps.js"></script>
 <script src="js/base.js"></script>
 <script src="js/activity.js"></script>
 <script src="js/sessions.js"></script>
 <script src="js/composer.js"></script>
 <script src="js/approvals.js"></script>
 <script src="js/pages.js"></script>
+<script src="js/usage.js"></script>
+<script src="js/agents.js"></script>
+<script src="js/deepseek.js"></script>
+<script src="js/accounts.js"></script>
+<script src="js/devices.js"></script>
+<script src="js/profiles.js"></script>
+<script src="js/environments.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

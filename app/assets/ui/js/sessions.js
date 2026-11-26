@@ -9,15 +9,39 @@ async function refreshSessions() {
   catch (e) { console.warn(e); }
 }
 function sessionState(id) { const pend = state.pending.some(p => p.sessionId === id); if (pend) return "waiting"; return state.liveInfo[id]?.state || null; }
+/** A chat's state with its workers': a worker's approval shows in the chat that started it, so it needs you there (#52). */
+function chatState(id) {
+  const st = sessionState(id);
+  if (st === "waiting" || typeof requestWorker !== "function") return st;
+  return state.pending.some(p => p.sessionId !== id && requestWorker(p)?.parent === id) ? "waiting" : st;
+}
+state.openKids = new Set();   // chats whose workers are shown in the drawer
 function renderSessions() {
   const list = $("#session-list");
   const q = state.filter.toLowerCase();
   let items = state.sessions.filter(s => (!q || (s.title || "").toLowerCase().includes(q) || (s.firstPrompt || "").toLowerCase().includes(q) || (s.cwd || "").toLowerCase().includes(q))
-    && (!state.project || s.cwd === state.project));
+    && (!state.project || s.cwd === state.project)
+    && (typeof envFilterMatches !== "function" || envFilterMatches(s)));
   // live sessions not yet on disk (brand new)
   for (const id of Object.keys(state.liveInfo)) if (!state.sessions.some(s => s.sessionId === id)) {
-    const i = state.liveInfo[id]; items.unshift({ sessionId: id, title: i.title || "New chat", cwd: i.cwd, lastModified: Date.now() });
+    const i = state.liveInfo[id], env = typeof sessionEnvironment === "function" ? sessionEnvironment(id) : null;
+    items.unshift({ sessionId: id, title: i.title || "New chat", cwd: i.cwd, lastModified: Date.now(), engine: i.engine, parent: i.parent,
+      profile: i.profile || profileOfCwd(i.cwd)?.id,
+      ...(env ? { remote: true, environment: env.id, environmentName: env.name, offline: env.offline } : {}) });
   }
+  // With two or more profiles, the drawer's filter hides the chats outside the chosen one; a worker follows its parent.
+  const links = typeof dsLinks === "function" ? dsLinks() : {};
+  if (typeof profileMany === "function" && profileMany() && state.profileFilter) {
+    // parents that search or the folder filter hid still say which profile their worker is in
+    const byId = new Map(state.sessions.map(s => [s.sessionId, s]));
+    for (const [id, i] of Object.entries(state.liveInfo)) if (!byId.has(id)) byId.set(id, { ...i, sessionId: id });
+    items = items.filter(s => sessionProfileId(s, byId, links) === state.profileFilter);
+  }
+  // Workers sit under the chat that started them, folded (#52). A search lists whatever matches, workers too.
+  const listed = new Set(items.map(s => s.sessionId)), kids = {};
+  if (!q) items = items.filter(s => { const par = links[s.sessionId]?.parent; if (!par || !listed.has(par)) return true; (kids[par] ||= []).push(s); return false; });
+  const curParent = links[state.current?.sessionId]?.parent;
+  if (curParent) state.openKids.add(curParent);   // the worker on screen is never hidden
   const groups = { Pinned: [], Today: [], Yesterday: [], "Previous 7 days": [], Older: [] };
   const day = 864e5, startToday = new Date().setHours(0, 0, 0, 0);
   for (const s of items) {
@@ -32,19 +56,44 @@ function renderSessions() {
     if (!arr.length) continue;
     list.append(h(`<div class="group-label">${g}</div>`));
     for (const s of arr) {
-      const st = sessionState(s.sessionId);
-      const row = h(`<button class="sess ${state.current?.sessionId === s.sessionId ? "on" : ""}">
-        ${st ? `<span class="dot ${st}"></span>` : ""}
-        <div class="t"><div></div><div class="meta"></div></div>
-        ${state.pinned.includes(s.sessionId) ? `<span class="pin">${icon("pin")}</span>` : ""}</button>`);
-      row.querySelector(".t div").textContent = s.title || s.firstPrompt || "Untitled";
-      row.querySelector(".meta").textContent = `${baseName(s.cwd)} · ${relTime(s.lastModified)}${st === "waiting" ? " · needs approval" : st === "running" ? " · working" : s.elsewhere ? " · open in Termux" : ""}`;
-      row.onclick = () => { closeDrawer(); openSession(s.sessionId); };
-      longPress(row, () => sessionMenu(s));
-      list.append(row);
+      const prof = typeof profileOfSession === "function" ? profileOfSession(s) : null;
+      list.append(sessRow(s, false, prof));
+      if (kids[s.sessionId]) list.append(kidsBlock(s.sessionId, kids[s.sessionId], prof));
     }
   }
   if (!list.children.length) list.innerHTML = `<div class="group-label" style="text-transform:none">${state.filter ? "No matching chats" : "No chats yet"}</div>`;
+}
+function sessRow(s, nested, prof) {
+  const st = nested ? sessionState(s.sessionId) : chatState(s.sessionId);
+  const env = typeof sessionEnvironment === "function" ? sessionEnvironment(s.sessionId) : null;
+  const offline = env ? env.offline : !!s.offline;
+  const row = h(`<button class="sess ${state.current?.sessionId === s.sessionId ? "on" : ""}${nested ? " kid" : ""}${offline ? " offline" : ""}">
+    ${st || nested ? `<span class="dot ${esc(st || "")}"></span>` : ""}${prof && typeof pdot === "function" ? pdot(prof) : ""}
+    <div class="t"><div></div><div class="meta"></div></div>
+    ${state.pinned.includes(s.sessionId) ? `<span class="pin">${icon("pin")}</span>` : ""}</button>`);
+  row.querySelector(".t div").textContent = s.title || s.firstPrompt || "Untitled";
+  // DeepSeek chats and worker chats say so (a nested worker's place already says it's a worker)
+  const eng = s.parent && !nested ? (s.engine === "deepseek" ? "DeepSeek worker" : "Claude worker") : s.engine === "deepseek" ? "DeepSeek" : "";
+  const meta = row.querySelector(".meta");
+  meta.textContent = [baseName(s.cwd), relTime(s.lastModified),
+    st === "waiting" ? "needs approval" : st === "running" ? "working" : s.elsewhere ? "open in Termux" : "",
+    offline ? "offline" : "", eng].filter(Boolean).join(" · ");
+  // a chat on another device says whose it is, first in the meta line
+  if (env?.name) { const chip = document.createElement("span"); chip.className = "meta-env"; chip.textContent = envShort(env.name); meta.prepend(chip); }
+  row.onclick = () => { closeDrawer(); openSession(s.sessionId); };
+  longPress(row, () => sessionMenu(s));
+  return row;
+}
+/** "▸ 2 workers · 1 needs you" under a chat; a tap shows them, folded again with another. */
+function kidsBlock(parent, arr, prof) {
+  const open = state.openKids.has(parent), states = arr.map(s => sessionState(s.sessionId));
+  const needs = states.filter(x => x === "waiting").length, busy = states.filter(x => x === "running" || x === "starting").length;
+  const box = h(`<div class="sess-kids${open ? " open" : ""}"><button class="kids-toggle" aria-expanded="${open}"><span class="kt-chev" aria-hidden="true">›</span>
+    <span class="meta-part kt-n">${arr.length} worker${arr.length === 1 ? "" : "s"}</span>${needs ? `<span class="meta-sep"> · </span><span class="meta-part kt-st needs">${needs} need${needs === 1 ? "s" : ""} you</span>` : busy ? `<span class="meta-sep"> · </span><span class="meta-part kt-st">${busy} working</span>` : ""}</button>
+    <div class="kids-list"></div></div>`);
+  if (open) for (const s of arr) box.querySelector(".kids-list").append(sessRow(s, true, prof));
+  box.querySelector(".kids-toggle").onclick = () => { if (state.openKids.has(parent)) state.openKids.delete(parent); else state.openKids.add(parent); renderSessions(); };
+  return box;
 }
 function renderProjects() {
   const counts = {};
@@ -61,7 +110,7 @@ function renderProjects() {
     box.append(b);
   }
 }
-function updateMenuBadge() { $("#menu-badge").hidden = !state.pending.some(p => p.sessionId !== state.current?.sessionId); }
+function updateMenuBadge() { $("#menu-badge").hidden = !state.pending.some(p => typeof requestHere === "function" ? !requestHere(p) : p.sessionId !== state.current?.sessionId); }
 $("#session-search").addEventListener("input", e => { state.filter = e.target.value; renderSessions(); });
 $("#btn-menu").onclick = () => {
   document.body.classList.add("drawer-open"); nativeCall("setBackHandler", true); refreshSessions();
@@ -71,15 +120,44 @@ $("#btn-menu").onclick = () => {
 };
 $("#scrim").onclick = closeDrawer;
 function closeDrawer() { document.body.classList.remove("drawer-open"); }
-$("#btn-new").onclick = () => { closeDrawer(); newChat(state.current?.cwd); };
+// keep the folder of a chat on this phone; a device's folder only exists there
+$("#btn-new").onclick = () => { closeDrawer(); const cur = state.current; newChat(cur && (typeof envIdOf !== "function" || !envIdOf(cur.sessionId)) ? cur.cwd : undefined); };
 $("#btn-settings").onclick = () => { closeDrawer(); openSettings(); };
 
+// A press and hold (480 ms) opens the row's menu; a tap opens the row. The press tolerates a little finger
+// wobble, dies when Android cancels the touch, fires only once, and swallows the click the lifting finger sends
+// (it would otherwise open the chat under the menu, or hit the menu's scrim and close it) (#58).
 function longPress(el, fn) {
-  let t, moved = false;
-  el.addEventListener("touchstart", () => { moved = false; t = setTimeout(() => { if (!moved) { haptic("long"); fn(); } }, 480); }, { passive: true });
-  el.addEventListener("touchmove", () => { moved = true; clearTimeout(t); }, { passive: true });
-  el.addEventListener("touchend", e => { clearTimeout(t); }, { passive: true });
-  el.addEventListener("contextmenu", e => { e.preventDefault(); fn(); });
+  let timer = 0, eatTimer = 0, x0 = 0, y0 = 0, fired = false;
+  const point = e => (e.touches?.[0] || e.changedTouches?.[0] || {});
+  const clear = () => { if (timer) { clearTimeout(timer); timer = 0; } };
+  const eat = ev => { ev.preventDefault(); ev.stopPropagation(); };   // eats the click that ends the press
+  const expireEat = () => {
+    clearTimeout(eatTimer);
+    eatTimer = setTimeout(() => removeEventListener("click", eat, { capture: true }), 800);
+  };
+  el.addEventListener("touchstart", e => {
+    fired = false;
+    const p = point(e); x0 = p.clientX ?? 0; y0 = p.clientY ?? 0;
+    clear();
+    timer = setTimeout(() => {
+      timer = 0;
+      if (fired) return;
+      fired = true;
+      addEventListener("click", eat, { capture: true, once: true });
+      expireEat();
+      haptic("long");
+      fn();
+    }, 480);
+  }, { passive: true });
+  el.addEventListener("touchmove", e => {
+    const p = point(e);
+    if (Math.abs((p.clientX ?? 0) - x0) > 10 || Math.abs((p.clientY ?? 0) - y0) > 10) clear();
+  }, { passive: true });
+  el.addEventListener("touchend", () => { clear(); if (fired) expireEat(); }, { passive: true });
+  el.addEventListener("touchcancel", () => { clear(); removeEventListener("click", eat, { capture: true }); }, { passive: true });
+  // A touch press is handled above, so its contextmenu must not open the menu twice; a mouse's right-click still does.
+  el.addEventListener("contextmenu", e => { e.preventDefault(); if (!fired && !timer) fn(); });
 }
 
 function sessionMenu(s) {
@@ -110,12 +188,56 @@ async function forkSession(id, upToMessageId) {
 }
 
 // ───────────── open / new chat ─────────────
-async function openSession(sessionId, { keepScroll } = {}) {
+/** A live event for the chat on screen: the socket's path and a reconnect's replay both go through here (#62a). */
+function chatLiveEvent(m) {
+  const cur = state.current;
+  if (!cur || m.sessionId !== cur.sessionId) return;
+  if (m.seq <= (cur.lastSeq || 0)) return;
+  cur.lastSeq = m.seq;
+  hideEmpty();
+  chat.event(m.ev);
+  if (m.ev.type === "system" && m.ev.subtype === "init") { cur.model = m.ev.model; updateComposer(); }
+}
+/** What a subscribe reply says about the chat on screen; seq is the position the transcript already covers. */
+function applySubscribe(sub, sessionId, seq) {
+  if (sub.engine || sub.info?.engine) state.current.engine = sub.engine || sub.info.engine;
+  state.current.account = sub.account || state.defaultAccount || "default";   // the Claude account this chat runs on
+  if (sub.parent && typeof parentOf === "function") state.links[sessionId] = { ...state.links[sessionId], parent: parentOf(sub.parent) };
+  if (sub.info) {
+    state.liveInfo[sessionId] = sub.info;
+    // An event may have arrived for this chat while the reply was in flight (and advanced the position):
+    // never rewind past it, or the same event would be drawn twice.
+    const at = Number.isFinite(seq) ? Math.min(seq, sub.info.seq) : sub.info.seq;
+    state.current.lastSeq = Math.max(state.current.lastSeq || 0, at);
+    if (sub.info.activity) state.activity[sessionId] = sub.info.activity;
+  } else if (sub.settings) Object.assign(state.current, { model: sub.settings.model ?? null, effort: sub.settings.effort ?? null, permissionMode: sub.settings.permissionMode || state.current.permissionMode });
+}
+
+async function openSession(sessionId, { keepScroll, keepChat } = {}) {
   const prev = state.current;
+  // Reconnecting the chat already on screen: if the server still has every event after its position, catch up
+  // from there instead of rebuilding the chat — the reader keeps their place and a reply keeps streaming (#62b).
+  if (keepChat && prev?.sessionId === sessionId && !prev.isNew && prev.lastSeq > 0) {
+    const resume = prev.lastSeq;   // the position to catch up from (an event may arrive while we ask)
+    try {
+      const sub = await conn.call("subscribe", { sessionId, after: resume });
+      if (state.current !== prev) return;
+      if (sub.info && sub.info.seq >= resume && Number.isFinite(sub.firstSeq) && resume + 1 >= sub.firstSeq) {
+        applySubscribe(sub, sessionId, resume);
+        for (const e of sub.events || []) chatLiveEvent({ sessionId, ...e });
+        setStatus(null); updateHeader(); updateComposer(); updateMenuBadge(); renderSessions();
+        if (!keepScroll) scrollToBottom(true);
+        showNextPermission();
+        if (typeof accountsChatChanged === "function") accountsChatChanged();
+        return;
+      }
+    } catch {}   // no catch-up possible: reload below
+  }
   if (prev && prev.sessionId !== sessionId && !prev.isNew) conn.call("unsubscribe", { sessionId: prev.sessionId }).catch(() => {});
   const meta = state.sessions.find(s => s.sessionId === sessionId) || {};
   const info = state.liveInfo[sessionId];
-  state.current = { sessionId, cwd: meta.cwd || info?.cwd || state.home, title: meta.title || info?.title || "Chat", isNew: false, lastSeq: 0 };
+  state.current = { sessionId, cwd: meta.cwd || info?.cwd || state.home, title: meta.title || info?.title || "Chat", isNew: false, lastSeq: 0, engine: meta.engine || info?.engine || undefined };
+  if (typeof agentsChatChanged === "function" && prev?.sessionId !== sessionId) agentsChatChanged();
   chat.reset(); hideEmpty(); updateHeader(); updateComposer(); renderSessions();
   setStatus("Loading…");
   try {
@@ -123,20 +245,34 @@ async function openSession(sessionId, { keepScroll } = {}) {
     if (state.current?.sessionId !== sessionId) return;
     if (hist.info) { state.current.cwd = hist.info.cwd || state.current.cwd; state.current.title = hist.info.customTitle || hist.info.summary || state.current.title; }
     chat.loadHistory(hist.messages || []);
-    // Live session: get only events newer than what the transcript already shows.
-    const sub = await conn.call("subscribe", { sessionId, after: 1e15 });
-    if (sub.info) { state.liveInfo[sessionId] = sub.info; state.current.lastSeq = sub.info.seq; if (sub.info.activity) state.activity[sessionId] = sub.info.activity; }
+    // Subscribe after the seq the transcript read covered, then replay what it missed. A reply that was
+    // mid-stream keeps its block start, and anything the transcript already has is deduped by uuid or block.
+    const histSeq = Number.isFinite(hist.seq) ? hist.seq : null;
+    const sub = await conn.call("subscribe", { sessionId, after: histSeq ?? 1e15 });
+    if (state.current?.sessionId !== sessionId) return;
+    applySubscribe(sub, sessionId, histSeq);
+    for (const e of sub.events || []) chatLiveEvent({ sessionId, ...e });
   } catch (e) { chat.note("Couldn't load this chat: " + e.message, true); }
   setStatus(null);
   if (chat.empty) showEmpty();
   updateHeader(); updateComposer(); updateMenuBadge();
   if (!keepScroll) scrollToBottom(true);
   showNextPermission();
+  if (typeof accountsChatChanged === "function") accountsChatChanged();   // its account chip, and no old limit card
 }
-function newChat(cwd) {
+/** engine: "claude" | "deepseek"; by default the one Settings → DeepSeek starts new chats on.
+ *  envId: start it on another Pocket Agent server, with the id "<envId>:<uuid>" (the server proxies it). */
+function newChat(cwd, engine, envId) {
   if (state.current && !state.current.isNew) conn.call("unsubscribe", { sessionId: state.current.sessionId }).catch(() => {});
-  state.current = { sessionId: uuid(), cwd: cwd || state.defaults.cwd || state.home, title: "New chat", isNew: true, lastSeq: 0,
+  const env = envId && typeof envById === "function" ? envById(envId) : null;
+  // On a device limited to folders, start in its first root: nothing else exists there (#72).
+  const roots = env && Array.isArray(env.roots) && env.roots.length ? env.roots : null;
+  const start = env ? ((roots && roots[0]) || env.home || "") : (state.defaults.cwd || state.home);
+  state.current = { sessionId: (envId ? envId + ":" : "") + uuid(), cwd: cwd || start, title: "New chat", isNew: true, lastSeq: 0,
     model: state.defaults.model || null, effort: state.defaults.effort || null, permissionMode: state.defaults.permissionMode || "default" };
+  if (typeof applyEngine === "function") { applyEngine(state.current, engine || defaultEngine()); state.current.engineChosen = !!engine; }
+  if (typeof accountsNewChat === "function") accountsNewChat();   // a new chat starts on the default account
+  if (typeof agentsChatChanged === "function") agentsChatChanged();
   chat.reset(); showEmpty(); updateHeader(); updateComposer(); renderSessions();
 }
 function showEmpty() {
@@ -144,8 +280,10 @@ function showEmpty() {
   $("#empty").hidden = false;
   const hr = new Date().getHours();
   $("#empty-greet").textContent = hr < 5 ? "Burning the midnight oil?" : hr < 12 ? "Good morning. What's the plan?" : hr < 18 ? "What should we build?" : "Good evening. What's next?";
-  $("#empty-cwd").innerHTML = `in <b>${esc(shortPath(cur?.cwd) || "~")}</b> · <button id="chg-dir">change folder</button>`;
-  $("#chg-dir").onclick = () => pickFolder(cur.cwd).then(d => { if (d) { cur.cwd = d; showEmpty(); updateHeader(); } });
+  const prof = typeof profileMany === "function" && profileMany() ? profileOfCwd(cur?.cwd) : null;
+  $("#empty-cwd").innerHTML = `in <b>${esc(shortPath(cur?.cwd) || "~")}</b>${prof && typeof profileChip === "function" ? " · " + profileChip(prof) : ""} · <button id="chg-dir">change folder</button>`;
+  $("#chg-dir").onclick = () => pickFolder(cur.cwd, typeof currentEnvId === "function" ? currentEnvId() : null).then(d => { if (d) { cur.cwd = d; showEmpty(); updateHeader(); } });
+  if (typeof renderNewChatWhere === "function") renderNewChatWhere();
   const sg = $("#suggestions"); sg.innerHTML = "";
   for (const s of SUGGESTIONS) { const b = h(`<button></button>`); b.textContent = s; b.onclick = () => { input.value = s; autosize(); input.focus(); }; sg.append(b); }
 }
@@ -153,7 +291,32 @@ function hideEmpty() { $("#empty").hidden = true; }
 function updateHeader() {
   const cur = state.current; if (!cur) return;
   $("#chat-title").textContent = cur.isNew ? "New chat" : (cur.title || "Chat");
-  const st = sessionState(cur.sessionId);
+  const st = chatState(cur.sessionId);
   const elsewhere = !cur.isNew && state.sessions.find(s => s.sessionId === cur.sessionId)?.elsewhere;
-  $("#chat-sub").textContent = `${shortPath(cur.cwd)}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
+  const ds = typeof chatEngine === "function" && chatEngine(cur.sessionId) === "deepseek" ? " · DeepSeek" : "";
+  // a worker says so (the drawer has it under the chat that started it; Android back returns there)
+  const worker = !cur.isNew && typeof workerParentOf === "function" && workerParentOf(cur.sessionId) ? (ds ? " worker" : " · Claude worker") : "";
+  const prof = typeof profileMany === "function" && profileMany() ? profileOfCwd(cur.cwd) : null;
+  // a chat on another device names it first (environments.js); the device and profile keep their width
+  // (up to 14 characters each), while the folder shrinks with an ellipsis at its start
+  const env = typeof sessionEnvironment === "function" ? sessionEnvironment(cur.sessionId) : null;
+  const sub = $("#chat-sub");
+  sub.innerHTML = "";
+  const part = (text, cls) => {
+    const s = document.createElement("span"), str = String(text ?? "");
+    if (cls) s.className = cls;
+    if (cls === "cs-path") { const inner = document.createElement("span"); inner.dir = "ltr"; inner.textContent = str; s.append(inner); }
+    else s.textContent = str.replace(/^ /, "\u00a0");   // a flex item trims its own edge spaces
+    sub.append(s);
+  };
+  const sep = () => { const s = document.createElement("span"); s.className = "cs-sep"; s.textContent = "\u00a0·\u00a0"; sub.append(s); };
+  const bits = [];
+  if (env?.name) bits.push([env.name, "cs-env"]);
+  if (env?.name || shortPath(cur.cwd)) bits.push([shortPath(cur.cwd), "cs-path"]);
+  if (prof?.name) bits.push([prof.name, "cs-prof"]);
+  bits.forEach(([text, cls], i) => { if (i) sep(); part(text, cls); });
+  const tail = `${ds}${worker}${st === "running" ? " · working" : st === "waiting" ? " · needs approval" : elsewhere ? " · open in Termux" : ""}`;
+  if (tail) part(tail, "cs-tail");
+  if (typeof renderEnvNotice === "function") renderEnvNotice();
+  if (typeof renderTabs === "function") renderTabs();
 }
