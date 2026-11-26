@@ -7,7 +7,7 @@
 function currentSettings() {
   const cur = state.current || {}; const li = state.liveInfo[cur.sessionId];
   return { model: li?.model ?? cur.model ?? state.defaults.model ?? null, effort: li?.effort ?? cur.effort ?? state.defaults.effort ?? null,
-    permissionMode: li?.permissionMode ?? cur.permissionMode ?? state.defaults.permissionMode ?? "default" };
+    permissionMode: li?.permissionMode ?? cur.permissionMode ?? state.defaults.permissionMode ?? "default", engine: typeof chatEngine === "function" ? chatEngine() : "claude" };
 }
 /** claude-opus-5-5 → "Opus 5.5" (also with a date or [1m] suffix). */
 function prettyModel(id) {
@@ -16,6 +16,7 @@ function prettyModel(id) {
 }
 /** The model's real name, never "Default": the default resolves to the model it stands for. */
 function modelLabel(id) {
+  if (/^deepseek-/i.test(id || "") && typeof dsModelName === "function") return dsModelName(id);   // "DeepSeek Flash"
   if (!id || id === "default") { const def = state.models.find(x => x.value === "default"); if (!def?.resolvedModel) return "Model"; id = def.resolvedModel; }
   const m = state.models.find(x => x.value !== "default" && (x.value === id || x.resolvedModel === id));
   return m ? m.displayName : prettyModel(id);
@@ -24,18 +25,27 @@ function updateComposer() {
   const s = currentSettings();
   const mode = MODES.find(m => m.id === s.permissionMode) || MODES[0];
   const chipMode = $("#chip-mode"); chipMode.textContent = mode.short; chipMode.classList.toggle("warn", !!mode.warn || mode.id === "auto");
-  $("#chip-model").textContent = modelLabel(s.model) + (s.effort ? " · " + s.effort : "");
+  // in a DeepSeek chat the engine chip already says DeepSeek, so the model chip says just "Flash" (the row stays short)
+  const dsChat = s.engine === "deepseek" && typeof dsShortModel === "function";
+  $("#chip-model").textContent = (dsChat ? dsShortModel(s.model || dsDefaultModel()) : modelLabel(s.model)) + (s.effort ? " · " + s.effort : "");
+  if (dsChat) $("#chip-model").setAttribute("aria-label", "Model: " + modelLabel(s.model || dsDefaultModel()) + (s.effort ? ", effort " + s.effort : ""));
+  else $("#chip-model").removeAttribute("aria-label");
+  if (typeof renderEngineChip === "function") renderEngineChip();
+  if (typeof renderAccountChip === "function") renderAccountChip();
   const st = sessionState(state.current?.sessionId);
   const running = st === "running" || st === "waiting";
-  input.placeholder = running ? "Queue a message…" : "Message Claude…";
+  // a chat on a device that's away can't be sent to until it comes back (environments.js)
+  const env = typeof sessionEnvironment === "function" ? sessionEnvironment(state.current?.sessionId) : null;
+  const away = !!env && env.offline;
+  input.placeholder = away ? `${env.name} is offline` : running ? "Queue a message…" : s.engine === "deepseek" ? "Message DeepSeek…" : "Message Claude…";
   const send = $("#btn-send");
   const hasText = input.value.trim() || attachments.length;
-  send.classList.toggle("stop", running && !hasText);
-  send.innerHTML = icon(running && !hasText ? "stop" : "up");
-  send.disabled = !running && !hasText;
-  send.setAttribute("aria-label", running && !hasText ? "Stop" : "Send");
+  send.classList.toggle("stop", running && !hasText && !away);
+  send.innerHTML = icon(running && !hasText && !away ? "stop" : "up");
+  send.disabled = away || (!running && !hasText);
+  send.setAttribute("aria-label", running && !hasText && !away ? "Stop" : "Send");
   renderActivity();
-  if (typeof renderAgentsLine === "function") renderAgentsLine();
+  if (typeof renderTabs === "function") renderTabs();
 }
 function setStatus(text, spin = true) {
   const el = $("#status-line");
@@ -48,6 +58,9 @@ input.addEventListener("keydown", e => {
   if (!$("#popup").hidden && popupKey(e)) return;
   if (e.key === "Enter" && !e.shiftKey && (settings.enterToSend || e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
 });
+// A tap on Send must not take focus out of the field (Android would drop the keyboard); the click still sends,
+// and the same button still stops a running reply (#57).
+$("#btn-send").addEventListener("pointerdown", e => e.preventDefault());
 $("#btn-send").onclick = () => {
   const st = sessionState(state.current?.sessionId);
   if ((st === "running" || st === "waiting") && !input.value.trim() && !attachments.length) return interrupt();
@@ -60,36 +73,53 @@ async function interrupt() {
     if (/not (running|live|open)|no live/i.test(e.message)) { delete state.liveInfo[state.current.sessionId]; updateComposer(); toast("Already stopped"); } else toast(e.message);
   }
 }
+let sending = false;   // one message at a time: the draft stays in the field until the server has it (#62e)
 async function send(textOverride) {
+  if (sending) return;
   const cur = state.current;
   let text = (textOverride ?? input.value).trim();
   if (!text && !attachments.length) return;
   if (!conn.ok) return toast("Not connected to the server yet");
+  const env = typeof sessionEnvironment === "function" ? sessionEnvironment(cur.sessionId) : null;
+  if (env?.offline) return toast(`${env.name} is offline`, 4000);   // the chat comes back when it's on
   haptic("tick");
+  const draft = textOverride === undefined ? input.value : null;   // what leaves the field once the send lands
   const images = attachments.filter(a => a.kind === "image").map(a => ({ mediaType: a.mediaType, data: a.data }));
+  const wasNew = cur.isNew;
   const files = attachments.filter(a => a.kind === "file");
+  sending = true;
+  if (textOverride === undefined) input.focus({ preventScroll: true });   // the keyboard stays up while the send is in flight
   try {
     if (files.length) {
       const paths = [];
       for (const f of files) { const r = await conn.call("upload", { cwd: cur.cwd, name: f.name, data: f.data }); paths.push(r.path); }
       text = (text ? text + "\n\n" : "") + paths.map(p => `Attached file: @${p}`).join("\n");
     }
-    if (textOverride === undefined) { input.value = ""; attachments = []; renderAttachments(); autosize(); }
     $("#popup").hidden = true;
     hideEmpty();
     const s = currentSettings();
-    const msg = { sessionId: cur.sessionId, text, images };
+    // The uuid makes a resend after a dropped connection harmless: the server accepts it once (#62e).
+    const msg = { sessionId: cur.sessionId, text, images, uuid: uuid() };
     // A new chat, or one whose process was closed (idle, restart): start it with what the composer shows.
     if (cur.isNew || !state.liveInfo[cur.sessionId]) Object.assign(msg, { model: s.model || undefined, effort: s.effort || undefined, permissionMode: s.permissionMode });
-    if (cur.isNew) msg.cwd = cur.cwd;
-    if (cur.isNew) { cur.isNew = false; cur.title = text.slice(0, 60); updateHeader(); }
+    if (cur.isNew) {
+      msg.cwd = cur.cwd; msg.engine = s.engine || "claude";
+      // with several Claude accounts, the chip's pick (or the default) runs this new chat; another device has its own accounts
+      if (state.accounts?.length >= 2 && !(typeof envIdOf === "function" && envIdOf(cur.sessionId))) { msg.account = state.newChatAccount || state.defaultAccount; cur.account = msg.account; }
+    }
     await conn.call("send", msg);
+    // The server has it: only now is this chat no longer new, and only now does the draft leave the field.
+    if (wasNew) { cur.isNew = false; cur.title = text.slice(0, 60); if (msg.account) cur.account = msg.account; updateHeader(); }
+    if (draft !== null && input.value === draft) { input.value = ""; attachments = []; renderAttachments(); autosize(); input.focus({ preventScroll: true }); }
     scrollToBottom(true);
     debouncedRefresh();
   } catch (e) {
     if (e.code === "BUSY_ELSEWHERE") return busySheet(e, text, images);
+    if (wasNew && cur === state.current) showEmpty();   // the first message never landed: still a new chat
+    restoreDraft(text);
+    if (/^(NO_DEEPSEEK_KEY|ENGINE_FIXED|FOLDER_BLOCKED)$/.test(e.code || "")) return toast(e.message, 5000);
     toast(e.message); chat.note("Couldn't send: " + e.message, true);
-  }
+  } finally { sending = false; }
 }
 
 // The chat is open in another Claude Code process (a terminal or background session): ask how to continue.
@@ -128,7 +158,7 @@ function busySheet(e, text, images) {
   });
   b.querySelector('[data-a="cancel"]').onclick = () => { sheet.close(true); restoreDraft(text); };
 }
-function restoreDraft(text) { if (text && !input.value) { input.value = text; autosize(); } }
+function restoreDraft(text) { if (text && !input.value) { input.value = text; autosize(); input.focus({ preventScroll: true }); } }
 
 // attachments
 $("#btn-attach").onclick = () => menuSheet("Attach", [
@@ -147,8 +177,9 @@ async function addFiles(files) {
     attachments.push({ kind: isImg ? "image" : "file", name: f.name, mediaType: f.type || "application/octet-stream", data, size: f.size });
   }
   renderAttachments(); updateComposer();
+  if (typeof dsImageNote === "function") dsImageNote();
 }
-callbacks.photo = p => { if (p?.data) { attachments.push({ kind: "image", name: p.name || "photo.jpg", mediaType: p.mediaType || "image/jpeg", data: p.data }); renderAttachments(); updateComposer(); } };
+callbacks.photo = p => { if (p?.data) { attachments.push({ kind: "image", name: p.name || "photo.jpg", mediaType: p.mediaType || "image/jpeg", data: p.data }); renderAttachments(); updateComposer(); if (typeof dsImageNote === "function") dsImageNote(); } };
 function renderAttachments() {
   const box = $("#attachments"); box.innerHTML = ""; box.hidden = !attachments.length;
   attachments.forEach((a, i) => {
@@ -188,7 +219,9 @@ const updatePopup = debounce(async () => {
       .map(c => ({ label: "/" + c.name + (c.argumentHint ? " " + c.argumentHint : ""), desc: c.description, insert: "/" + c.name + " " }));
     popupCtx = { start: 0, end: pos };
   } else if (at) {
-    try { const r = await conn.call("fs.search", { cwd: state.current.cwd, q: at[1] });
+    // a chat on another device searches that machine's files (environments.js)
+    const env = typeof currentEnvId === "function" ? currentEnvId() : null;
+    try { const r = await conn.call("fs.search", env ? { cwd: state.current.cwd, q: at[1], env } : { cwd: state.current.cwd, q: at[1] });
       popupItems = r.results.map(x => ({ label: x.path + (x.dir ? "/" : ""), desc: x.dir ? "folder" : "", insert: "@" + x.path + (x.dir ? "/" : " ") }));
     } catch { popupItems = []; }
     popupCtx = { start: pos - at[1].length - 1, end: pos };
@@ -222,18 +255,19 @@ function popupKey(e) {
 
 // ───────────── mode / model pickers ─────────────
 $("#chip-mode").onclick = () => {
-  const cur = currentSettings();
-  const b = sheet.open(`<h2>Permission mode</h2><div class="sub">How much Claude can do without asking.</div><div id="modes"></div>`);
-  for (const m of MODES) {
-    const o = h(`<button class="opt ${m.id === cur.permissionMode ? "on" : ""}">${icon(m.id === cur.permissionMode ? "ccheck" : "circle")}<div class="ot"><div>${esc(m.label)}</div><div class="od">${esc(m.desc)}</div></div></button>`);
+  const cur = currentSettings(), who = cur.engine === "deepseek" ? "DeepSeek" : "Claude";
+  const b = sheet.open(`<h2>Permission mode</h2><div class="sub">How much ${who} can do without asking.</div><div id="modes"></div>`);
+  for (const m of MODES.filter(m => m.id !== "auto" || cur.engine !== "deepseek")) {
+    const o = h(`<button class="opt ${m.id === cur.permissionMode ? "on" : ""}">${icon(m.id === cur.permissionMode ? "ccheck" : "circle")}<div class="ot"><div>${esc(m.label)}</div><div class="od">${esc(m.desc.replace(/^Claude\b/, who))}</div></div></button>`);
     o.onclick = async () => {
-      if (m.id === "bypassPermissions" && !await confirmSheet({ title: "Bypass all permissions?", text: "Claude will run any command and edit any file without asking.", ok: "Bypass", danger: true })) return;
+      if (m.id === "bypassPermissions" && !await confirmSheet({ title: "Bypass all permissions?", text: `${who} will run any command and edit any file without asking.`, ok: "Bypass", danger: true })) return;
       sheet.close(true); applySetting({ permissionMode: m.id });
     };
     b.querySelector("#modes").append(o);
   }
 };
 $("#chip-model").onclick = () => {
+  if (currentSettings().engine === "deepseek" && typeof dsModelSheet === "function") return dsModelSheet();
   const cur = currentSettings();
   const models = state.models.length ? state.models : [{ value: "", displayName: "Default", description: "Start a chat once to load the model list" }];
   const b = sheet.open(`<h2>Model</h2><div id="models"></div><h2 style="margin-top:16px">Effort</h2><div class="sub">Higher effort thinks longer and uses more of your limits.</div><div class="seg" id="efforts"></div>`);

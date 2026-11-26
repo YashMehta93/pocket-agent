@@ -25,10 +25,29 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: cd server && npm ci --omit=optional --no-audit --no-fund
       - name: Syntax
-        run: for f in server/src/*.js app/assets/ui/js/*.js scripts/*.mjs; do node --check "$f"; done
+        run: for f in server/src/*.js server/bin/*.mjs app/assets/ui/js/*.js scripts/*.mjs; do node --check "$f"; done
       - run: npm run test:extras
       - run: npm run test:services
+      - run: npm run test:platform
+      - run: npm run test:deepseek   # unit part; the end-to-end part needs Claude Code, which CI doesn't install yet
       - run: npm run test:setup
+
+  # The server on a Windows computer (server/src/platform.js, server/bin/pocket-agent.mjs): no Claude, no network.
+  windows:
+    name: windows
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - run: cd server && npm ci --omit=optional --ignore-scripts --no-audit --no-fund
+        shell: bash
+      - name: Syntax
+        shell: bash
+        run: for f in server/src/*.js server/bin/*.mjs; do node --check "$f"; done
+      - name: Platform helpers, and the server under pocket-agent.mjs
+        run: node server/test/platform.test.mjs
 
   apk:
     name: apk

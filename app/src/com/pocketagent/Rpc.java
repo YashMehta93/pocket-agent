@@ -27,9 +27,13 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * Every native capability, behind one method-name dispatcher. Called by:
@@ -57,6 +61,15 @@ final class Rpc {
         "runtime.status", "runtime.install", "runtime.auth", "runtime.login.start", "runtime.login.code", "runtime.logs",
         "runtime.restart", "runtime.start", "runtime.reset", "runtime.exec", "mode.set",
     };
+
+    /**
+     * The only methods a server chosen in Settings → "Claude runs on" (another machine) may call.
+     * Everything else can touch the phone or its built-in Linux (files, clipboard, intents, the runtime),
+     * so only the phone's own server may ask for it; a remote one gets notifications only. Checked in
+     * NotifyService before every SSE "rpc" event. See issue #65.
+     */
+    static final Set<String> REMOTE_ALLOWED = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+        "capabilities", "notify", "notify.cancel", "toast", "vibrate")));
 
     private Rpc() {}
 

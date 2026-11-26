@@ -25,8 +25,12 @@ import java.net.URLEncoder;
  * so notification content and phone features evolve on the server without app updates.
  */
 public class NotifyService extends Service {
+    private static final long SINCE_SAVE_MS = 5_000;
     private volatile boolean running = false;
     private Thread worker;
+    // The time of the last event this service handled; sent on reconnect so the server replays only newer "done"s (#62f).
+    private volatile long since = 0;
+    private long sinceSaved = 0;
 
     @Override public IBinder onBind(Intent i) { return null; }
 
@@ -39,20 +43,28 @@ public class NotifyService extends Service {
             if (android.os.Build.VERSION.SDK_INT >= 34) startForeground(Notifier.ID_STATUS, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
             else startForeground(Notifier.ID_STATUS, n);
         } catch (Exception e) { /* no notification permission yet: keep running in the background */ }
-        if (!running) { running = true; worker = new Thread(this::loop, "pa-sse"); worker.start(); }
+        if (!running) {
+            since = Prefs.sseSince(this); sinceSaved = since;
+            running = true; worker = new Thread(this::loop, "pa-sse"); worker.start();
+        }
         // This foreground service also keeps the built-in server alive while the app is in the background.
         if (Prefs.standalone(this) && Linux.installed(this)) Linux.startServer(this);
         return START_STICKY;
     }
 
-    @Override public void onDestroy() { running = false; if (worker != null) worker.interrupt(); super.onDestroy(); }
+    @Override public void onDestroy() {
+        running = false; if (worker != null) worker.interrupt();
+        Prefs.setSseSince(this, since);
+        super.onDestroy();
+    }
 
     private void loop() {
         long backoff = 2000;
         while (running) {
             HttpURLConnection c = null;
             try {
-                String url = Prefs.server(this) + "/events?v=2&api=" + Rpc.API_VERSION + "&token=" + URLEncoder.encode(Prefs.serverToken(this), "UTF-8");
+                // since: the server replays only "done"s newer than the last event we handled, so a reconnect doesn't notify twice (#62f)
+                String url = Prefs.server(this) + "/events?v=2&api=" + Rpc.API_VERSION + "&since=" + since + "&token=" + URLEncoder.encode(Prefs.serverToken(this), "UTF-8");
                 c = (HttpURLConnection) new URL(url).openConnection();
                 c.setConnectTimeout(3000); c.setReadTimeout(70_000);
                 if (c.getResponseCode() != 200) throw new Exception("HTTP " + c.getResponseCode());
@@ -73,19 +85,31 @@ public class NotifyService extends Service {
     }
 
     private void handle(JSONObject ev) {
+        if (ev == null) return;
         switch (ev.optString("type")) {
             case "notify": { JSONObject spec = ev.optJSONObject("spec"); if (spec != null) Notifier.show(this, spec); break; }
             case "cancel": Notifier.cancel(this, ev.optString("id")); break;
             case "batch": { JSONArray a = ev.optJSONArray("events"); if (a != null) for (int i = 0; i < a.length(); i++) handle(a.optJSONObject(i)); break; }
             case "rpc": {
                 final String id = ev.optString("id");
-                Rpc.call(this, ev.optString("method"), ev.optJSONObject("params"), new Rpc.Done() {
+                final String method = ev.optString("method");
+                // The phone's own server may run any capability; a server chosen in Settings (another machine)
+                // only notifications, so a compromised or hostile remote server can't drive the phone. See #65.
+                if (!Prefs.standalone(this) && !Rpc.REMOTE_ALLOWED.contains(method)) {
+                    postResult(id, null, "Not allowed from another server");
+                    break;
+                }
+                Rpc.call(this, method, ev.optJSONObject("params"), new Rpc.Done() {
                     @Override public void ok(Object result) { postResult(id, result, null); }
                     @Override public void err(String message) { postResult(id, null, message); }
                 });
                 break;
             }
         }
+        // Remember the last event handled, so a reconnect asks only for what it missed (saved now and then, not per event).
+        long now = System.currentTimeMillis();
+        since = now;
+        if (now - sinceSaved >= SINCE_SAVE_MS) { sinceSaved = now; Prefs.setSseSince(this, now); }
     }
 
     private void postResult(String id, Object result, String error) {

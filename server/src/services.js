@@ -6,8 +6,8 @@
 //   CLI: pa-service (server/devtools/pa-service); requests: services.* (docs/PROTOCOL.md)
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { DATA, HOME, log } from "./config.js";
+import { shellSpawn, killTree } from "./platform.js";
 
 const FILE = path.join(DATA, "services.json");
 const LOGS = path.join(DATA, "services");
@@ -28,7 +28,7 @@ function start(svc) {
   const fd = fs.openSync(lf, "a");
   fs.writeSync(fd, `\n── ${new Date().toISOString()} starting: ${svc.cmd}\n`);
   // Its own process group, so stopping it also stops whatever it started (npm → node, etc.).
-  const child = spawn("/bin/sh", ["-c", svc.cmd], { cwd: svc.cwd || HOME, detached: true, stdio: ["ignore", fd, fd], env: process.env });
+  const child = shellSpawn(svc.cmd, { cwd: svc.cwd || HOME, detached: true, stdio: ["ignore", fd, fd], env: process.env });
   fs.closeSync(fd);
   Object.assign(r, { child, startedAt: Date.now(), state: "running" });
   child.on("exit", (code, signal) => {
@@ -48,7 +48,7 @@ function stop(name) {
   const r = running.get(name);
   if (!r) return;
   r.state = "stopped"; clearTimeout(r.timer);
-  if (r.child) { try { process.kill(-r.child.pid, "SIGTERM"); } catch { try { r.child.kill("SIGTERM"); } catch {} } }
+  if (r.child) killTree(r.child, "SIGTERM");   // its process group on POSIX, taskkill /T on Windows
 }
 
 /** Starts every enabled service. Called once when the server starts. */

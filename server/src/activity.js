@@ -20,7 +20,13 @@ const TOOL_VERBS = {
   NotebookEdit: "Editing a notebook", Glob: "Finding files", Grep: "Searching code", WebFetch: "Fetching a web page",
   WebSearch: "Searching the web", TodoWrite: "Updating the task list", Task: "Starting a subagent", Agent: "Starting a subagent",
   Skill: "Using a skill", AskUserQuestion: "Asking you a question", ExitPlanMode: "Presenting a plan",
+  // Pocket Agent's own tools (delegate.js): the call lasts as long as the worker chat's turn
+  mcp__pocket__deepseek_task: "DeepSeek is working", mcp__pocket__claude_task: "Claude is working",
 };
+// ...but before the person allows the call, nothing is working yet
+const ASK_VERBS = { mcp__pocket__deepseek_task: "Send to DeepSeek", mcp__pocket__claude_task: "Ask Claude" };
+const isDelegation = name => name === "mcp__pocket__deepseek_task" || name === "mcp__pocket__claude_task";
+const firstLine = s => (String(s || "").split("\n").map(l => l.trim()).find(Boolean) || "").slice(0, 60);
 export const toolVerb = name => TOOL_VERBS[name] || (name.startsWith("mcp__") ? `Using ${name.split("__")[1]}` : `Using ${name}`);
 
 /** One line describing a tool call, e.g. the command or the file path. */
@@ -37,7 +43,31 @@ export function toolDetail(name, input) {
     case "Task": case "Agent": return input.description || "";
     case "TodoWrite": { const t = (input.todos || []).find(x => x.status === "in_progress"); return t ? t.activeForm || t.content : ""; }
     case "Skill": return input.skill || "";
+    case "mcp__pocket__deepseek_task": case "mcp__pocket__claude_task": return input.title || firstLine(input.task);
     default: { const v = Object.values(input).find(x => typeof x === "string"); return v ? v.slice(0, 160) : ""; }
+  }
+}
+
+/**
+ * What an approval asks, said of a worker: "wants to run npm test", "wants to edit README.md", "has a question".
+ * Notifications put it after the worker's name ("DeepSeek · Add README wants to run npm test"); the app words it the same.
+ * A command longer than one short line is "a command": the notification's text shows it whole.
+ */
+export function askPhrase(name, input = {}) {
+  const i = input && typeof input === "object" ? input : {};
+  const base = p => String(p || "").replace(/\/+$/, "").split("/").pop();
+  switch (name) {
+    case "Bash": { const c = String(i.command || "").trim(); return c && !c.includes("\n") && c.length <= 40 ? `wants to run ${c}` : "wants to run a command"; }
+    case "Edit": case "MultiEdit": return `wants to edit ${base(i.file_path) || "a file"}`;
+    case "NotebookEdit": return `wants to edit ${base(i.notebook_path) || "a notebook"}`;
+    case "Write": return `wants to write ${base(i.file_path) || "a file"}`;
+    case "Read": return `wants to read ${base(i.file_path) || "a file"}`;
+    case "WebFetch": { let host = ""; try { host = new URL(i.url).hostname; } catch {} return host ? `wants to open ${host}` : "wants to open a web page"; }
+    case "WebSearch": return "wants to search the web";
+    case "Glob": case "Grep": return "wants to search files";
+    case "AskUserQuestion": return "has a question";
+    case "ExitPlanMode": return "has a plan ready";
+    default: return name.startsWith("mcp__") ? `wants to use ${name.split("__").slice(1).join(" ")}` : `wants to use ${name}`;
   }
 }
 
@@ -58,6 +88,7 @@ function lastSentence(text) {
 }
 
 export class Activity {
+  who = "Claude";   // the engine's name in labels; LiveSession sets "DeepSeek" for DeepSeek chats
   constructor(onChange) {
     this.onChange = onChange;
     this.timer = null;
@@ -97,8 +128,8 @@ export class Activity {
     this.changed(true);
   }
 
-  approval(toolName, input) { this.set("approval", "Waiting for your approval", `${toolVerb(toolName)}: ${toolDetail(toolName, input)}`); this.changed(true); }
-  approvalDone(allowed) { if (this.s.phase === "approval") this.set("waiting", allowed ? "Approved, continuing" : "Denied, telling Claude"); }
+  approval(toolName, input) { this.set("approval", "Waiting for your approval", `${ASK_VERBS[toolName] || toolVerb(toolName)}: ${toolDetail(toolName, input)}`); this.changed(true); }
+  approvalDone(allowed) { if (this.s.phase === "approval") this.set("waiting", allowed ? "Approved, continuing" : `Denied, telling ${this.who}`); }
 
   /** Feed every SDK message through here. */
   feed(m) {
@@ -127,12 +158,12 @@ export class Activity {
 
   system(m) {
     switch (m.subtype) {
-      case "init": if (this.s.phase === "starting" || this.s.phase === "sending") this.set("waiting", "Waiting for Claude"); break;
+      case "init": if (this.s.phase === "starting" || this.s.phase === "sending") this.set("waiting", `Waiting for ${this.who}`); break;
       case "status":
         if (m.status === "compacting") this.set("compacting", "Compacting the conversation", "Summarizing older messages to free up context");
-        else if (m.status === "requesting" && !["thinking", "writing", "tool"].includes(this.s.phase)) this.set("waiting", "Waiting for Claude");
+        else if (m.status === "requesting" && !["thinking", "writing", "tool"].includes(this.s.phase)) this.set("waiting", `Waiting for ${this.who}`);
         break;
-      case "api_retry": this.set("retrying", "Claude is busy, retrying", `Attempt ${m.attempt} of ${m.max_retries}${m.error_status ? ` (HTTP ${m.error_status})` : ""}, next try in ${Math.round((m.retry_delay_ms || 0) / 1000)}s`); break;
+      case "api_retry": this.set("retrying", `${this.who} is busy, retrying`, `Attempt ${m.attempt} of ${m.max_retries}${m.error_status ? ` (HTTP ${m.error_status})` : ""}, next try in ${Math.round((m.retry_delay_ms || 0) / 1000)}s`); break;
       case "thinking_tokens": this.s.tokens.thinking = m.estimated_tokens || this.s.tokens.thinking; if (this.s.phase === "thinking") this.changed(); break;
       case "task_started": {
         const st = this.step("subagent", m.description || "Subagent", m.subagent_type || "");
@@ -162,7 +193,7 @@ export class Activity {
   stream(m) {
     const e = m.event; if (!e) return;
     const sub = !!m.parent_tool_use_id;
-    if (e.type === "message_start") { this.blocks.clear(); if (!sub && this.s.phase !== "approval") this.set("waiting", "Waiting for Claude"); return; }
+    if (e.type === "message_start") { this.blocks.clear(); if (!sub && this.s.phase !== "approval") this.set("waiting", `Waiting for ${this.who}`); return; }
     if (e.type === "content_block_start") {
       const b = e.content_block || {};
       const blk = { kind: b.type, text: "", toolId: b.id, name: b.name, json: "" };
@@ -182,6 +213,7 @@ export class Activity {
         blk.json += d.partial_json || "";
         const n = blk.name;
         const hint = n === "Bash" ? partialField(blk.json, "command") : n === "Write" ? `${partialField(blk.json, "file_path")} · ${(blk.json.match(/\\n/g) || []).length + 1} lines`
+          : isDelegation(n) ? partialField(blk.json, "title") || firstLine(partialField(blk.json, "task"))
           : partialField(blk.json, "file_path") || partialField(blk.json, "pattern") || partialField(blk.json, "description") || partialField(blk.json, "url") || partialField(blk.json, "query");
         if (hint) { this.s.detail = hint; this.changed(); }
       }
@@ -211,7 +243,7 @@ export class Activity {
       this.finish(this.toolSteps.get(b.tool_use_id), b.is_error ? "err" : "ok");
       any = true;
     }
-    if (any && !m.parent_tool_use_id && this.s.phase !== "approval") this.set("waiting", "Waiting for Claude", "Reading the results");
+    if (any && !m.parent_tool_use_id && this.s.phase !== "approval") this.set("waiting", `Waiting for ${this.who}`, "Reading the results");
     else if (any) this.changed();
   }
 }

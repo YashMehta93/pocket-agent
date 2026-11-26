@@ -7,16 +7,29 @@ import { toNative } from "./notify.js";
 export const clients = new Set();     // WebSocket connections, each with ws.subs = Set<sessionId>
 export const sseClients = new Set();  // { res, v, api }: v=1 legacy app (raw events), v=2 generic shell (specs + rpc)
 
+/** What a paired device's socket may see: a chat's live state and the chat list. Everything else is the owner's
+ *  (accounts, usage, settings, updates, services…). Kept here so broadcast() needs no import from devices.js. */
+export const DEVICE_EVENTS = new Set(["ev", "state", "activity", "permission.request", "permission.resolved", "tasks", "sessions.changed", "link"]);
+// A device limited to folders (#72): roots.js registers the check here, because this file must not import
+// live-session.js (which imports it). Without one, every DEVICE_EVENT goes through, as before.
+let eventFilter = null;
+export const setEventFilter = fn => { eventFilter = fn; };
+const sees = (c, msg) => {
+  if (c.principal?.kind !== "device") return true;
+  if (!DEVICE_EVENTS.has(msg.t)) return false;
+  return eventFilter ? eventFilter(c.principal, msg) : true;
+};
+
 /** Send to clients subscribed to msg.sessionId (or to everyone if the message has no sessionId). */
 export function broadcast(msg) {
   const s = JSON.stringify(msg);
-  for (const c of clients) if (c.readyState === 1 && (!msg.sessionId || c.subs.has(msg.sessionId))) c.send(s);
+  for (const c of clients) if (c.readyState === 1 && sees(c, msg) && (!msg.sessionId || c.subs.has(msg.sessionId))) c.send(s);
 }
 
 /** Send to every connected client. */
 export function broadcastAll(msg) {
   const s = JSON.stringify(msg);
-  for (const c of clients) if (c.readyState === 1) c.send(s);
+  for (const c of clients) if (c.readyState === 1 && sees(c, msg)) c.send(s);
 }
 
 const sse = (res, obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);

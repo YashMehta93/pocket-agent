@@ -11,11 +11,10 @@ function enhanceMd(el) {
     const pre = code.parentElement;
     if (pre.querySelector(".code-head")) return;
     const lang = (code.className.match(/language-([\w+#-]+)/) || [])[1] || "";
-    try {
-      if (lang && hljs.getLanguage(lang)) code.innerHTML = hljs.highlight(code.textContent, { language: lang, ignoreIllegals: true }).value;
-      else if (code.textContent.length < 20000) hljs.highlightElement(code);
-    } catch {}
-    const head = h(`<div class="code-head"><span>${esc(lang || "text")}</span><button>Copy</button></div>`);
+    const known = lang && hljs.getLanguage(lang);
+    // only a fence that names a language hljs knows is highlighted; anything else stays plain text
+    try { if (known) code.innerHTML = hljs.highlight(code.textContent, { language: lang, ignoreIllegals: true }).value; } catch {}
+    const head = h(`<div class="code-head"><span>${esc(known ? lang : "TEXT")}</span><button>Copy</button></div>`);
     head.querySelector("button").onclick = () => copyText(code.textContent);
     pre.prepend(head);
   });
@@ -25,7 +24,7 @@ function setMd(el, text) { el.innerHTML = mdToHtml(text); enhanceMd(el); }
 
 const TOOL_ICON = { Bash: "terminal", BashOutput: "terminal", KillShell: "terminal", Read: "eye", Write: "file", Edit: "pencil", MultiEdit: "pencil",
   NotebookEdit: "pencil", Glob: "search", Grep: "search", WebFetch: "globe", WebSearch: "globe", TodoWrite: "list", Task: "bot", Agent: "bot",
-  ExitPlanMode: "plan", AskUserQuestion: "question", Skill: "bolt", LSP: "search" };
+  ExitPlanMode: "plan", AskUserQuestion: "question", Skill: "bolt", LSP: "search", mcp__pocket__deepseek_task: "bot", mcp__pocket__claude_task: "bot" };
 /** Semantic colour of a tool: read (blue), edit (green), run (yellow). */
 const TOOL_KIND = { Read: "read", Glob: "read", Grep: "read", WebFetch: "read", WebSearch: "read", LSP: "read",
   Write: "edit", Edit: "edit", MultiEdit: "edit", NotebookEdit: "edit",
@@ -47,10 +46,13 @@ function toolSummary(name, inp = {}) {
     case "Skill": return inp.skill || inp.command || "";
     case "AskUserQuestion": return (inp.questions || [])[0]?.question || "";
     case "ExitPlanMode": return "Proposed plan";
+    case "mcp__pocket__deepseek_task": case "mcp__pocket__claude_task": return inp.title || (typeof dsFirstLine === "function" ? dsFirstLine(inp.task) : "");
     default: { const v = Object.values(inp).find(x => typeof x === "string"); return v ? v.slice(0, 120) : ""; }
   }
 }
 function prettyToolName(name) {
+  if (name === "mcp__pocket__deepseek_task") return "DeepSeek worker";
+  if (name === "mcp__pocket__claude_task") return "Claude worker";
   if (name.startsWith("mcp__")) { const p = name.split("__"); return `${p[1]}·${p.slice(2).join("__")}`; }
   return name === "Task" || name === "Agent" ? "Subagent" : name;
 }
@@ -100,20 +102,26 @@ function resultText(content) {
 function stripReminders(t) { return t.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim(); }
 
 class ChatView {
-  constructor(root) { this.root = root; this.reset(); }
+  /** opts.embedded: inside an agent's page (agents.js), so it leaves the chat's to-do bar, status line and scrolling
+   *  alone, and offers no edit or retry; opts.scroller() is then the element that scrolls it. */
+  constructor(root, opts = {}) { this.root = root; this.opts = opts; this.stick = true; this.reset(); }
+  get embedded() { return !!this.opts.embedded; }
+  scrollIfPinned() { if (!this.embedded) return scrollIfPinned(); const el = this.opts.scroller?.(); if (el && this.stick) el.scrollTop = el.scrollHeight; }
   reset() {
     this.root.innerHTML = "";
     this.tools = new Map();      // tool_use_id -> card
-    this.ghosts = new Map();     // `${msgId}:${index}` -> {el, kind, text}
-    this.streamTools = new Map(); // `${msgId}:${index}` -> {id, json} for tool calls being streamed
+    this.ghosts = new Map();     // `${parent || ""}:${msgId}:${index}` -> {el, md?, kind, text}
+    this.streamTools = new Map(); // the same key -> {id, json} for tool calls being streamed
+    this.curMsgByParent = new Map(); // parent_tool_use_id || "" -> the message id streaming there now
     this.order = [];             // message uuids in order (for fork/edit)
     this.userTexts = new Map();  // uuid -> text
     this.rendered = new Set();   // uuids already rendered
     this.renderedBlocks = new Set(); // `${msgId}:${blockKey}` already rendered
+    this.doneMsgs = new Set();    // message ids drawn whole: a replayed stream for one adds no second ghost
     this.todos = null;
     this.lastText = "";
     this.turnStart = null;
-    updateTodoBar(null);
+    if (!this.embedded) updateTodoBar(null);
   }
   get empty() { return !this.root.children.length; }
 
@@ -124,7 +132,8 @@ class ChatView {
   makeSub(card) { const d = document.createElement("div"); d.className = "subagent"; card.body.append(d); return d; }
 
   // ───── history (SessionMessage[]) ─────
-  loadHistory(messages) {
+  /** live: the chat is still at work (an agent's page), so its unfinished steps keep running */
+  loadHistory(messages, { live = false } = {}) {
     this.loadingHistory = true;   // history appears at once; only live messages animate in
     for (const m of messages) {
       if (m.uuid) this.order.push(m.uuid);
@@ -133,7 +142,8 @@ class ChatView {
       else if (m.type === "system") this.systemHistory(m);
     }
     this.finishGhosts();
-    for (const card of this.tools.values()) if (card.status === "run") this.setStatus(card, "unknown");
+    // a step with no result yet: still running in a live chat, cut off in an old one
+    for (const card of this.tools.values()) if (live ? card.status === "done" : card.status === "run") this.setStatus(card, live ? "run" : "unknown");
     this.loadingHistory = false;
     this.fresh = false;
   }
@@ -152,11 +162,13 @@ class ChatView {
       case "result": this.finishGhosts(); this.resultLine(ev); break;
       case "system": this.system(ev); break;
       case "pa_error": this.note("Error: " + ev.message, true); break;
+      case "pa_cost": this.costNote(ev.usd); break;
       case "tool_progress": { const c = this.tools.get(ev.tool_use_id); if (c && ev.elapsed_time_seconds) c.summaryEl.title = `${Math.round(ev.elapsed_time_seconds)}s`; break; }
     }
   }
   system(ev) {
     if (ev.subtype === "compact_boundary") this.divider("Conversation compacted");
+    else if (this.embedded) return;   // the status line and toasts belong to the chat on screen
     else if (ev.subtype === "local_command_output" && ev.content) this.note(ev.content);
     else if (ev.subtype === "informational" && ev.content) this.note(ev.content);
     else if (ev.subtype === "notification" && ev.text) toast(ev.text);
@@ -167,22 +179,29 @@ class ChatView {
 
   stream(ev) {
     const e = ev.event; if (!e) return;
-    if (e.type === "message_start") { this.curMsg = e.message?.id; this.curParent = ev.parent_tool_use_id; return; }
-    const key = `${this.curMsg}:${e.index}`;
+    const parentId = ev.parent_tool_use_id || null;
+    const pkey = parentId || "";
+    if (e.type === "message_start") { this.curMsgByParent.set(pkey, e.message?.id); return; }
+    // Each parent (the main chat, each subagent) has its own message streaming. Subagents interleave with the
+    // main reply, so a single "current message" would key their blocks under whichever message started last.
+    const msgId = this.curMsgByParent.get(pkey);
+    if (msgId == null) return;   // a block whose message start we missed: its final message draws it
+    const key = `${pkey}:${msgId}:${e.index}`;
     if (e.type === "content_block_start") {
+      if (this.doneMsgs.has(msgId)) return;   // the whole message is already drawn (the transcript overlapped the replay)
       const b = e.content_block;
       if (b.type === "text" || b.type === "thinking") {
         if (b.type === "text") {
           const el = h(`<div class="md ghost caret"></div>`);
-          this.container(this.curParent).append(el);
+          this.container(parentId).append(el);
           this.ghosts.set(key, { el, kind: "text", text: "" });
         } else {
-          const md = this.thoughtSlot(this.curParent, true);
+          const md = this.thoughtSlot(parentId, true);
           this.ghosts.set(key, { el: md.closest(".thinking"), md, kind: "thinking", text: "" });
         }
-        scrollIfPinned();
+        this.scrollIfPinned();
       } else if (b.type === "tool_use") {
-        if (!this.tools.has(b.id)) this.toolCard(b.id, b.name, {}, this.curParent, true);
+        if (!this.tools.has(b.id)) this.toolCard(b.id, b.name, {}, parentId, true);
         (this.streamTools ||= new Map()).set(key, { id: b.id, json: "" });
       }
     } else if (e.type === "content_block_delta") {
@@ -201,24 +220,49 @@ class ChatView {
     st.json += chunk;
     const card = this.tools.get(st.id); if (!card || Object.keys(card.input || {}).length) return;
     const field = f => { const m = st.json.match(new RegExp(`"${f}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`)); if (!m) return ""; try { return JSON.parse(`"${m[1].replace(/\\$/, "")}"`); } catch { return m[1]; } };
+    if (card.handoff) { const t = field("title") || field("task").split("\n").map(l => l.trim()).find(Boolean) || ""; if (t && t !== card.streamTitle) { card.streamTitle = t.slice(0, 80); handoffLine(card); } return; }
     let hint = card.name === "Bash" ? field("command") : shortPath(field("file_path")) || field("pattern") || field("description") || field("url") || field("query");
     if (card.name === "Write") hint = `${shortPath(field("file_path"))} · ${(st.json.match(/\\n/g) || []).length + 1} lines so far`;
     if (hint) card.summaryEl.textContent = hint;
   }
-  scheduleGhost(g) { if (g.t) return; g.t = setTimeout(() => { g.t = null; this.paintGhost(g); scrollIfPinned(); }, 70); }
+  scheduleGhost(g) { if (g.t) return; g.t = setTimeout(() => { g.t = null; this.paintGhost(g); this.scrollIfPinned(); }, 70); }
   paintGhost(g) {
     if (g.kind === "text") setMd(g.el, g.text);
-    else setMd(g.md, g.text || "…");
+    else { if (g.text.trim()) delete g.md.dataset.live; setMd(g.md, g.text || "…"); }
   }
-  finishGhosts() { for (const g of this.ghosts.values()) { clearTimeout(g.t); g.el.classList.remove("caret"); if (g.kind === "thinking") this.endThought(g.el); } this.ghosts.clear(); }
-  takeGhost(kind, parentId) {
-    for (const [k, g] of this.ghosts) if (g.kind === kind) { clearTimeout(g.t); this.ghosts.delete(k); return g; }
-    return null;
+  finishGhosts() {
+    const heads = new Set();
+    for (const g of this.ghosts.values()) {
+      clearTimeout(g.t);
+      g.el.classList.remove("caret");
+      if (g.kind !== "thinking") continue;
+      if (g.text.trim()) { delete g.md.dataset.live; if (g.md.isConnected) setMd(g.md, g.text); }
+      if (g.md.isConnected) heads.add(g.el);
+    }
+    this.ghosts.clear();
+    for (const head of heads) {
+      // a thought that never got a word is no entry (a withheld or redacted block with no summary)
+      head.querySelectorAll(".th-body > .md[data-live]").forEach(md => { if (!md.textContent.trim() || md.textContent.trim() === "…") md.remove(); });
+      if (!head.querySelector(".th-body > .md")) head.remove(); else this.endThought(head);
+    }
+  }
+  /** The live placeholder for exactly this block, or null: never another block's placeholder. */
+  takeGhost(kind, parentId, msgId, index) {
+    if (msgId == null) return null;
+    const exact = `${parentId || ""}:${msgId}:${index}`;
+    let key = this.ghosts.get(exact)?.kind === kind ? exact : null;
+    // the same block keyed under another parent (a reply replayed with a different parent) is still its own
+    if (!key) for (const [k, g] of this.ghosts) if (g.kind === kind && k.endsWith(`:${msgId}:${index}`)) { key = k; break; }
+    if (!key) return null;
+    const g = this.ghosts.get(key);
+    clearTimeout(g.t); this.ghosts.delete(key); return g;
   }
 
   // ───── assistant content ─────
   assistant(msg, parentId, uuid, history) {
-    if (!msg || !Array.isArray(msg.content)) return;
+    if (!msg) return;
+    if (msg.id) this.doneMsgs.add(msg.id);   // a later stream_event for this message (a replay overlap) is history
+    if (!Array.isArray(msg.content)) return;
     const parent = this.container(parentId);
     msg.content.forEach((b, i) => {
       const bkey = `${msg.id}:${b.type}:${b.id || i}:${(b.text || b.thinking || "").length}`;
@@ -227,18 +271,24 @@ class ChatView {
       this.fresh = true;
       if (b.type === "text") {
         if (!b.text?.trim()) return;
-        const g = !history && this.takeGhost("text");
+        const g = !history && this.takeGhost("text", parentId, msg.id, i);
         const el = g ? g.el : h(`<div class="md"></div>`);
         el.classList.remove("ghost", "caret");
         setMd(el, b.text);
         if (!g) parent.append(el);
         if (!parentId) this.lastText = b.text;
       } else if (b.type === "thinking" || b.type === "redacted_thinking") {
-        const g = !history && this.takeGhost("thinking");
         const text = b.thinking || "";
-        if (!text && !g) return;
+        const g = !history && this.takeGhost("thinking", parentId, msg.id, i);
+        if (!text) {
+          // Withheld (or redacted) thinking: no entry of its own. Its live slot, when there is one,
+          // stays empty for the summary that follows in this message.
+          if (g) g.el.classList.remove("caret");
+          return;
+        }
         const md = g ? g.md : this.thoughtSlot(parentId, false);
-        if (text) setMd(md, text);
+        delete md.dataset.live;
+        setMd(md, text);
         this.endThought(md.closest(".thinking"));
       } else if (b.type === "tool_use" || b.type === "server_tool_use") {
         const card = this.tools.get(b.id);
@@ -246,7 +296,7 @@ class ChatView {
         else this.toolCard(b.id, b.name, b.input || {}, parentId, !history);
       }
     });
-    scrollIfPinned();
+    this.scrollIfPinned();
   }
 
   // ───── user content (prompts + tool results) ─────
@@ -279,6 +329,8 @@ class ChatView {
     if (uuid && this.rendered.has(uuid)) return;
     if (uuid) { this.rendered.add(uuid); this.userTexts.set(uuid, text); }
     this.fresh = true;
+    const task = workerTask(text);
+    if (task && !images.length) return this.taskBlock(task);
     const wrap = h(`<div class="user-msg-wrap"><div class="user-msg"><div><div class="imgs"></div><div class="bubble ${isCmd ? "cmd-chip" : ""}"></div></div></div>
       <div class="msg-actions" hidden><button class="icon-btn sm" data-a="copy" data-icon="copy" aria-label="Copy"></button>${uuid ? `<button class="icon-btn sm" data-a="edit" data-icon="edit" aria-label="Edit"></button>` : ""}</div></div>`);
     wrap.querySelector(".bubble").textContent = text;
@@ -288,13 +340,23 @@ class ChatView {
     const acts = wrap.querySelector(".msg-actions");
     wrap.querySelector(".bubble").onclick = () => { acts.hidden = !acts.hidden; };
     acts.querySelector('[data-a="copy"]').onclick = () => copyText(text);
-    const ed = acts.querySelector('[data-a="edit"]'); if (ed) ed.onclick = () => editMessage(uuid, text);
+    const ed = acts.querySelector('[data-a="edit"]'); if (ed) { if (this.embedded) ed.remove(); else ed.onclick = () => editMessage(uuid, text); }
     this.root.append(wrap);
-    scrollToBottom();
+    if (this.embedded) this.scrollIfPinned(); else scrollToBottom();
+  }
+  /** "Task from “Plan the tidy-up”" with its first line; the whole task (Markdown) opens with a tap. */
+  taskBlock({ from, task, followUp }) {
+    const el = h(`<details class="task-msg"><summary><span class="tm-h"></span><span class="tm-first"></span></summary><div class="md"></div></details>`);
+    el.querySelector(".tm-h").textContent = (followUp ? "Follow-up from " : "Task from ") + (from ? "“" + from + "”" : "the calling chat");
+    el.querySelector(".tm-first").textContent = String(task).split("\n").map(l => l.replace(/^[#>*\-\s]+/, "").trim()).find(Boolean) || "";
+    setMd(el.querySelector(".md"), task);
+    this.root.append(el);
+    this.scrollIfPinned();
   }
 
   // ───── tool cards ─────
   toolCard(id, name, input, parentId, live) {
+    if (name.startsWith("mcp__pocket__") && typeof handoffLine === "function") return this.handoffCard(id, name, input, parentId, live);
     const el = h(`<details class="tool"><summary><span class="ti">${icon(TOOL_ICON[name] || (name.startsWith("mcp__") ? "bolt" : "terminal"))}</span>
       <span class="tn"></span><span class="ts"></span><span class="st ${live ? "spin" : ""}"></span></summary><div class="tb"></div></details>`);
     el.querySelector(".tn").textContent = prettyToolName(name);
@@ -307,17 +369,30 @@ class ChatView {
     if (name === "AskUserQuestion" || name === "ExitPlanMode") this.container(parentId).append(el); else this.place(el, parentId);
     return card;
   }
+  /** deepseek_task / claude_task: one quiet line where the handoff happened ("Sent to DeepSeek: Add README · done ›").
+   *  The card keeps the usual fields (detached) so results and statuses flow as for any tool. */
+  handoffCard(id, name, input, parentId, live) {
+    const el = h(`<div class="handoff"><button class="handoff-line"><span class="spark"></span><span class="hl-x"><span class="sl-t"></span><span class="hl-st"></span></span><span class="chev" aria-hidden="true">›</span></button></div>`);
+    const card = { id, name, input, el, body: document.createElement("div"), summaryEl: document.createElement("span"), stEl: document.createElement("span"), status: live ? "run" : "done", handoff: true };
+    el._card = card;
+    this.tools.set(id, card);
+    el.querySelector("button").onclick = () => { if (typeof openHandoff === "function") openHandoff(card); };
+    this.container(parentId).append(el);
+    this.fillToolInput(card);
+    return card;
+  }
   fillToolInput(card) {
     const { name, input } = card, body = card.body;
     card.summaryEl.textContent = toolSummary(name, input);
     if (card.el.isConnected) this.updateGroup(card.el.closest(".steps"));   // the line names what's running once its input arrives
+    if (card.handoff) return handoffLine(card);
     body.querySelector(".tin")?.remove();
     const box = document.createElement("div"); box.className = "tin";
     if (name === "Bash") { box.append(codeBlock("$ " + (input.command || ""), "bash", true)); }
     else if (name === "Edit") { const d = diffView(diffLines(input.old_string, input.new_string)); box.append(d.el); card.summaryEl.innerHTML = `${esc(shortPath(input.file_path))} <span class="diff-stat"><span class="p">+${d.add}</span> <span class="m">-${d.del}</span></span>`; }
     else if (name === "MultiEdit") { for (const e of input.edits || []) box.append(diffView(diffLines(e.old_string, e.new_string)).el); }
     else if (name === "Write") { const lines = (input.content || "").split("\n").length; card.summaryEl.textContent = `${shortPath(input.file_path)} · ${lines} lines`; if (input.content != null) box.append(codeBlock(input.content, langOf(input.file_path))); }
-    else if (name === "TodoWrite") { box.append(todoList(input.todos)); this.todos = input.todos; updateTodoBar(input.todos); }
+    else if (name === "TodoWrite") { box.append(todoList(input.todos)); this.todos = input.todos; if (!this.embedded) updateTodoBar(input.todos); }
     else if (name === "ExitPlanMode") { const m = document.createElement("div"); m.className = "md"; setMd(m, input.plan || ""); box.append(m); }
     else if (name === "Task" || name === "Agent") { if (input.prompt) { const l = h(`<div class="lbl">Task</div>`); box.append(l, codeBlock(input.prompt, "", true)); } }
     else if (name === "AskUserQuestion") { for (const q of input.questions || []) box.append(h(`<div class="q-block"><div class="qh">${esc(q.header || "")}</div><div>${esc(q.question)}</div></div>`)); }
@@ -332,6 +407,7 @@ class ChatView {
     card.body.querySelector(".tout")?.remove();
     const out = document.createElement("div"); out.className = "tout";
     const name = card.name;
+    if (card.handoff) { card.status = isErr ? "err" : "ok"; return handoffLine(card, text, isErr); }
     if (isErr) { out.append(h(`<div class="lbl">Error</div>`)); const p = codeBlock(text, "", true); p.classList.add("err-text"); out.append(p); }
     else if (name === "Edit" || name === "MultiEdit" || name === "Write") {
       const patch = structured?.structuredPatch;
@@ -352,6 +428,7 @@ class ChatView {
   }
   setStatus(card, s) {
     card.status = s;
+    if (card.handoff) return handoffLine(card);
     card.stEl.className = "st " + (s === "ok" ? "ok" : s === "err" ? "err" : "");
     card.stEl.innerHTML = s === "ok" ? icon("check") : s === "err" ? icon("x") : "";
     this.updateGroup(card.el.closest(".steps"));
@@ -366,9 +443,15 @@ class ChatView {
       head.querySelector("summary").addEventListener("click", () => delete head.dataset.auto);   // the person's choice sticks
       parent.append(head);
     }
-    const md = document.createElement("div"); md.className = "md";
-    head.querySelector(".th-body").append(md);
+    // Withheld thinking streams as an empty block and then a block with its summary. The summary fills the
+    // empty slot instead of adding a second entry to the same thought.
+    let md = head.querySelector(".th-body > .md:last-child");
+    if (!md?.dataset.live) {
+      md = document.createElement("div"); md.className = "md";
+      head.querySelector(".th-body").append(md);
+    }
     if (live) {
+      md.dataset.live = "1";
       head.classList.add("ghost");
       head.querySelector("summary span").textContent = "Thinking…";
       if (settings.showThinking && !head.open) { head.open = true; head.dataset.auto = "1"; }
@@ -379,7 +462,7 @@ class ChatView {
     if (!head) return;
     head.classList.remove("ghost");
     if (head.dataset.auto) { head.open = false; delete head.dataset.auto; }
-    const n = head.querySelectorAll(".th-body > .md").length;
+    const n = [...head.querySelectorAll(".th-body > .md")].filter(md => !md.dataset.live && md.textContent.trim()).length;
     head.querySelector("summary span").textContent = n > 1 ? `Thought · ${n} times` : "Thought";
   }
 
@@ -426,11 +509,17 @@ class ChatView {
     const text = this.lastText;
     line.querySelector('[data-a="copy"]').onclick = () => copyText(text);
     line.querySelector('[data-a="share"]').onclick = () => shareText(text);
-    line.querySelector('[data-a="retry"]').onclick = () => retryLast();
+    if (this.embedded) line.querySelector('[data-a="retry"]').remove(); else line.querySelector('[data-a="retry"]').onclick = () => retryLast();
     this.root.append(line);
-    scrollIfPinned();
+    this.scrollIfPinned();
   }
-  note(text, err) { this.root.append(h(`<div class="note ${err ? "err" : ""}">${esc(text)}</div>`)); scrollIfPinned(); }
+  /** A DeepSeek turn's estimated cost (the server's pa_cost event), on that turn's result line. */
+  costNote(usd) {
+    const line = [...this.root.querySelectorAll(":scope > .result-line")].pop();
+    if (!line || !(usd > 0) || line.querySelector(".cost")) return;
+    line.querySelector("span").insertAdjacentHTML("afterend", `<span class="cost" title="Estimated from token counts">≈ ${esc(typeof dsMoney === "function" ? dsMoney(usd) : "$" + usd.toFixed(3))}</span>`);
+  }
+  note(text, err) { this.root.append(h(`<div class="note ${err ? "err" : ""}">${esc(text)}</div>`)); this.scrollIfPinned(); }
   divider(text) { this.root.append(h(`<div class="divider">${esc(text)}</div>`)); }
 
   lastUserUuid() { for (let i = this.order.length - 1; i >= 0; i--) if (this.userTexts.has(this.order[i])) return this.order[i]; return null; }
@@ -438,13 +527,25 @@ class ChatView {
 
   toMarkdown() {
     const parts = [];
-    this.root.querySelectorAll(".user-msg-wrap, .md:not(.tool .md):not(.thinking .md), .tool").forEach(el => {
+    this.root.querySelectorAll(".user-msg-wrap, .md:not(.tool .md):not(.thinking .md):not(.task-msg .md), .tool, .handoff, .task-msg").forEach(el => {
       if (el.classList.contains("user-msg-wrap")) parts.push("**You:** " + el.querySelector(".bubble").textContent);
       else if (el.classList.contains("tool")) parts.push(`> ${el.querySelector(".tn").textContent}: ${el.querySelector(".ts").textContent}`);
+      else if (el.classList.contains("handoff")) parts.push("> " + el.querySelector(".handoff-line").textContent.replace(/›\s*$/, "").replace(/\s+/g, " ").trim());
+      else if (el.classList.contains("task-msg")) parts.push(`**${el.querySelector(".tm-h").textContent}:**\n\n` + el.querySelector(".md").innerText);
       else parts.push(el.innerText);
     });
     return parts.join("\n\n");
   }
+}
+
+/** The first message delegate.js sends a worker, or a follow-up: { from, task, followUp }, else null. */
+function workerTask(text) {
+  const t = String(text || "");
+  const m = /^\[Pocket Agent\] You're a (?:DeepSeek|Claude) worker\. The (?:DeepSeek|Claude) chat "(.*?)" sent you this task\b/.exec(t)
+    || /^\[Pocket Agent\] A follow-up from "(.*?)":\n/.exec(t);
+  const cut = t.indexOf("\n\n");
+  if (!m || cut < 0) return null;
+  return { from: m[1] === "untitled" || m[1] === "the calling chat" ? "" : m[1], task: t.slice(cut + 2), followUp: t.startsWith("[Pocket Agent] A follow-up") };
 }
 
 function updateTodoBar(todos) {

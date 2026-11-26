@@ -30,6 +30,14 @@ Pocket Agent is a phone UI for **Claude Code**. The model runs on Anthropic's se
 |---|---|---|---|
 | **Standalone** (default) | built into the app: Alpine Linux via proot (`Linux.java`) | started and supervised by the app, port 8790 | automatically, with the app's own token |
 | **Server** | Termux on this phone (set up by `server/devtools/termux-install.sh`, from Settings → Termux), or a computer | `pocket-agent start` (port 8765) | Settings → "Claude runs on" → address + token |
+| **Windows computer** | none: Windows itself, as a normal user (no admin); shell commands run in Git Bash | `node server/bin/pocket-agent.mjs start` (port 8765, `127.0.0.1` only) | through a link to the phone |
+
+**Windows** (`server/src/platform.js`):
+- **Supervisor:** `pocket-agent.mjs` runs `node.exe` under a small supervisor, with no admin rights or service. Exit code 75 means "start me again": Windows has no SIGUSR2, so restart-when-idle, updates and restored backups go through `requestRestart()`. The supervisor gives up after 5 crashes in 10 minutes instead of looping.
+- **Commands:** shell commands run in Git Bash (`PA_SHELL` picks another), `tar` is Windows' own `tar.exe` (Git's GNU tar reads `C:` as a remote host), and `npm` runs as `node npm-cli.js`.
+- **Claude Code:** found in `~/.local/bin`, on `PATH` or in the VS Code extension.
+- **Shared folders:** without Developer Mode there are no symlinks, so what an extra account or DeepSeek shares from `~/.claude` becomes junctions (folders) and refreshed copies (files). Removing an account folder never follows a junction.
+- **Listening:** the server listens on `127.0.0.1` only; reaching it from the phone is the link's job.
 
 In standalone mode Claude can still use Termux: `termux <command>` (`server/devtools/termux`) goes through the server to the app, which runs it with Termux's `RUN_COMMAND` service and returns the output.
 
@@ -66,7 +74,16 @@ Applying an update waits until no chat is mid-reply; then the app restarts the s
 - **UI served by the server**: UI fixes reach every installed app without a reinstall. The APK bundles a fallback copy. The UI reloads itself when `hello.uiVersion` changes.
 - **No Gradle / AndroidX**: the APK builds on the phone itself in seconds with `aapt2 → javac → d8 → apksigner` (`build.sh`). Keep Java dependency-free.
 - **Activity is computed server-side** (`activity.js`): one source of truth for the in-app activity bar and the Android notification.
-- **Token auth on localhost**: other apps on the phone can reach 127.0.0.1, so every endpoint except `/health` and `/ui/` needs the shared token.
+- **Token auth on localhost**: other apps on the phone can reach 127.0.0.1, so every endpoint except `/health` and `/ui/` needs the shared token. (`/deepseek/*` has its own per-chat tokens instead, see below.)
+
+## DeepSeek (a second engine)
+
+A chat runs on Claude or on DeepSeek, picked when it starts and kept for life (`engines.js` records it in `prefs.chatEngine`, and detects it from the transcript when there's no record). A DeepSeek chat is **Claude Code itself pointed at DeepSeek's Anthropic-compatible API**, DeepSeek's own recipe, so streaming, tools, approvals, history, resume, Stop and fork all work unchanged. The seam is `engineOptions()`: for DeepSeek it adds the env, model, effort, flag settings and a tripwire hook to the chat's `query()` options; for Claude it adds nothing.
+
+- **Key keeper** (`deepseek.js`, route `/deepseek/*`): a DeepSeek chat gets `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>/deepseek` and a random per-chat token, never the key. The route swaps the token for the real key, streams DeepSeek's answer back untouched (node:http, no timeouts), and reads the token counts on the side: spend per chat and per day (estimated at DeepSeek's peak or off-peak prices), and an optional daily limit (402 once reached). The key lives in `~/.pocket-agent/secrets/deepseek` (0600, folder 0700); only the server reads it.
+- **Config dir**: DeepSeek chats run with `CLAUDE_CONFIG_DIR=~/.pocket-agent/engines/deepseek/`, which has no Claude login. The owner's chats and memory (`projects/`), `CLAUDE.md`, `settings.json`, skills, agents, commands, output styles, rules and plugins are symlinked in from `~/.claude`, so a DeepSeek chat has the same context as a Claude chat and shows up in the same chat list. `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` keeps it from calling Anthropic, and inherited `ANTHROPIC_*` / OAuth variables are removed.
+- **Tripwire**: a `PreToolUse` hook in DeepSeek chats denies tool calls that mention secret files (the key, the app token, Claude's login, git and SSH credentials, signing keys). It's a guard, not a sandbox: everything in the phone's Linux runs as one user.
+- **Linked workers** (`delegate.js`): Pocket Agent's own MCP server (`pocket`) gives Claude chats `deepseek_task` and DeepSeek chats `claude_task`. Each call asks on the phone (unless the chat is in Bypass) and runs as its own linked chat on the other engine (`prefs.chatLinks`); its report goes back to the caller. LiveSession provides the hooks: `setToolProvider`, `waitTurn()`, `takeApproval()`.
 
 ## State on disk
 
@@ -75,7 +92,10 @@ Applying an update waits until no chat is mid-reply; then the app restarts the s
 | `~/.claude/projects/*/<id>.jsonl` | Claude Code | chat transcripts (source of truth for history) |
 | `~/.claude/sessions/*.json` | Claude Code | registry of running sessions (used to detect "open in Termux") |
 | `~/.pocket-agent/token` | server | shared secret with the app |
-| `~/.pocket-agent/prefs.json` | server | pinned chats, new-chat defaults |
+| `~/.pocket-agent/prefs.json` | server | pinned chats, new-chat defaults, per-chat settings, DeepSeek settings, each chat's engine (`chatEngine`) and worker links (`chatLinks`) |
+| `~/.pocket-agent/secrets/` | server | provider keys (`deepseek`), 0600 in a 0700 folder; never in backups |
+| `~/.pocket-agent/engines/deepseek/` | Claude Code (DeepSeek chats) | their `CLAUDE_CONFIG_DIR`: links to `~/.claude` items, its own `.claude.json`, no Claude login |
+| `~/.pocket-agent/deepseek-spend.json` | server | estimated DeepSeek spend per day (62 days) and per chat (500 newest) |
 | `~/.pocket-agent/server.log` | server | log (`pocket-agent logs`) |
 | app SharedPreferences `pa` | app | token, mirrored UI settings for the notification service |
 | WebView localStorage `pa.settings` | UI | theme, text size, toggles |

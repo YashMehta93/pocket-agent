@@ -138,17 +138,33 @@ try {
     const [a, b2] = await Promise.all([openSession({ sessionId: id, cwd: HOME }), openSession({ sessionId: id, cwd: HOME })]);
     ok("two opens of one chat at once share one Claude process", a === b2 && live.get(id) === a);
     ok("a later open returns the live one", await openSession({ sessionId: id }) === a);
+    // A send that fails after the server queued it is resent with the same uuid: it must queue once (#62e).
+    // (The SDK pulls items out of the inbox, so count pushes rather than what is left in it.)
+    let queued = 0; const push = a.inbox.push.bind(a.inbox); a.inbox.push = v => { queued++; return push(v); };
+    const msgId = "99999999-8888-4777-8666-555555555555";
+    const firstSend = a.send({ text: "once", uuid: msgId });
+    const resent = a.send({ text: "once", uuid: msgId });
+    ok("sending the same uuid twice queues one message", firstSend === msgId && resent === msgId && queued === 1,
+      `queued=${queued}`);
+    const otherId = "99999999-8888-4777-8666-555555555556";
+    ok("a new uuid still queues", a.send({ text: "twice", uuid: otherId }) === otherId && queued === 2, `queued=${queued}`);
+    ok("the accepted uuids are kept, bounded", a.seenUuids.has(msgId) && a.seenUuids.size <= 200);
     a.close();
   }
 
   // ───── Termux setup routes ─────
-  const server = spawn("node", [path.join(REPO, "server/src/index.js"), "--port", "8769"], { env: process.env, stdio: "ignore" });
+  // PREFIX without com.termux: these tests run on a computer / in the app's Linux, never as the Termux server.
+  const server = spawn("node", [path.join(REPO, "server/src/index.js"), "--port", "8769"], { env: { ...process.env, PREFIX: "/usr" }, stdio: "ignore" });
   try {
     for (let i = 0; i < 40; i++) { try { if ((await fetch("http://127.0.0.1:8769/health")).ok) break; } catch {} await new Promise(r => setTimeout(r, 250)); }
     const bad = await fetch("http://127.0.0.1:8769/termux/install.sh?code=nope");
     ok("an unknown code is refused", bad.status === 403);
+    const fav = await fetch("http://127.0.0.1:8769/favicon.ico");
+    ok("the favicon asks for no token and answers 204", fav.status === 204 && (await fav.text()) === "");
     const { default: WebSocket } = await import(path.join(REPO, "server/node_modules/ws/index.js"));
     const token = fs.readFileSync(path.join(process.env.PA_DATA, "token"), "utf8").trim();
+    const migration = await fetch(`http://127.0.0.1:8769/export/migration.tgz?token=${token}`);
+    ok("a server that isn't Termux doesn't export the whole home", migration.status === 403 && (await migration.text()) === "Only a Termux server exports its home.");
     // A token of the right length in characters but not in bytes used to throw inside the comparison:
     // a hung request over HTTP, and a dead server over the WebSocket upgrade.
     const odd = encodeURIComponent("é".repeat(token.length));
@@ -172,7 +188,8 @@ try {
 
     // a chat's own model and permission mode survive its process closing and the server restarting
     const ws2 = new WebSocket(`ws://127.0.0.1:8769/ws?token=${token}`); await new Promise(r => ws2.on("open", r));
-    let n2 = 0; const call2 = (t, m = {}) => new Promise(res => { const id = ++n2; const h = raw => { const x = JSON.parse(raw); if (x.t === "reply" && x.id === id) { ws2.off("message", h); res(x); } }; ws2.on("message", h); ws2.send(JSON.stringify({ t, id, ...m })); });
+    // args before the request id: an argument of its own called "id" (accounts.*) must not overwrite it
+    let n2 = 0; const call2 = (t, m = {}) => new Promise(res => { const id = ++n2; const h = raw => { const x = JSON.parse(raw); if (x.t === "reply" && x.id === id) { ws2.off("message", h); res(x); } }; ws2.on("message", h); ws2.send(JSON.stringify({ ...m, t, id })); });
     await call2("set", { sessionId: "chat-closed-1", model: "claude-opus-5-5", permissionMode: "bypassPermissions" });
     await call2("set", { sessionId: "chat-closed-1", effort: "high" });
     const sub = await call2("subscribe", { sessionId: "chat-closed-1", after: 0 });
@@ -181,10 +198,32 @@ try {
     ok("and saved to disk, so they survive a restart", onDisk?.permissionMode === "bypassPermissions");
     const other = await call2("subscribe", { sessionId: "chat-never-set", after: 0 });
     ok("a chat with nothing remembered gets no settings (the defaults apply)", other.settings === null);
+
+    // several Claude accounts: each chat runs on one, and its choice is saved
+    const acctList0 = await call2("accounts.list");
+    ok("accounts.list has only the default account", acctList0.accounts?.length === 1 && acctList0.accounts[0].id === "default" && acctList0.defaultAccount === "default");
+    const added = await call2("accounts.add", { name: "Work" });
+    const acct = added.account?.id;
+    ok("a new account gets a slugged id", typeof acct === "string" && acct.startsWith("work-"), acct || "");
+    const acctList1 = await call2("accounts.list");
+    ok("accounts.list now has two, with their usage", acctList1.accounts?.length === 2 && acctList1.accounts.some(a => a.id === acct) && !!acctList1.usageByAccount);
+    const acctSet = await call2("chat.account", { sessionId: "chat-acct-1", account: acct });
+    ok("a chat can run on another account", !acctSet.error, acctSet.error || "");
+    const prefsNow = JSON.parse(fs.readFileSync(path.join(process.env.PA_DATA, "prefs.json"), "utf8"));
+    ok("the chat's account is saved for a restart", prefsNow.chatAccount?.["chat-acct-1"] === acct);
+    const acctSub = await call2("subscribe", { sessionId: "chat-acct-1", after: 0 });
+    ok("a chat that isn't open yet says its account", acctSub.account === acct, acctSub.account || "");
+    const acctDefault = await call2("accounts.setDefault", { account: acct });
+    ok("new chats can default to the account", acctDefault.accounts?.find(a => a.id === acct)?.default === true, acctDefault.error || "");
+    const acctList2 = await call2("accounts.list");
+    ok("accounts.list says which account new chats use", acctList2.defaultAccount === acct);
+    const acctRemoved = await call2("accounts.remove", { account: acct });
+    const acctList3 = await call2("accounts.list");
+    ok("removing an account leaves the default one", acctRemoved.accounts?.length === 1 && acctList3.accounts.length === 1 && acctList3.defaultAccount === "default");
     ws2.close();
 
     // usage limits: from the rate_limit_event every reply carries (0–1, Unix seconds) and from Claude Code's /usage data (0–100, ISO)
-    const { noteRateLimit, refreshUsage, getUsage } = await import("../src/usage.js");
+    const { noteRateLimit, refreshUsage, getUsage, getAllUsage } = await import("../src/usage.js");
     noteRateLimit({ status: "allowed_warning", resetsAt: 1794658200, rateLimitType: "five_hour", utilization: 0.91,
       unifiedWindows: { five_hour: { utilization: 0.91, resetsAt: 1794658200, status: "allowed_warning" }, seven_day: { utilization: 0.64, resetsAt: 1794909600, status: "allowed" } } });
     const ev1 = getUsage();
@@ -200,6 +239,25 @@ try {
     await refreshUsage(fakeQ, { asked: true });
     ok("asking again within 30 seconds doesn't fetch again", calls === 1);
     ok("without the call (older Claude Code), the saved numbers stay", (await refreshUsage({}, { asked: true }))?.windows?.seven_day?.used === 65);
+
+    // numbers belong to the signed-in account; a service answer without a 5-hour window means 0% there
+    const { cache: C } = await import("../src/config.js");
+    const { accountChanged } = await import("../src/usage.js");
+    C.account = { email: "one@example.com" };
+    noteRateLimit({ status: "allowed", unifiedWindows: { seven_day: { utilization: 0.5, resetsAt: 1795024800, status: "allowed" } } });
+    ok("usage remembers whose numbers they are", getUsage()?.account === "one@example.com");
+    C.account = { email: "two@example.com" };
+    ok("after switching Claude accounts, the old account's numbers don't show", getUsage() === null);
+    accountChanged();
+    const q2 = { usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({ subscription_type: "max", rate_limits_available: true, rate_limits: { seven_day: { utilization: 72, resets_at: "2026-11-18T23:30:00Z" } } }) };
+    const u2 = await refreshUsage(q2, { asked: true });
+    ok("no 5-hour window from the service shows as 0%, the week as reported", u2?.windows?.five_hour?.used === 0 && u2.windows.seven_day.used === 72 && u2.account === "two@example.com");
+    delete C.account;
+
+    // usage is per account: an extra account's numbers never mix with the default one's
+    noteRateLimit({ status: "allowed", unifiedWindows: { seven_day: { utilization: 0.3, resetsAt: 1795024800, status: "allowed" } } }, "acct-x");
+    ok("a rate limit updates the account it came from", getUsage("acct-x")?.windows?.seven_day?.used === 30, JSON.stringify(getUsage("acct-x")?.windows?.seven_day));
+    ok("getAllUsage lists every account's numbers", !!getAllUsage()["acct-x"] && !!getAllUsage().default);
 
     // after an unexpected stop, chats that were mid-reply continue: only right after it, once an hour, and not when turned off
     const { continueInterrupted, clearWorking } = await import("../src/live-session.js");
@@ -230,6 +288,47 @@ try {
     let refused = false; try { taskTranscript("../x", "a1"); } catch { refused = true; }
     ok("ids with path characters are refused", refused);
   } finally { server.kill(); }
+
+  // ───── SSE catch-up: every live chat's status, and a missed "done" replayed once (#62f) ─────
+  {
+    const { live } = await import("../src/live-session.js");
+    const { createServer } = await import("../src/http.js");
+    const { TOKEN } = await import("../src/config.js");
+    const snap = (phase, label) => ({ phase, label, detail: "", turnStart: null, tokens: { thinking: 0, output: 0 }, steps: [] });
+    const fake = (sessionId, state, phase, lastDone = null) => ({ sessionId, title: sessionId, state, engine: "claude",
+      lastActive: Date.now(), lastDone, activity: { snapshot: () => snap(phase, phase) }, info: () => ({ pending: [] }) });
+    live.clear();   // the session opened above is closed; this test brings its own
+    const idle = fake("sse-idle", "idle", "idle", { at: Date.now() - 60_000, text: "Finished while away" });
+    const busy = fake("sse-busy", "running", "writing");
+    live.set(idle.sessionId, idle); live.set(busy.sessionId, busy);
+    const srv = createServer();
+    await new Promise(r => srv.listen(0, "127.0.0.1", r));
+    const port = srv.address().port;
+    const connect = async since => {
+      const q = new URLSearchParams({ v: "2", api: "0", token: TOKEN });
+      if (since !== null) q.set("since", String(since));
+      const ctl = new AbortController();
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/events?${q}`, { signal: ctl.signal });
+        const reader = res.body.getReader(); let text = "";
+        while (!text.includes("\n\n")) { const { value, done } = await reader.read(); if (done) break; text += Buffer.from(value).toString("utf8"); }
+        return JSON.parse(text.split("\n\n")[0].replace(/^data: /, ""));
+      } finally { ctl.abort(); }
+    };
+    try {
+      const first = await connect(0);
+      const evs = first.events || [];
+      const statuses = evs.filter(e => e.type === "notify" && e.spec?.id === "status");
+      ok("a connect with since=0 replays the done missed while away",
+        evs.find(e => e.type === "notify" && e.spec?.id === "done:sse-idle")?.spec?.text === "Finished while away");
+      ok("the batch has an activity for every live chat, idle ones as idle, busy last",
+        statuses.length === 2 && statuses[0].spec.text === "Listening for Claude" && statuses[1].spec.title === "writing");
+      const later = await connect(Date.now());
+      ok("a connect with since=now doesn't replay it", !(later.events || []).some(e => e.spec?.id === "done:sse-idle"));
+      const old = await connect(null);
+      ok("an old app without since gets no replay", !(old.events || []).some(e => e.spec?.id === "done:sse-idle"));
+    } finally { srv.close(); live.delete(idle.sessionId); live.delete(busy.sessionId); }
+  }
 } catch (e) { console.log("FAIL", e.stack); fails++; }
 finally { fs.rmSync(T, { recursive: true, force: true }); }
 console.log(fails ? `\n${fails} FAILED` : "\nALL PASSED");

@@ -46,6 +46,8 @@ function relTime(ms) {
 function fmtDur(ms) { if (ms < 1000) return ms + "ms"; const s = ms / 1000; if (s < 60) return s.toFixed(1) + "s"; return Math.floor(s / 60) + "m " + Math.round(s % 60) + "s"; }
 function fmtTok(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); }
 function shortPath(p) { const home = state.home; return p && home && p.startsWith(home) ? "~" + p.slice(home.length) : (p || ""); }
+/** A drawer filter chip's name: at most 12 characters, the last of them an ellipsis. */
+const filterLabel = (name, max = 12) => { const s = String(name || ""); return s.length > max ? s.slice(0, max - 1) + "…" : s; };
 function baseName(p) { return (p || "").replace(/\/+$/, "").split("/").pop() || "/"; }
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 
@@ -101,6 +103,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applySet
 // ───────────── app state ─────────────
 const state = {
   home: "", hostName: "", sessions: [], pinned: [], commands: [], models: [], account: null, usage: null, defaults: {},
+  environment: null,   // this server's self-description: { id, name, os, … } (hello.environment, "environment")
   liveInfo: {},     // sessionId -> info from server (state, model, mode, pending…)
   pending: [],      // permission requests (all sessions)
   current: null,    // { sessionId, cwd, title, isNew, lastSeq, … }
@@ -119,6 +122,9 @@ const conn = {
     try { const r = await fetch(this.base() + "/health", { cache: "no-store" }); return r.ok ? "up" : "down"; } catch { return "down"; }
   },
   connect() {
+    // One socket at a time: a second call while connecting or open would replace this.ws and leave the
+    // first socket running with nothing pointing at it (#62d). Retries and the resume handlers call this.
+    if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) return;
     clearTimeout(this.timer);
     let ws;
     try { ws = new WebSocket(this.url()); } catch (e) { return this.scheduleRetry(); }
@@ -137,6 +143,13 @@ const conn = {
       if (m.t === "reply") { const cb = this.waiting.get(m.id); this.waiting.delete(m.id); cb?.(m); return; }
       this.fire(m.t, m);
     };
+  },
+  /** Try again now (the screen is back, or the network returned) instead of waiting for the backoff. */
+  reconnect() {
+    if (this.ok) return;
+    clearTimeout(this.timer);
+    this.retry = 0;
+    this.connect();
   },
   scheduleRetry() {
     this.retry++;
@@ -178,6 +191,7 @@ const sheet = {
   close(silent) {
     if (!document.body.classList.contains("sheet-open")) return;
     document.body.classList.remove("sheet-open");
+    this.closedAt = Date.now();   // a tap that closed a sheet must not also hit what was under it
     const cb = this.onClose; this.onClose = null; this.key = null;
     if (!silent && cb) cb();
   },
@@ -188,19 +202,21 @@ $("#sheet-x").addEventListener("click", () => sheet.close());
 
 const page = {
   stack: [],
-  open(title, render, actions = "", leave = null) {
+  /** opts.ltr: a title that reads from its start (names); by default the end shows, as paths need */
+  open(title, render, actions = "", leave = null, opts = null) {
     $("#page").hidden = false;
     $("#page-title").textContent = title;
+    $("#page-title").classList.toggle("ltr", !!opts?.ltr);
     $("#page-actions").innerHTML = actions; hydrateIcons($("#page-actions"));
     const body = $("#page-body"); body.innerHTML = ""; body.scrollTop = 0;
-    this.stack.push({ title, render, actions, leave });
+    this.stack.push({ title, render, actions, leave, opts });
     render(body);
     nativeCall("setBackHandler", true);
   },
   back() {
     this.stack.pop()?.leave?.("back");
     const prev = this.stack.pop();
-    if (prev) this.open(prev.title, prev.render, prev.actions, prev.leave); else this.close();
+    if (prev) this.open(prev.title, prev.render, prev.actions, prev.leave, prev.opts); else this.close();
   },
   close() { for (const s of this.stack.splice(0)) s.leave?.("close"); $("#page").hidden = true; $("#page-body").innerHTML = ""; },
   get isOpen() { return !$("#page").hidden; },
@@ -214,6 +230,7 @@ window.paBack = function () {
   if (page.isOpen) { page.back(); return true; }
   if (!$("#popup").hidden) { $("#popup").hidden = true; return true; }
   if (document.body.classList.contains("drawer-open")) { document.body.classList.remove("drawer-open"); return true; }
+  if (typeof agentsBack === "function" && agentsBack()) return true;   // the Agents tab, a worker opened as a chat (agents.js)
   return false;
 };
 

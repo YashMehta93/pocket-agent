@@ -15,9 +15,12 @@ function elapsed(a) { return a?.turnStart ? fmtDur(Math.floor((Date.now() - a.tu
 /** Show the bar while a turn runs, for errors, and briefly after a turn finishes. */
 function renderActivity() {
   const bar = $("#activity");
-  const a = currentActivity();
+  let a = currentActivity();
   const st = sessionState(state.current?.sessionId);
   const running = st === "running" || st === "waiting";
+  // a worker of this chat waits for your OK: say so here, as for the chat's own approvals (#52)
+  const wp = running && st !== "waiting" && typeof requestWorker === "function" && state.pending.find(p => p.sessionId !== state.current?.sessionId && requestWorker(p)?.parent === state.current?.sessionId);
+  if (wp && a) { const w = requestWorker(wp); a = { ...a, phase: "approval", label: "Waiting for your approval", detail: `${ENGINE_NAME[w.engine]} · ${w.title} ${askPhrase(wp.toolName, wp.input)}` }; }
   const recentEnd = a && (a.phase === "idle" || a.phase === "error") && a.turnStart && Date.now() - a.since < (a.phase === "error" ? 60000 : 6000);
   if (!a || (!running && !recentEnd)) { bar.hidden = true; stopActivityTick(); if (sheet.key === "activity") renderActivityLog(); return; }
   // If the server hasn't reported yet but the session is running, show a generic state.
@@ -33,7 +36,7 @@ function renderActivity() {
   bar.querySelector("b").textContent = phase === "waiting" && running && a.phase !== "waiting" ? "Working" : a.label;
   bar.querySelector(".a-meta").textContent = `${elapsed(a)}${tok}`;
   bar.querySelector(".a-detail").textContent = a.detail || (phase === "approval" ? "Tap to review" : "");
-  bar.onclick = () => phase === "approval" ? showNextPermission() : openActivityLog();
+  bar.onclick = () => { if (Date.now() - (sheet.closedAt || 0) < 500) return; phase === "approval" ? showNextPermission() : openActivityLog(); };
   if (busy || phase === "approval") startActivityTick(); else stopActivityTick();
   if (sheet.key === "activity") renderActivityLog();
 }
@@ -65,7 +68,7 @@ function renderActivityLog() {
     <div class="sub">${esc(a.detail || "")}</div>
     <div class="act-stats"><span>${icon("bolt")}${esc(elapsed(a) || "–")}</span><span>${icon("brain")}${fmtTok(a.tokens?.thinking || 0)} thinking</span><span>${icon("pencil")}${fmtTok(a.tokens?.output || 0)} written</span><span>${icon("list")}${a.steps.length} steps</span></div>
     <div class="act-steps">${a.steps.length ? a.steps.map(s => `
-      <div class="act-step ${s.status} ${s.parent ? "nested" : ""}">
+      <div class="act-step ${esc(s.status)} ${s.parent ? "nested" : ""}">
         <span class="as-k">${kindIcon(s)}</span>
         <div class="as-m"><div class="as-t">${esc(s.title)}</div>${s.detail ? `<div class="as-d">${esc(s.detail)}</div>` : ""}</div>
         <span class="as-time">${rel(s.at)}${s.end ? ` · ${fmtDur(s.end - s.at)}` : ""}</span>

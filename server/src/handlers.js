@@ -6,7 +6,7 @@ import path from "node:path";
 import { listSessions, getSessionMessages, getSessionInfo, renameSession, deleteSession, forkSession } from "@anthropic-ai/claude-agent-sdk";
 import { VERSION, HOME, UI_DIR, APK_INFO, DEFAULT_REPO, prefs, savePrefs, cache, saveCache, githubRepo } from "./config.js";
 import { broadcastAll, callNative } from "./hub.js";
-import { live, getLive, openSession, busyElsewhere, runClaude, chatSettings, rememberChatSettings, clearWorking, taskTranscript, restartContinuing } from "./live-session.js";
+import { live, getLive, openSession, checkEngine, busyElsewhere, runClaude, chatSettings, rememberChatSettings, clearWorking, taskTranscript, restartContinuing } from "./live-session.js";
 import { listDir, searchFiles, readFile, saveUpload } from "./files.js";
 import { importSessions, checkUpdate, applyUpdate, sourceName, pickRelease, listReleases, releaseAsset, bundleInfo, clearReleaseCache } from "./transfer.js";
 import { runDevSetup, devSetupStatus, devRepo } from "./devtools.js";
@@ -14,9 +14,25 @@ import { runMigration, migrationStatus } from "./migrate.js";
 import { createBackup, listBackups, restoreBackup, BACKUP_DIR } from "./backup.js";
 import { installCommand } from "./termux.js";
 import { listServices, addService, removeService, setServiceEnabled, restartService, serviceLogs } from "./services.js";
-import { getUsage, refreshUsage } from "./usage.js";
+import { getUsage, getAllUsage, refreshUsage } from "./usage.js";
+import { listAccounts, addAccount, renameAccount, removeAccount, setDefaultAccount, setChatAccount, loginStart, loginCode, authStatus, accountOf } from "./accounts.js";
+import { listProfiles, defaultProfileId, profileOf, saveProfile, removeProfile, setDefaultProfile } from "./profiles.js";
+import { engineOf, copyEngine, forget, linkOf, engineList } from "./engines.js";
+import { PROTOCOL, environment, setEnvironment } from "./environment.js";
+import { listDevices, startPairing, revokeDevice, renameDevice, setDeviceRoots } from "./devices.js";
+import { rootsOf, withinAnyRoot } from "./roots.js";
+import { listEnvironments, addEnvironment, removeEnvironment, renameEnvironment, testUrl, reconnectEnvironment, remoteSessions } from "./upstreams.js";
+import { status as dsStatus, balance as dsBalance, setKey as dsSetKey, removeKey as dsRemoveKey, setDsSettings, chatSpend, isDeepseekModel, dsModel } from "./deepseek.js";
+import { IS_WIN, requestRestart } from "./platform.js";
 
 const changed = () => broadcastAll({ t: "sessions.changed" });
+/** The account list for a reply or the "accounts" broadcast (each account's usage is a separate, slower question). */
+const accountsInfo = () => ({ accounts: listAccounts(), defaultAccount: prefs.defaultAccount || "default" });
+/** An account's id in a request: `account` over the WebSocket, where `id` is the request id (`id` works for direct calls). */
+const acctId = m => m.account || m.id;
+/** A worker's latest run, from its link record (delegate.js): when it started, toolUseId, and once it ended, how. */
+const workerRun = l => ({ at: l.at || null, toolUseId: l.toolUseId || null, runAt: l.runAt || null, result: l.result || null,
+  steps: l.steps ?? null, ms: l.ms ?? null, usd: l.usd ?? null, endedAt: l.endedAt || null });
 
 /** Changes whenever a UI file changes, so open apps can reload themselves. */
 export function uiVersion() {
@@ -28,59 +44,158 @@ export function uiVersion() {
 
 export const handlers = {
   // ───── connection ─────
-  async hello() {
-    return { version: VERSION, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
+  async hello({ tzOffset } = {}, ws) {
+    // the phone's time zone (minutes, as getTimezoneOffset()), so DeepSeek spend is counted per local day
+    if (ws?.principal?.kind !== "device" && Number.isFinite(tzOffset) && tzOffset >= -900 && tzOffset <= 900 && prefs.tzOffset !== tzOffset) { prefs.tzOffset = tzOffset; savePrefs(); }
+    const r = { version: VERSION, protocol: PROTOCOL, uiVersion: uiVersion(), home: HOME, host: os.hostname(), platform: process.platform,
+      environment: environment(), environments: listEnvironments(),
       defaults: prefs.defaults, pinned: prefs.pinned, commands: cache.commands, models: cache.models, account: cache.account, usage: getUsage(),
+      accounts: listAccounts(), defaultAccount: prefs.defaultAccount || "default", usageByAccount: getAllUsage(),
+      profiles: listProfiles(), defaultProfile: defaultProfileId(),
       updateChannel: prefs.updateChannel ? sourceName(prefs.updateChannel) : null,
       updateKind: prefs.updateChannel ? (prefs.updateChannel.github ? "github" : prefs.updateChannel.path ? "path" : "server") : null,
       githubToken: !!prefs.updateChannel?.token, defaultRepo: DEFAULT_REPO, mode: process.env.PA_MODE || "server", devRepo: devRepo(), updateTrack: prefs.updateTrack || { track: "stable" },
-      live: [...live.values()].map(s => s.info()) };
+      live: [...live.values()].map(s => s.info()), engines: engineList(), deepseek: dsStatus() };
+    // A paired device has its own scopes: no account, usage, update or home details, unless it may read files.
+    if (ws?.principal?.kind === "device") {
+      for (const k of ["githubToken", "updateChannel", "updateKind", "updateTrack", "devRepo", "usage", "usageByAccount", "account", "accounts", "defaultAccount", "deepseek", "home", "environments", "profiles", "defaultProfile"]) delete r[k];
+      const roots = rootsOf(ws.principal);
+      // A device limited to folders starts its folder picker at a root, never at this server's home (#72).
+      if (roots) {
+        r.roots = [...roots];
+        r.live = r.live.filter(s => withinAnyRoot(roots, s.cwd));
+      } else if (ws.principal.scopes.includes("files.read")) r.home = HOME;
+    }
+    return r;
   },
 
+  // ───── this device (environment.js) ─────
+  async "environment.get"() { return { environment: environment() }; },
+  async "environment.set"({ name, reaches } = {}) { return { environment: setEnvironment({ name, reaches }) }; },
+
+  // ───── paired devices (devices.js): each has its own revocable token and scopes ─────
+  async "devices.list"() { return { devices: listDevices() }; },
+  async "devices.pair"({ name, scopes, roots } = {}) { return await startPairing({ name, scopes, roots }); },
+  async "devices.revoke"({ device } = {}) { revokeDevice(device); return { ok: true }; },   // `device`, never `id`: id is the request id
+  async "devices.rename"({ device, name } = {}) { return { device: renameDevice(device, name) }; },
+  async "devices.setRoots"({ device, roots } = {}) { return { device: setDeviceRoots(device, roots) }; },   // folders it may reach (#72)
+
   // ───── session list & history ─────
-  async "sessions.list"({ limit = 300, dir } = {}) {
+  async "sessions.list"({ limit = 300, dir } = {}, ws) {
     const list = await listSessions({ limit, ...(dir ? { dir } : {}) });
     const busy = busyElsewhere();
-    return { sessions: list.map(s => ({
-      sessionId: s.sessionId, title: s.customTitle || s.summary, firstPrompt: s.firstPrompt, cwd: s.cwd,
-      lastModified: s.lastModified, createdAt: s.createdAt, gitBranch: s.gitBranch, tag: s.tag,
-      custom: !!s.customTitle, pinned: prefs.pinned.includes(s.sessionId),
-      live: live.get(s.sessionId)?.state || null, elsewhere: busy.get(s.sessionId)?.kind || null,
-    })) };
+    const sessions = list.map(s => {
+      const engine = engineOf(s.sessionId), link = linkOf(s.sessionId), parent = link?.parent;
+      return {
+        sessionId: s.sessionId, title: s.customTitle || s.summary, firstPrompt: s.firstPrompt, cwd: s.cwd,
+        lastModified: s.lastModified, createdAt: s.createdAt, gitBranch: s.gitBranch, tag: s.tag,
+        custom: !!s.customTitle, pinned: prefs.pinned.includes(s.sessionId), profile: profileOf(s.cwd).id,
+        live: live.get(s.sessionId)?.state || null, elsewhere: busy.get(s.sessionId)?.kind || null,
+        ...(engine ? { engine } : {}), ...(parent ? { parent, worker: workerRun(link) } : {}), ...(engine === "deepseek" ? { spend: chatSpend(s.sessionId)?.usd ?? 0 } : {}),
+      };
+    });
+    // The environments' chats come along (upstreams.js); the list stays newest first, like listSessions' own.
+    sessions.push(...await remoteSessions());
+    sessions.sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0) ||
+      (a.sessionId < b.sessionId ? -1 : a.sessionId > b.sessionId ? 1 : 0));
+    // A device limited to folders sees only the chats inside them, as if the others didn't exist (#72).
+    const roots = rootsOf(ws?.principal);
+    return { sessions: roots ? sessions.filter(s => withinAnyRoot(roots, s.cwd)) : sessions };
   },
   async "session.history"({ sessionId }) {
+    // The live seq as the transcript is read: the app subscribes after it and replays what the transcript
+    // missed, so nothing that happens during this read is lost (#62a).
+    const seq = live.get(sessionId)?.seq || 0;
     const [messages, info] = await Promise.all([getSessionMessages(sessionId), getSessionInfo(sessionId).catch(() => undefined)]);
-    return { sessionId, messages, info };
+    return { sessionId, messages, info, seq };
   },
 
   /** Before a restart on purpose: replies it stops shouldn't continue afterwards. */
   async "working.clear"() { clearWorking(); return {}; },
   /** Inside the app only (it restarts us): restart now; replies in progress continue afterwards. */
   async "server.restartContinuing"() { if (!process.env.PA_SUPERVISED) throw new Error("Only inside the app"); restartContinuing(); return {}; },
+  /** Restart once no chat is mid-reply: SIGUSR2 on POSIX; how `pocket-agent.mjs restart --when-idle` asks on Windows. */
+  async "server.restartWhenIdle"() { requestRestart(); return {}; },
 
   // ───── usage limits ─────
   async "usage.get"({ refresh } = {}) {
-    const s = [...live.values()].find(x => x.q && x.state !== "closed");
-    return { usage: refresh ? await refreshUsage(s?.q, { asked: true }) : getUsage(), live: !!s };
+    // the chat must run on the default account: another account's login answers with its own numbers
+    const s = [...live.values()].find(x => x.q && x.state !== "closed" && x.engine !== "deepseek" && (x.account || "default") === "default");
+    return { usage: refresh ? await refreshUsage(s?.q, { asked: true, account: "default" }) : getUsage(), live: !!s };
   },
 
+  // ───── Claude accounts: each chat runs on one, each has its own usage ─────
+  async "accounts.list"() { return { ...accountsInfo(), usageByAccount: getAllUsage() }; },
+  async "accounts.add"({ name } = {}) { return { account: addAccount(String(name || "")) }; },
+  /** Sign-in runs in the server (accounts.js), so it needs no APK: the app opens the URL, then sends the code. */
+  async "accounts.login.start"(m = {}) { return { url: await loginStart(acctId(m)) }; },
+  async "accounts.login.code"(m = {}) {
+    const status = await loginCode(acctId(m), String(m.code || ""));
+    broadcastAll({ t: "accounts", ...accountsInfo() });
+    return { status };
+  },
+  async "accounts.status"(m = {}) { return { status: await authStatus(acctId(m)) }; },
+  async "accounts.rename"(m = {}) { renameAccount(acctId(m), m.name); broadcastAll({ t: "accounts", ...accountsInfo() }); return { accounts: listAccounts() }; },
+  async "accounts.setDefault"(m = {}) { setDefaultAccount(acctId(m)); broadcastAll({ t: "accounts", ...accountsInfo() }); return { accounts: listAccounts() }; },
+  async "accounts.remove"(m = {}) { removeAccount(acctId(m)); broadcastAll({ t: "accounts", ...accountsInfo() }); return { accounts: listAccounts() }; },
+  /** Continue a chat on another account: its process closes, and the next message reopens it there (history is shared). */
+  async "chat.account"({ sessionId, account } = {}) { setChatAccount(sessionId, account); live.get(sessionId)?.close(); return {}; },
+
+  // ───── profiles: whose work a chat is (folders, account, env, its own secrets folder) ─────
+  // The param is `profile`: over the WebSocket `id` is the request id.
+  async "profiles.list"() { return { profiles: listProfiles(), defaultProfile: defaultProfileId() }; },
+  async "profiles.save"({ profile } = {}) { return { profile: saveProfile(profile, listAccounts().map(a => a.id)) }; },
+  async "profiles.remove"({ profile } = {}) { return removeProfile(profile); },
+  async "profiles.setDefault"({ profile } = {}) { setDefaultProfile(profile); return { profiles: listProfiles(), defaultProfile: defaultProfileId() }; },
+
   // ───── live sessions ─────
-  async "session.open"(m, ws) { const s = await openSession(m); ws.subs.add(s.sessionId); return { sessionId: s.sessionId, info: s.info() }; },
+  // (`link` is the server's own: only delegate.js makes worker chats)
+  async "session.open"(m, ws) { const s = await openSession({ ...m, link: undefined }); ws.subs.add(s.sessionId); return { sessionId: s.sessionId, info: s.info() }; },
   async subscribe({ sessionId, after = 0 }, ws) {
     ws.subs.add(sessionId);
     const s = live.get(sessionId);
-    return { sessionId, info: s ? s.info() : null, events: s ? s.buffer.filter(e => e.seq > after) : [], settings: chatSettings(sessionId) };
+    return { sessionId, info: s ? s.info() : null, events: s ? s.buffer.filter(e => e.seq > after) : [], settings: chatSettings(sessionId),
+      // The oldest event still buffered: a client resuming from before it has a gap it can't fill and
+      // must reload the transcript instead (#62b).
+      firstSeq: s ? (s.buffer[0]?.seq ?? s.seq + 1) : null,
+      engine: s?.engine || engineOf(sessionId) || "claude", parent: s?.link?.parent || linkOf(sessionId)?.parent || null,
+      account: accountOf(sessionId, s?.cwd) };
   },
   async unsubscribe({ sessionId }, ws) { ws.subs.delete(sessionId); return {}; },
   async send(m, ws) {
-    const s = live.get(m.sessionId) || await openSession(m);
+    const s = live.get(m.sessionId) || await openSession({ ...m, link: undefined });
+    checkEngine(s.engine, m.engine);
     ws.subs.add(s.sessionId);
     return { sessionId: s.sessionId, uuid: s.send(m) };
   },
-  async interrupt({ sessionId }) { await getLive(sessionId).q.interrupt(); return {}; },
-  async "session.close"({ sessionId }) { live.get(sessionId)?.close(); return {}; },
+  // Stops the reply only: background workers (wait:false) it started keep running; workers.stopAll stops them.
+  async interrupt({ sessionId }) {
+    await getLive(sessionId).q.interrupt();
+    return {};
+  },
+  /** Stops every background worker this chat started: the ones waiting for a slot and the ones running. */
+  async "workers.stopAll"({ sessionId }) {
+    const { stopJobsOf } = await import("./delegate.js");   // dynamic: delegate.js imports live-session.js, which imports this
+    return { stopped: stopJobsOf(sessionId) };
+  },
+  async "session.close"({ sessionId }) {
+    const { stopJobsOf } = await import("./delegate.js");   // dynamic: delegate.js imports live-session.js, which imports this
+    stopJobsOf(sessionId);
+    live.get(sessionId)?.close();
+    return {};
+  },
   async "permission.reply"(m) { return { ok: getLive(m.sessionId).answer(m) }; },
-  async set(m) { const s = live.get(m.sessionId); if (s) await s.set(m); else rememberChatSettings(m.sessionId, m); return { info: s?.info(), settings: chatSettings(m.sessionId) }; },
+  async set(m) {
+    const s = live.get(m.sessionId);
+    if (m.model) {   // a model must suit the chat's engine ("" / null is the engine's default)
+      if ((s?.engine || engineOf(m.sessionId)) === "deepseek") {
+        if (!isDeepseekModel(m.model) && !/^(flash|pro)$/i.test(m.model)) throw new Error("That model isn't available on DeepSeek.");
+        m = { ...m, model: dsModel(m.model) };
+      } else if (isDeepseekModel(m.model)) throw new Error("That model isn't available on Claude.");
+    }
+    if (s) await s.set(m); else rememberChatSettings(m.sessionId, m);
+    return { info: s?.info(), settings: chatSettings(m.sessionId) };
+  },
   async "session.rewindFiles"({ sessionId, userMessageId, dryRun }) { return { result: await getLive(sessionId).q.rewindFiles(userMessageId, { dryRun: !!dryRun }) }; },
   async "session.context"({ sessionId }) {
     const s = live.get(sessionId);
@@ -99,6 +214,7 @@ export const handlers = {
   async "session.delete"({ sessionId }) {
     live.get(sessionId)?.close();
     await deleteSession(sessionId);
+    forget(sessionId);
     prefs.pinned = prefs.pinned.filter(x => x !== sessionId); savePrefs();
     changed(); return {};
   },
@@ -107,13 +223,16 @@ export const handlers = {
     if (pinned) prefs.pinned.unshift(sessionId);
     savePrefs(); changed(); return { pinned: prefs.pinned };
   },
-  async "session.fork"({ sessionId, upToMessageId, title }) { const r = await forkSession(sessionId, { upToMessageId, title }); changed(); return { sessionId: r.sessionId }; },
+  // A copy runs on the same engine (edit and retry fork too).
+  async "session.fork"({ sessionId, upToMessageId, title }) { const r = await forkSession(sessionId, { upToMessageId, title }); copyEngine(sessionId, r.sessionId); changed(); return { sessionId: r.sessionId }; },
   /** Resolve BUSY_ELSEWHERE: mode "fork" continues in a copy, "stop" stops the Termux background copy first. */
   async "session.continueHere"({ sessionId, mode }) {
-    if (mode === "fork") { const r = await forkSession(sessionId); changed(); return { sessionId: r.sessionId }; }
+    if (mode === "fork") { const r = await forkSession(sessionId); copyEngine(sessionId, r.sessionId); changed(); return { sessionId: r.sessionId }; }
     if (mode !== "stop") throw new Error("unknown mode");
     const busy = busyElsewhere().get(sessionId);
-    if (busy?.kind === "terminal") throw new Error("That chat is open in a Termux terminal. Close it there (type /exit), then try again.");
+    if (busy?.kind === "terminal") throw new Error(!IS_WIN ? "That chat is open in a Termux terminal. Close it there (type /exit), then try again."
+      : busy.entrypoint === "claude-vscode" ? "That chat is open in VS Code on this computer. Close it there, then try again."
+      : "That chat is open in a Claude terminal on this computer. Close it there (type /exit), then try again.");
     if (busy) {
       const r = await runClaude(["stop", busy.short]);
       for (let i = 0; i < 20 && busyElsewhere().has(sessionId); i++) await new Promise(res => setTimeout(res, 300));
@@ -122,6 +241,21 @@ export const handlers = {
     return { sessionId };
   },
   async "defaults.set"({ defaults }) { prefs.defaults = { ...prefs.defaults, ...defaults }; savePrefs(); return { defaults: prefs.defaults }; },
+
+  // ───── DeepSeek (deepseek.js): the key never comes back, only `keyHint` (its last 4 characters) ─────
+  async "deepseek.status"({ refresh } = {}) { if (refresh) await dsBalance({ refresh: true }).catch(() => {}); return { deepseek: dsStatus() }; },
+  async "deepseek.setKey"({ key }) { return { deepseek: await dsSetKey(key) }; },
+  async "deepseek.removeKey"() { return { deepseek: dsRemoveKey() }; },
+  async "deepseek.settings"({ settings }) { setDsSettings(settings); return { deepseek: dsStatus() }; },
+
+  // ───── environments: other Pocket Agent servers, whose chats this one proxies (upstreams.js) ─────
+  // (`environment` holds the id: over the WebSocket `id` is the request id)
+  async "environments.list"() { return { environments: listEnvironments() }; },
+  async "environments.add"({ url, code, token, profile, name } = {}) { return { environment: await addEnvironment({ url, code, token, profile, name }) }; },
+  async "environments.remove"({ environment } = {}) { return removeEnvironment(environment); },
+  async "environments.rename"({ environment, name } = {}) { return { environment: renameEnvironment(environment, name) }; },
+  async "environments.test"({ url } = {}) { return testUrl(url); },
+  async "environments.reconnect"({ environment } = {}) { return { environment: reconnectEnvironment(environment) }; },
 
   // ───── between servers (transfer.js) ─────
   /** Copy chats from another Pocket Agent server (e.g. Termux) into this one. */
@@ -152,8 +286,8 @@ export const handlers = {
     savePrefs(); clearReleaseCache();
     return { track: prefs.updateTrack };
   },
-  /** Pulls the update, then restarts once no chat is mid-reply (SIGUSR2, see index.js). */
-  async "update.apply"(m) { const ch = m.url || m.path || m.github ? m : prefs.updateChannel; if (!ch) throw new Error("No update source set"); return await applyUpdate(ch, () => process.kill(process.pid, "SIGUSR2")); },
+  /** Pulls the update, then restarts once no chat is mid-reply (requestRestart, see platform.js and index.js). */
+  async "update.apply"(m) { const ch = m.url || m.path || m.github ? m : prefs.updateChannel; if (!ch) throw new Error("No update source set"); return await applyUpdate(ch, () => requestRestart()); },
 
   /** "Move from Termux": runs in the background; progress arrives as { t: "migrate", job } events. */
   async "migrate.run"({ url, token }) { return { job: runMigration({ url, token }) }; },
@@ -168,7 +302,7 @@ export const handlers = {
   async "backup.restore"({ file }) {
     const r = await restoreBackup(file);
     changed();
-    setTimeout(() => process.kill(process.pid, "SIGUSR2"), 500);   // reload restored preferences: restart when idle
+    setTimeout(() => requestRestart(), 500);   // reload restored preferences: restart when idle
     return r;
   },
   // ───── background services kept running across app restarts (services.js) ─────
@@ -218,7 +352,7 @@ async function estimateContext(sessionId) {
     if (!u) continue;
     const total = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.output_tokens || 0);
     const model = m.message.model || "";
-    const max = cache.contextMax?.[model] || (total > 200000 || /\[1m\]/.test(model) ? 1000000 : 200000);
+    const max = cache.contextMax?.[model] || (total > 200000 || /\[1m\]|^deepseek/i.test(model) ? 1000000 : 200000);   // DeepSeek models have 1M
     return { estimated: true, model, totalTokens: total, maxTokens: max, percentage: Math.min(100, total / max * 100), categories: [] };
   }
   return null;

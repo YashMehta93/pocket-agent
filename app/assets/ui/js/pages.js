@@ -33,35 +33,36 @@ function showCommands() {
 }
 
 // ───────────── files ─────────────
-$("#btn-files").onclick = () => openFiles(state.current.cwd);
-function openFiles(dir) {
+$("#btn-files").onclick = () => openFiles(state.current.cwd, typeof currentEnvId === "function" ? currentEnvId() : null);
+// env: browse another Pocket Agent server's files (its chats' cwd is on that machine); its requests carry `env`.
+function openFiles(dir, env) {
   page.open(shortPath(dir), async body => {
     try {
-      const r = await conn.call("fs.list", { path: dir });
-      if (r.path !== "/") { const up = h(`<button class="list-row">${icon("back")}<div class="t">..</div></button>`); up.onclick = () => { page.stack.pop(); openFiles(r.parent); }; body.append(up); }
+      const r = await conn.call("fs.list", env ? { path: dir, env } : { path: dir });
+      if (r.path !== "/") { const up = h(`<button class="list-row">${icon("back")}<div class="t">..</div></button>`); up.onclick = () => { page.stack.pop(); openFiles(r.parent, env); }; body.append(up); }
       for (const e of r.entries) {
         if (e.name === ".pocket-agent-uploads") continue;
         const row = h(`<button class="list-row">${icon(e.dir ? "folder" : "file")}<div class="t"></div><div class="m">${e.dir ? "" : fmtSize(e.size)}</div></button>`);
         row.querySelector(".t").textContent = e.name;
         const full = r.path.replace(/\/$/, "") + "/" + e.name;
-        row.onclick = () => e.dir ? openFiles(full) : viewFile(full);
+        row.onclick = () => e.dir ? openFiles(full, env) : viewFile(full, env);
         longPress(row, () => menuSheet(e.name, [
           { label: "Mention in message", icon: "search", run: () => { page.close(); insertAtCursor("@" + rel(full) + " "); autosize(); } },
           { label: "Copy path", icon: "copy", run: () => copyText(full) },
-          e.dir && { label: "Start new chat here", icon: "plus", run: () => { page.close(); newChat(full); } },
+          e.dir && { label: "Start new chat here", icon: "plus", run: () => { page.close(); newChat(full, undefined, env); } },
         ]));
         body.append(row);
       }
     } catch (e) { body.innerHTML = `<div class="settings"><p class="note err">${esc(e.message)}</p></div>`; }
   }, `<button class="icon-btn" data-icon="plus" id="pg-newchat" aria-label="New chat here"></button>`);
-  $("#pg-newchat").onclick = () => { page.close(); newChat(dir); };
+  $("#pg-newchat").onclick = () => { page.close(); newChat(dir, undefined, env); };
 }
 const rel = p => { const c = state.current.cwd; return p.startsWith(c + "/") ? p.slice(c.length + 1) : p; };
 function fmtSize(n) { return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : n > 1024 ? Math.round(n / 1024) + " KB" : n + " B"; }
-function viewFile(p) {
+function viewFile(p, env) {
   page.open(shortPath(p), async body => {
     try {
-      const r = await conn.call("fs.read", { path: p });
+      const r = await conn.call("fs.read", env ? { path: p, env } : { path: p });
       body.className = "viewer";
       if (r.binary) { body.innerHTML = `<div class="settings"><p>Binary file (${fmtSize(r.size)}).</p></div>`; return; }
       if (/\.md$/i.test(p)) { const m = document.createElement("div"); m.className = "md"; setMd(m, r.text); body.append(m); }
@@ -73,33 +74,65 @@ function viewFile(p) {
   const pb = $("#page-body"); const restore = () => { pb.className = ""; };
   $("#page-back").addEventListener("click", restore, { once: true });
 }
-function pickFolder(start) {
+/** The folders another server limits this device to (#72), or null. Only they exist for it over there. */
+function envRootsOf(envId) {
+  const env = envId && typeof envById === "function" ? envById(envId) : null;
+  return env && Array.isArray(env.roots) && env.roots.length ? env.roots : null;
+}
+/** Pickers compare folder names textually (the server enforces the real rule): a path with no trailing slash. */
+const uiPath = p => String(p || "").replace(/[\\/]+$/, "");
+function uiInside(roots, p) {
+  const a = uiPath(p);
+  if (!a) return false;
+  return roots.some(r => { const b = uiPath(r); if (a === b) return true; const sep = b.includes("\\") && !b.includes("/") ? "\\" : "/"; return a.startsWith(b + sep); });
+}
+// env: choose a folder on another Pocket Agent server (a new chat that runs there). One limited to folders (#72)
+// starts at its first root, offers the roots as its top level, and never shows a folder outside them.
+function pickFolder(start, envId) {
   return new Promise(resolve => {
-    const recent = [...new Set(state.sessions.map(s => s.cwd).filter(Boolean))].slice(0, 8);
-    const b = sheet.open(`<h2>Choose a folder</h2><div class="sub">Claude works inside this folder.</div><div id="pf"></div>
-      <div class="btns"><button class="btn" data-a="browse">Browse…</button><button class="btn ghost" data-a="new">New project folder…</button></div>`, { onClose: () => resolve(null) });
-    for (const d of recent) { const o = h(`<button class="opt">${icon("folder")}<div class="ot"><div></div><div class="od"></div></div></button>`); o.querySelector(".ot div").textContent = baseName(d); o.querySelector(".od").textContent = shortPath(d); o.onclick = () => { sheet.close(true); resolve(d); }; b.querySelector("#pf").append(o); }
-    b.querySelector('[data-a="new"]').onclick = async () => {
+    const env = envId && typeof envById === "function" ? envById(envId) : null;
+    const roots = envRootsOf(envId);
+    const recent = [...new Set(state.sessions.filter(s => (envId ? envIdOf(s.sessionId) === envId : !envIdOf(s.sessionId))).map(s => s.cwd).filter(d => d && (!roots || uiInside(roots, d))))].slice(0, 8);
+    const quick = roots ? [...new Set([...roots, ...recent])] : recent;
+    const b = sheet.open(`<h2>Choose a folder</h2><div class="sub">${env ? esc(env.name) + " works inside this folder." : "Claude works inside this folder."}</div><div id="pf"></div>
+      <div class="btns"><button class="btn" data-a="browse">Browse…</button>${env ? "" : '<button class="btn ghost" data-a="new">New project folder…</button>'}</div>`, { onClose: () => resolve(null) });
+    for (const d of quick) { const o = h(`<button class="opt">${icon("folder")}<div class="ot"><div></div><div class="od"></div></div></button>`); o.querySelector(".ot div").textContent = baseName(d); o.querySelector(".od").textContent = shortPath(d); o.onclick = () => { sheet.close(true); resolve(d); }; b.querySelector("#pf").append(o); }
+    b.querySelector('[data-a="new"]')?.addEventListener("click", async () => {
       sheet.close(true);
       const name = await promptSheet({ title: "New project folder", placeholder: "my-app", ok: "Create" });
       if (!name) return resolve(null);
       const p = (name.startsWith("/") ? name : state.home + "/projects/" + name.replace(/[^\w.\- ]/g, "-"));
       try { await conn.call("fs.mkdir", { path: p }); resolve(p); } catch (e) { toast(e.message); resolve(null); }
-    };
-    b.querySelector('[data-a="browse"]').onclick = () => { sheet.close(true); browseFolder(start || state.home, resolve); };
+    });
+    b.querySelector('[data-a="browse"]').onclick = () => { sheet.close(true); browseFolder(roots ? roots[0] : (start || (env ? env.home : state.home)), resolve, envId); };
   });
 }
-function browseFolder(dir, resolve) {
-  page.open(shortPath(dir), async body => {
-    const r = await conn.call("fs.list", { path: dir }).catch(e => ({ error: e.message }));
+function browseFolder(dir, resolve, envId) {
+  const roots = envRootsOf(envId);
+  const rootList = !dir && roots;   // the roots themselves: this environment's top level
+  page.open(rootList || !dir ? "Choose a folder" : shortPath(dir), async body => {
+    if (rootList) {
+      for (const r of roots) {
+        const row = h(`<button class="list-row">${icon("folder")}<div class="t"></div></button>`); row.querySelector(".t").textContent = shortPath(r);
+        row.onclick = () => { page.stack.pop(); browseFolder(r, resolve, envId); };
+        body.append(row);
+      }
+      return;
+    }
+    const r = await conn.call("fs.list", envId ? (dir ? { path: dir, env: envId } : { env: envId }) : { path: dir }).catch(e => ({ error: e.message }));
     if (r.error) { body.innerHTML = `<p class="note err">${esc(r.error)}</p>`; return; }
     const use = h(`<div class="settings"><button class="btn primary" style="width:100%">Use this folder</button></div>`);
     use.querySelector("button").onclick = () => { page.close(); resolve(r.path); };
     body.append(use);
-    if (r.path !== "/") { const up = h(`<button class="list-row">${icon("back")}<div class="t">..</div></button>`); up.onclick = () => { page.stack.pop(); browseFolder(r.parent, resolve); }; body.append(up); }
+    if (r.path !== "/") {
+      const atRoot = roots && roots.some(x => uiPath(x) === uiPath(r.path));
+      const up = h(`<button class="list-row">${icon("back")}<div class="t">..</div></button>`);
+      up.onclick = () => { page.stack.pop(); browseFolder(atRoot ? null : r.parent, resolve, envId); };
+      body.append(up);
+    }
     for (const e of r.entries.filter(e => e.dir)) {
       const row = h(`<button class="list-row">${icon("folder")}<div class="t"></div></button>`); row.querySelector(".t").textContent = e.name;
-      row.onclick = () => { page.stack.pop(); browseFolder(r.path.replace(/\/$/, "") + "/" + e.name, resolve); };
+      row.onclick = () => { page.stack.pop(); browseFolder(r.path.replace(/\/$/, "") + "/" + e.name, resolve, envId); };
       body.append(row);
     }
   });
@@ -137,14 +170,20 @@ function settingsSections() {
         + item(`<div class="set-row"><div class="l">Model<small>${esc(modelLabel(d.model))}</small></div><button class="chip" id="d-model">Change</button></div>`, "opus sonnet haiku default")
         + item(`<div class="set-row"><div class="l">Effort</div></div><div class="seg" id="d-effort">${["", ...EFFORTS].map(e => `<button data-v="${e}" class="${(d.effort || "") === e ? "on" : ""}">${e || "auto"}</button>`).join("")}</div>`, "thinking reasoning default")
         + item(`<div class="set-row"><div class="l">Permission mode</div></div><div class="seg" id="d-mode">${MODES.slice(0, 4).map(m => `<button data-v="${m.id}" class="${(d.permissionMode || "default") === m.id ? "on" : ""}">${m.short}</button>`).join("")}</div>`, "ask auto bypass plan approvals default") },
+    typeof profilesSettingsSection === "function" && profilesSettingsSection(),   // profiles.js: whose work a chat is
     { id: "claude", title: "Claude and connection", icon: "globe",
       summary: `${settings.server ? settings.server.replace(/^https?:\/\//, "") : native ? "Runs on this phone" : location.host}${state.account?.email ? " · " + state.account.email : ""}`,
-      html: () => item(`<div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server || (native ? "This phone (built-in)" : location.host))}</small></div><button class="chip" id="s-server">Change</button></div>`, "server termux computer pc remote connection")
+      html: () => item(`<div class="set-row"><div class="l">This device<small id="env-name">${esc(state.environment?.name || "…")}</small></div><button class="chip" id="env-rename">Rename</button></div>`, "device name rename this phone computer")
+        + item(`<div class="set-row"><div class="l">Claude runs on<small>${esc(settings.server || (native ? "This phone (built-in)" : location.host))}</small></div><button class="chip" id="s-server">Change</button></div>`, "server termux computer pc remote connection")
         + (standalone ? item(`<div class="set-row"><div class="l">Claude sign-in<small id="s-auth">Checking…</small></div><button class="chip" id="s-login">Sign in again</button></div>`, "login account logout") : "")
         + item(`<div class="set-row"><div class="l">${esc(state.account?.email || state.account?.organization || "Claude account")}<small>${esc(state.account?.subscriptionType || state.account?.apiKeySource || "Signed in through Claude Code")}</small></div></div>`, "account plan subscription")
         + item(`<div class="set-row"><div class="l">Usage limits<small>${esc(usageSummary())}</small></div><button class="chip" id="s-usage">Show</button></div>`, "usage limits quota 5-hour weekly plan")
         + (native ? item(`<div class="set-row"><div class="l">Restart Claude's server<small>Stops any reply in progress</small></div><button class="chip" id="s-restart">Restart</button></div>`, "reload stuck") : "")
         + (standalone ? item(`<div class="set-row"><div class="l">Server log<small>For troubleshooting</small></div><button class="chip" id="s-log">View</button></div>`, "debug errors logs") : "") },
+    typeof accountsSettingsSection === "function" && accountsSettingsSection(),   // accounts.js: several Claude logins
+    typeof dsSettingsSection === "function" && dsSettingsSection(),   // deepseek.js; none on a server without DeepSeek
+    typeof devicesSettingsSection === "function" && devicesSettingsSection(),     // devices.js: other devices with their own token
+    typeof environmentsSettingsSection === "function" && environmentsSettingsSection(),   // environments.js: other Pocket Agent servers
     { id: "updates", title: "Updates", icon: "retry",
       summary: state.updateChannel ? `${state.updateChannel}${state.updateKind === "github" ? " · " + (state.updateTrack?.track === "pin" ? "pinned to " + state.updateTrack.tag : state.updateTrack?.track === "beta" ? "Beta" : "Stable") : ""}` : "Not set",
       html: () => item(`<div class="set-row"><div class="l">Get updates from<small id="u-src">${esc(state.updateChannel ? state.updateChannel + (state.updateKind === "github" && !state.githubToken ? " (no token)" : "") : "Not set: updates come with new app versions")}</small></div><button class="chip" id="u-set">${state.updateChannel ? "Change" : "Set"}</button></div>`, "source github folder")
@@ -197,13 +236,15 @@ function openSettings(sectionId) {
       }
       if (![...res.querySelectorAll("section")].some(x => !x.hidden)) res.innerHTML = `<p class="set-none">No setting matches "${esc(q.value.trim())}".</p>`;
     };
+    if (typeof loadDeviceCount === "function") loadDeviceCount();   // the Devices row's count, fresh each time
   });
   if (sectionId) openSettingsSection(sectionId);
 }
 function openSettingsSection(id) {
   const c = settingsSections().find(x => x.id === id);
   if (!c) return;
-  page.open(c.title, body => { body.innerHTML = `<div class="settings">${c.html()}</div>`; wireSettings(body); });
+  // built again on every render, so a re-render after a change (openSettingsRefresh) shows the new values
+  page.open(c.title, body => { body.innerHTML = `<div class="settings">${(settingsSections().find(x => x.id === id) || c).html()}</div>`; wireSettings(body); });
 }
 /** Hooks up whatever settings controls are inside root (a category page or search results). */
 function wireSettings(root) {
@@ -223,6 +264,12 @@ function wireSettings(root) {
       o.onclick = () => { sheet.close(true); setDefaults({ model: m.value }).then(openSettingsRefresh); };
       b.querySelector("#dm").append(o);
     }
+  });
+  on("#env-rename", async () => {
+    const name = await promptSheet({ title: "Name this device", value: state.environment?.name || "" });
+    if (!name) return;
+    try { state.environment = (await conn.call("environment.set", { name })).environment; toast("Renamed"); openSettingsRefresh(); }
+    catch (e) { toast(e.message, 4000); }
   });
   on("#s-server", () => chooseServer());
   on("#u-set", () => chooseUpdateSource());
@@ -253,7 +300,14 @@ function wireSettings(root) {
   on("#s-restart", async () => { try { await conn.call("working.clear"); } catch {} nativeCall("restartServer"); toast("Restarting server…"); });
   if (native && root.querySelector("#phone-ctl")) renderPhoneControl(root.querySelector("#phone-ctl"));
   if (native && root.querySelector("#termux-box")) renderTermux(root.querySelector("#termux-box"));
+  if (typeof wireProfilesSettings === "function") wireProfilesSettings(root);
+  if (typeof wireEnvironmentsSettings === "function") wireEnvironmentsSettings(root);
+  if (typeof wireAccountsSettings === "function") wireAccountsSettings(root);
+  if (typeof wireDsSettings === "function") wireDsSettings(root);
+  if (typeof wireDevicesSettings === "function") wireDevicesSettings(root);
 }
+// Another client renamed this device (or a hub changed its reaches): keep the row current.
+conn.on("environment", m => { if (!m.environment) return; state.environment = m.environment; if (page.isOpen) openSettingsRefresh(); });
 /** Re-renders the settings page on screen (home or a category) so it shows changed values. */
 function openSettingsRefresh() {
   const top = page.stack[page.stack.length - 1];

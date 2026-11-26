@@ -5,7 +5,8 @@
   "scripts": {
     "test": "npm run test:native && npm run test:ui && npm run test:server",
     "test:server": "node server/test/e2e.mjs",
-    "test:ui": "node tests/ui/ui.test.mjs && node tests/ui/pair.test.mjs && node tests/ui/setup.test.mjs",
+    "test:ui": "node tests/ui/ui.test.mjs && node tests/ui/pair.test.mjs && node tests/ui/setup.test.mjs && node tests/ui/deepseek.test.mjs && node tests/ui/environments.test.mjs",
+    "test:environments": "node tests/ui/environments.test.mjs",
     "test:ui:live": "node tests/ui/ui.test.mjs --live",
     "build:apk": "bash build.sh",
     "dev:server": "PA_PORT=8766 node server/src/index.js --port 8766",
@@ -16,8 +17,16 @@
     "test:migrate": "bash server/test/migrate.test.sh",
     "test:github": "bash server/test/github.test.sh",
     "test:extras": "cd server && node test/extras.test.mjs",
+    "test:accounts": "cd server && node test/accounts.test.mjs",
+    "test:devices": "cd server && node test/devices.test.mjs",
+    "test:environment": "cd server && node test/environment.test.mjs",
+    "test:profiles": "cd server && node test/profiles.test.mjs",
+    "test:profiles-ui": "node tests/ui/profiles.test.mjs",
     "test:upgrade": "bash server/test/upgrade.test.sh",
-    "test:services": "node server/test/services.test.mjs"
+    "test:services": "node server/test/services.test.mjs",
+    "test:hub": "cd server && node test/hub.test.mjs",
+    "test:platform": "node server/test/platform.test.mjs",
+    "test:deepseek": "cd server && node test/deepseek.test.mjs"
   },
   "devDependencies": {
     "jsdom": "^25.0.1"
