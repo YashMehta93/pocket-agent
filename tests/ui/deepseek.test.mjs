@@ -28,6 +28,9 @@ async function until(fn, ms = 20000, what = "condition") { const t = Date.now();
 let fails = 0;
 const ok = (name, c) => { console.log(c ? "PASS" : "FAIL", name); if (!c) fails++; };
 const text = s => ($(s)?.textContent || "").replace(/\s+/g, " ").trim();
+/** A tap that must land: for 400 ms after any sheet closes, a tap on a handoff line is ignored, so that the finger
+ *  that closed the sheet doesn't also open what was under it (#44). Wait that out instead of depending on machine speed. */
+async function tap(el) { await until(() => ev("Date.now() - (sheet.closedAt || 0) >= 400"), 5000, "the sheet-close tap guard"); el.click(); }
 
 await new Promise(r => w.addEventListener("load", r));
 await until(() => ev("conn.ok") && ev("state.home"), 20000, "connect + hello");
@@ -278,7 +281,7 @@ ev(`renderTabs()`);
 const done = ev(`JSON.stringify(chatAgents().find(a => a.id === "${CHILD}"))`);
 ok(`its row takes the time and cost from the report, and what changed: ${done}`, /"now":"Done|"now":"2 files changed"/.test(done) && /"ms":192000/.test(done) && /"usd":0\.031/.test(done));
 ev(`window.__opened = null; window.__realPage = openWorkerPage; openWorkerPage = id => { __opened = id; }`);
-$("#messages .handoff-line").click();
+await tap($("#messages .handoff-line"));
 ok("a tap opens that worker on the Agents tab", ev("__opened") === CHILD && ev("state.tab") === "agents");
 ev(`openWorkerPage = __realPage; setTab("chat")`);
 // stopped, denied, failed to start, asking Claude, a follow-up
@@ -295,7 +298,7 @@ const lines = $$("#messages > .handoff").map(e => e.textContent.replace(/\s+/g, 
 ok(`every handoff says what happened: ${lines.slice(1).join(" / ")}`, lines[1] === "Sent to DeepSeek: Do more. · stopped›" && lines[2] === "Not sent to DeepSeek: Rename things›"
   && lines[3] === "Couldn't send to DeepSeek: Build it›" && /^Asked Claude: Review the change · (starting|done)›$/.test(lines[4]) && /^Follow-up to DeepSeek: Add the CONTRIBUTORS file/.test(lines[5])
   && $$("#messages .hl-st.bad").length === 1);
-$$("#messages .handoff-line")[3].click();
+await tap($$("#messages .handoff-line")[3]);
 ok(`one that never ran shows what was asked and what came back: "${text("#sheet h2")}"`, ev("sheet.key") === "handoff" && text("#sheet h2") === "Couldn't send to DeepSeek" && /Folder not found: \/nope/.test(text("#sheet")) && /Elsewhere\./.test(text("#sheet .dl-task")));
 ev("sheet.close(true)");
 ok("the chat's export keeps the handoff lines", /> Sent to DeepSeek: Add the CONTRIBUTORS file · done/.test(ev("chat.toMarkdown()")));
